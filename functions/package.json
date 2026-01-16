@@ -1,0 +1,17 @@
+{
+    "name": "@benzdesk/functions",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Cloudflare Pages Functions for BenzDesk",
+    "scripts": {
+        "dev": "wrangler pages dev --local --persist-to=.wrangler/state",
+        "deploy": "wrangler pages deploy"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.39.0"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20231218.0",
+        "wrangler": "^3.22.0"
+    }
+}
