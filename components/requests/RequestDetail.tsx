@@ -321,9 +321,11 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
             // If admin commenting: notify request creator
             // If user commenting: notify admins
             const isUserAdmin = canManageRequests;
+            console.log(`[RequestDetail] Comment added. isAdmin: ${isUserAdmin}, requestCreator: ${request.created_by}`);
 
             if (isUserAdmin) {
                 // Admin replying -> Notify Creator
+                console.log(`[RequestDetail] ADMIN commenting -> Calling notifyNewComment for creator ${request.created_by}`);
                 notifyNewComment(
                     request.created_by,
                     '', // Email not available here easily, fallback used
@@ -335,6 +337,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                 );
             } else {
                 // User replying -> Notify ALL Admins
+                console.log(`[RequestDetail] USER commenting -> Calling notifyAdminsOfNewComment`);
                 notifyAdminsOfNewComment(
                     user.email || 'User',
                     request.id,

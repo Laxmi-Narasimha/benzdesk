@@ -23,24 +23,34 @@ interface NotificationPayload {
  * Send a push notification to a user via Supabase Edge Function
  */
 export async function sendNotification(payload: NotificationPayload): Promise<boolean> {
+    const debugId = `SEND-${Date.now()}`;
+    console.log(`[${debugId}] ===== SENDING NOTIFICATION ====`);
+    console.log(`[${debugId}] Target user_id: ${payload.user_id}`);
+    console.log(`[${debugId}] Title: ${payload.title}`);
+    console.log(`[${debugId}] Body: ${payload.body?.substring(0, 50)}...`);
+
     try {
         const supabase = getSupabaseClient();
+        console.log(`[${debugId}] Step 1: Got Supabase client`);
 
-        console.log('[Notify] Sending notification:', payload);
-
+        console.log(`[${debugId}] Step 2: Calling send-push Edge Function...`);
         const { data, error } = await supabase.functions.invoke('send-push', {
             body: payload,
         });
 
         if (error) {
-            console.error('[Notify] Error calling send-push:', error);
+            console.error(`[${debugId}] ❌ FAILED: Edge function error:`, error);
+            console.error(`[${debugId}] Error message: ${error.message}`);
+            console.error(`[${debugId}] Error context: ${JSON.stringify(error.context || {})}`);
             return false;
         }
 
-        console.log('[Notify] Push result:', data);
+        console.log(`[${debugId}] ✅ SUCCESS: Edge function response:`, data);
+        console.log(`[${debugId}] Sent: ${data?.sent || 0}, Failed: ${data?.failed || 0}`);
         return data?.success || false;
-    } catch (error) {
-        console.error('[Notify] Failed to send notification:', error);
+    } catch (error: any) {
+        console.error(`[${debugId}] ❌ EXCEPTION in sendNotification:`, error);
+        console.error(`[${debugId}] Exception message: ${error?.message || 'Unknown'}`);
         return false;
     }
 }
@@ -112,25 +122,43 @@ export async function notifyNewRequest(
     requestCategory: string,
     creatorEmail: string
 ): Promise<void> {
+    const debugId = `NEW-REQ-${Date.now()}`;
+    console.log(`[${debugId}] ===== NOTIFY NEW REQUEST =====`);
+    console.log(`[${debugId}] Request ID: ${requestId}`);
+    console.log(`[${debugId}] Title: ${requestTitle}`);
+    console.log(`[${debugId}] Category: ${requestCategory}`);
+    console.log(`[${debugId}] Creator: ${creatorEmail}`);
+
     try {
         const supabase = getSupabaseClient();
         const creatorName = getDisplayName(creatorEmail);
+        console.log(`[${debugId}] Step 1: Creator display name: ${creatorName}`);
 
         // Get all admin user IDs
+        console.log(`[${debugId}] Step 2: Fetching admin user IDs from user_roles...`);
         const { data: admins, error } = await supabase
             .from('user_roles')
             .select('user_id')
             .in('role', ['accounts_admin', 'director'])
             .eq('is_active', true);
 
-        if (error || !admins) {
-            console.error('[Notify] Failed to fetch admins:', error);
+        if (error) {
+            console.error(`[${debugId}] ❌ FAILED: Database error fetching admins:`, error);
             return;
         }
 
-        console.log(`[Notify] Notifying ${admins.length} admins about new request`);
+        if (!admins || admins.length === 0) {
+            console.warn(`[${debugId}] ⚠️ WARNING: No admins found in user_roles table!`);
+            console.warn(`[${debugId}] Query: user_roles WHERE role IN ('accounts_admin', 'director') AND is_active = true`);
+            return;
+        }
 
-        for (const admin of admins) {
+        console.log(`[${debugId}] Step 3: Found ${admins.length} admin(s) to notify:`);
+        admins.forEach((a, i) => console.log(`[${debugId}]   Admin ${i + 1}: ${a.user_id}`));
+
+        for (let i = 0; i < admins.length; i++) {
+            const admin = admins[i];
+            console.log(`[${debugId}] Step 4.${i + 1}: Sending to admin ${admin.user_id}...`);
             await sendNotification({
                 user_id: admin.user_id,
                 title: `📩 New Request from ${creatorName}`,
@@ -139,8 +167,11 @@ export async function notifyNewRequest(
                 tag: `new-request-${requestId}`,
             });
         }
-    } catch (error) {
-        console.error('[Notify] Failed to notify admins:', error);
+
+        console.log(`[${debugId}] ✅ COMPLETE: Sent notifications to ${admins.length} admin(s)`);
+    } catch (error: any) {
+        console.error(`[${debugId}] ❌ EXCEPTION in notifyNewRequest:`, error);
+        console.error(`[${debugId}] Exception message: ${error?.message || 'Unknown'}`);
     }
 }
 
@@ -160,6 +191,13 @@ export async function notifyNewComment(
     commentPreview: string,
     isAdmin: boolean
 ): Promise<void> {
+    const debugId = `COMMENT-${Date.now()}`;
+    console.log(`[${debugId}] ===== NOTIFY NEW COMMENT =====`);
+    console.log(`[${debugId}] Recipient ID: ${recipientId}`);
+    console.log(`[${debugId}] Sender: ${senderEmail}`);
+    console.log(`[${debugId}] Request: ${requestId} - ${requestTitle}`);
+    console.log(`[${debugId}] isAdmin sender: ${isAdmin}`);
+
     const senderName = getDisplayName(senderEmail);
     const preview = commentPreview.length > 50
         ? commentPreview.substring(0, 50) + '...'
@@ -169,6 +207,7 @@ export async function notifyNewComment(
         ? `/admin/request?id=${requestId}`
         : `/app/request?id=${requestId}`;
 
+    console.log(`[${debugId}] Sending to user ${recipientId}...`);
     await sendNotification({
         user_id: recipientId,
         title: `💬 ${senderName} commented`,
@@ -176,6 +215,7 @@ export async function notifyNewComment(
         url,
         tag: `comment-${requestId}`,
     });
+    console.log(`[${debugId}] ✅ DONE`);
 }
 
 /**
@@ -187,6 +227,11 @@ export async function notifyAdminsOfNewComment(
     requestTitle: string,
     commentPreview: string
 ): Promise<void> {
+    const debugId = `ADMIN-COMMENT-${Date.now()}`;
+    console.log(`[${debugId}] ===== NOTIFY ADMINS OF COMMENT =====`);
+    console.log(`[${debugId}] Sender: ${senderEmail}`);
+    console.log(`[${debugId}] Request: ${requestId} - ${requestTitle}`);
+
     try {
         const supabase = getSupabaseClient();
         const senderName = getDisplayName(senderEmail);
@@ -194,21 +239,28 @@ export async function notifyAdminsOfNewComment(
             ? commentPreview.substring(0, 50) + '...'
             : commentPreview;
 
-        // Get all admin user IDs
+        console.log(`[${debugId}] Step 1: Fetching admins from user_roles...`);
         const { data: admins, error } = await supabase
             .from('user_roles')
             .select('user_id')
             .in('role', ['accounts_admin', 'director'])
             .eq('is_active', true);
 
-        if (error || !admins) {
-            console.error('[Notify] Failed to fetch admins for comment:', error);
+        if (error) {
+            console.error(`[${debugId}] ❌ FAILED: Database error:`, error);
             return;
         }
 
-        console.log(`[Notify] Notifying ${admins.length} admins about new comment`);
+        if (!admins || admins.length === 0) {
+            console.warn(`[${debugId}] ⚠️ WARNING: No admins found!`);
+            return;
+        }
 
-        for (const admin of admins) {
+        console.log(`[${debugId}] Step 2: Found ${admins.length} admin(s)`);
+
+        for (let i = 0; i < admins.length; i++) {
+            const admin = admins[i];
+            console.log(`[${debugId}] Step 3.${i + 1}: Sending to ${admin.user_id}...`);
             await sendNotification({
                 user_id: admin.user_id,
                 title: `💬 ${senderName} replied`,
@@ -217,8 +269,9 @@ export async function notifyAdminsOfNewComment(
                 tag: `comment-${requestId}`,
             });
         }
-    } catch (error) {
-        console.error('[Notify] Failed to notify admins of comment:', error);
+        console.log(`[${debugId}] ✅ COMPLETE: Notified ${admins.length} admin(s)`);
+    } catch (error: any) {
+        console.error(`[${debugId}] ❌ EXCEPTION:`, error?.message || error);
     }
 }
 
