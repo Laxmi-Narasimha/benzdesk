@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { PageLoader, Card } from '@/components/ui';
-import { NotificationPrompt, IOSInstallPrompt } from '@/components/NotificationPrompt';
+import { NotificationPrompt, IOSInstallPrompt, PWAInstallPrompt } from '@/components/NotificationPrompt';
 
 export default function AdminLayout({
     children,
@@ -60,6 +60,7 @@ export default function AdminLayout({
             {/* PWA Prompts */}
             <NotificationPrompt />
             <IOSInstallPrompt />
+            <PWAInstallPrompt />
         </div>
     );
 }

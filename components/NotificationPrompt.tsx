@@ -53,14 +53,20 @@ export function NotificationPrompt() {
         try {
             const permission = await requestNotificationPermission();
             if (permission === 'granted') {
-                const result = await subscribeToPush(user.id);
-                if (result.success) {
-                    setEnabled(true);
-                    setShow(false);
-                }
+                setEnabled(true);
+                setShow(false); // Always close after permission granted
+                // Try to subscribe in background (don't block UI)
+                subscribeToPush(user.id).catch(err => {
+                    console.error('Background subscription failed:', err);
+                });
+            } else if (permission === 'denied') {
+                // User denied, close and don't show again
+                localStorage.setItem('notification-prompt-dismissed', 'true');
+                setShow(false);
             }
         } catch (error) {
             console.error('Failed to enable notifications:', error);
+            setShow(false); // Close on error too
         } finally {
             setLoading(false);
         }
@@ -167,6 +173,121 @@ export function IOSInstallPrompt() {
                 >
                     <X className="w-5 h-5" />
                 </button>
+            </div>
+        </div>
+    );
+}
+
+// ============================================================================
+// PWA Install Prompt (Desktop/Android)
+// Captures beforeinstallprompt event and shows custom install button
+// ============================================================================
+
+// Store the deferred prompt globally
+let deferredPrompt: any = null;
+
+export function PWAInstallPrompt() {
+    const [show, setShow] = useState(false);
+    const [installing, setInstalling] = useState(false);
+
+    useEffect(() => {
+        // Check if already installed
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+        if (isStandalone) return;
+
+        const dismissed = localStorage.getItem('pwa-install-dismissed');
+        if (dismissed) return;
+
+        const handleBeforeInstall = (e: Event) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            // Show our custom prompt after a short delay
+            setTimeout(() => setShow(true), 2000);
+        };
+
+        window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+
+        // Check if we already have a deferred prompt
+        if (deferredPrompt) {
+            setShow(true);
+        }
+
+        return () => {
+            window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+        };
+    }, []);
+
+    const handleInstall = async () => {
+        if (!deferredPrompt) return;
+
+        setInstalling(true);
+        try {
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            console.log('[PWA] Install outcome:', outcome);
+            if (outcome === 'accepted') {
+                setShow(false);
+            }
+        } catch (error) {
+            console.error('[PWA] Install error:', error);
+        } finally {
+            deferredPrompt = null;
+            setInstalling(false);
+            setShow(false);
+        }
+    };
+
+    const handleDismiss = () => {
+        localStorage.setItem('pwa-install-dismissed', 'true');
+        setShow(false);
+    };
+
+    if (!show) return null;
+
+    return (
+        <div className="fixed bottom-4 left-4 z-50 max-w-sm animate-slide-up">
+            <div className="bg-white rounded-xl shadow-xl border border-gray-200 p-4">
+                <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-12 h-12 bg-primary-500 rounded-xl flex items-center justify-center shadow-md">
+                        <span className="text-white font-bold text-xl">B</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-semibold text-gray-900">
+                            Install BenzDesk App
+                        </h4>
+                        <p className="text-xs text-gray-500 mt-1">
+                            Get quick access from your desktop or home screen
+                        </p>
+                        <div className="flex items-center gap-2 mt-3">
+                            <button
+                                onClick={handleInstall}
+                                disabled={installing}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                            >
+                                {installing ? (
+                                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                ) : (
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                )}
+                                Install
+                            </button>
+                            <button
+                                onClick={handleDismiss}
+                                className="px-3 py-1.5 text-gray-500 hover:text-gray-700 text-xs font-medium transition-colors"
+                            >
+                                Not now
+                            </button>
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleDismiss}
+                        className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
             </div>
         </div>
     );
