@@ -22,6 +22,7 @@ import {
     ChevronRight,
     Menu,
     X,
+    BookOpen,
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { RoleBadge } from '@/components/ui';
@@ -56,6 +57,12 @@ const requesterNav: NavItem[] = [
         icon: <Plus className="w-5 h-5" />,
         roles: ['requester'],
     },
+    {
+        href: '/app/help',
+        label: 'Help & Guide',
+        icon: <BookOpen className="w-5 h-5" />,
+        roles: ['requester'],
+    },
 ];
 
 const adminNav: NavItem[] = [
@@ -69,6 +76,12 @@ const adminNav: NavItem[] = [
         href: '/admin/reports',
         label: 'Reports',
         icon: <BarChart3 className="w-5 h-5" />,
+        roles: ['accounts_admin', 'director'],
+    },
+    {
+        href: '/admin/help',
+        label: 'Admin Guide',
+        icon: <BookOpen className="w-5 h-5" />,
         roles: ['accounts_admin', 'director'],
     },
 ];
