@@ -246,6 +246,24 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
             } else {
                 router.push(`/app/request?id=${request.id}`);
             }
+
+            // Send push notification to admins
+            // We don't await this to avoid blocking the UI
+            import('@/lib/notificationTrigger').then(({ notifyNewRequest }) => {
+                console.log('[Push Trigger] Notifying admins of new request:', request.id);
+                notifyNewRequest(
+                    request.id,
+                    request.title,
+                    request.category,
+                    user.email || 'Employee'
+                ).then(() => {
+                    console.log('[Push Trigger] Notification sent successfully');
+                }).catch((err) => {
+                    console.error('[Push Trigger] Failed to send notification:', err);
+                });
+            }).catch((err) => {
+                console.error('[Push Trigger] Failed to import notification module:', err);
+            });
         } catch (err: any) {
             console.error('Error creating request:', err);
             setErrors({ general: err.message || 'Failed to create request' });

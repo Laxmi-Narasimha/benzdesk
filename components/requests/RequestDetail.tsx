@@ -39,7 +39,7 @@ import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import type { Request, RequestComment, RequestEvent, RequestAttachment, RequestStatus, Priority } from '@/types';
 import { REQUEST_CATEGORY_LABELS, REQUEST_STATUS_LABELS } from '@/types';
-import { notifyStatusChange } from '@/lib/notificationTrigger';
+import { notifyStatusChange, notifyNewComment, notifyAdminsOfNewComment } from '@/lib/notificationTrigger';
 
 // ============================================================================
 // Types
@@ -316,6 +316,32 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
 
             setComments((prev) => [...prev, data]);
             success('Comment Added', 'Your comment has been posted');
+
+            // Send push notification
+            // If admin commenting: notify request creator
+            // If user commenting: notify admins
+            const isUserAdmin = canManageRequests;
+
+            if (isUserAdmin) {
+                // Admin replying -> Notify Creator
+                notifyNewComment(
+                    request.created_by,
+                    '', // Email not available here easily, fallback used
+                    user.email || 'Admin',
+                    request.id,
+                    request.title,
+                    body,
+                    true
+                );
+            } else {
+                // User replying -> Notify ALL Admins
+                notifyAdminsOfNewComment(
+                    user.email || 'User',
+                    request.id,
+                    request.title,
+                    body
+                );
+            }
 
             // Refresh events
             const { data: eventsData } = await supabase

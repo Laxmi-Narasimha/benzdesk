@@ -179,6 +179,50 @@ export async function notifyNewComment(
 }
 
 /**
+ * Notify ALL admins about a new comment from an employee
+ */
+export async function notifyAdminsOfNewComment(
+    senderEmail: string,
+    requestId: string,
+    requestTitle: string,
+    commentPreview: string
+): Promise<void> {
+    try {
+        const supabase = getSupabaseClient();
+        const senderName = getDisplayName(senderEmail);
+        const preview = commentPreview.length > 50
+            ? commentPreview.substring(0, 50) + '...'
+            : commentPreview;
+
+        // Get all admin user IDs
+        const { data: admins, error } = await supabase
+            .from('user_roles')
+            .select('user_id')
+            .in('role', ['accounts_admin', 'director'])
+            .eq('is_active', true);
+
+        if (error || !admins) {
+            console.error('[Notify] Failed to fetch admins for comment:', error);
+            return;
+        }
+
+        console.log(`[Notify] Notifying ${admins.length} admins about new comment`);
+
+        for (const admin of admins) {
+            await sendNotification({
+                user_id: admin.user_id,
+                title: `💬 ${senderName} replied`,
+                body: `On: ${requestTitle}\n"${preview}"`,
+                url: `/admin/request?id=${requestId}`,
+                tag: `comment-${requestId}`,
+            });
+        }
+    } catch (error) {
+        console.error('[Notify] Failed to notify admins of comment:', error);
+    }
+}
+
+/**
  * Notify about reply to a comment
  */
 export async function notifyCommentReply(

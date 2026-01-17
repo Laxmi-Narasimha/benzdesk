@@ -177,6 +177,55 @@ export function AttachmentList({
 
             success('Upload Complete', 'File uploaded successfully');
             onUpload?.(attachment);
+
+            // Send push notification about the new attachment
+            // Fetch request details to get creator and title
+            const { data: request } = await supabase
+                .from('requests')
+                .select('id, title, created_by')
+                .eq('id', requestId)
+                .single();
+
+            if (request) {
+                // Dynamic import to avoid bundling issues
+                import('@/lib/notificationTrigger').then(async ({ notifyNewAttachment, sendNotification }) => {
+                    console.log('[Push Trigger] Notifying about new attachment');
+
+                    // If uploader is the creator, notify admins
+                    // If uploader is admin, notify creator
+                    if (user.id === request.created_by) {
+                        // User uploaded -> notify admins
+                        const { data: admins } = await supabase
+                            .from('user_roles')
+                            .select('user_id')
+                            .in('role', ['accounts_admin', 'director'])
+                            .eq('is_active', true);
+
+                        if (admins) {
+                            for (const admin of admins) {
+                                await sendNotification({
+                                    user_id: admin.user_id,
+                                    title: `📎 New attachment uploaded`,
+                                    body: `${file.name}\nOn: ${request.title}`,
+                                    url: `/admin/request?id=${requestId}`,
+                                    tag: `attachment-${requestId}`,
+                                });
+                            }
+                        }
+                    } else {
+                        // Admin uploaded -> notify creator
+                        await sendNotification({
+                            user_id: request.created_by,
+                            title: `📎 Admin attached a file`,
+                            body: `${file.name}\nOn: ${request.title}`,
+                            url: `/app/request?id=${requestId}`,
+                            tag: `attachment-${requestId}`,
+                        });
+                    }
+                }).catch((err) => {
+                    console.error('[Push Trigger] Failed to send attachment notification:', err);
+                });
+            }
         } catch (err: any) {
             console.error('Upload error:', err);
             showError('Upload Failed', err.message || 'Unable to upload the file');
