@@ -70,56 +70,47 @@ export default function UserHelpPage() {
                     <h2 className="text-xl font-semibold text-gray-900">Understanding Statuses</h2>
                 </div>
 
-                <Card className="p-6 grid gap-6 sm:grid-cols-2">
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-                            <span className="font-semibold text-gray-900">Open</span>
-                        </div>
-                        <p className="text-sm text-gray-600">
-                            Your request has been sent but not yet viewed by an admin.
-                        </p>
-                    </div>
-
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full bg-amber-500"></span>
-                            <span className="font-semibold text-gray-900">In Progress</span>
-                        </div>
-                        <p className="text-sm text-gray-600">
-                            The team is actively working on your request.
-                        </p>
-                    </div>
-
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full bg-purple-500"></span>
-                            <span className="font-semibold text-gray-900">Waiting on Requester</span>
-                        </div>
-                        <p className="text-sm text-gray-600">
-                            <strong>Action Required!</strong> The admin asked you a question. Please check the comments and reply.
-                        </p>
-                    </div>
-
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
+                <div className="space-y-4">
+                    <div className="p-4 bg-green-50 rounded-xl border border-green-200">
+                        <div className="flex items-center gap-2 mb-2">
                             <span className="w-3 h-3 rounded-full bg-green-500"></span>
-                            <span className="font-semibold text-gray-900">Pending Closure</span>
+                            <span className="font-bold text-green-900 text-lg">Pending Closure</span>
                         </div>
-                        <p className="text-sm text-gray-600">
-                            Work is done! Please confirm if you are satisfied so the ticket can be closed.
+                        <p className="text-gray-800 font-medium">
+                            This means the Admin has finished their work!
                         </p>
+                        <div className="mt-3 bg-white p-3 rounded-lg border border-green-100 shadow-sm">
+                            <p className="text-sm text-gray-600 mb-2">Your Job Now:</p>
+                            <ol className="list-decimal list-inside text-sm text-gray-800 space-y-1">
+                                <li>Check if your work is actually done.</li>
+                                <li>If yes, <strong>YOU MUST CLICK THE CLOSE BUTTON</strong>.</li>
+                            </ol>
+                            <p className="text-xs text-red-500 mt-2 font-bold">
+                                * Do not leave it open. The Admin cannot close it for you. You have to do it.
+                            </p>
+                        </div>
                     </div>
 
-                    <div className="space-y-2 sm:col-span-2 border-t pt-4 mt-2">
-                        <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full bg-gray-500"></span>
-                            <span className="font-semibold text-gray-900">Closed</span>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="p-3 bg-blue-50 rounded-lg">
+                            <span className="font-bold text-blue-900 block mb-1">Open</span>
+                            <span className="text-xs text-blue-700">Sent to admin. Waiting for them to see it.</span>
                         </div>
-                        <p className="text-sm text-gray-600">
-                            The request is complete and archived. No further actions can be taken.
-                        </p>
+                        <div className="p-3 bg-amber-50 rounded-lg">
+                            <span className="font-bold text-amber-900 block mb-1">In Progress</span>
+                            <span className="text-xs text-amber-700">Admin is working on it right now.</span>
+                        </div>
                     </div>
+                </div>
+
+                <Card className="space-y-2 sm:col-span-2 border-t pt-4 mt-2">
+                    <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full bg-gray-500"></span>
+                        <span className="font-semibold text-gray-900">Closed</span>
+                    </div>
+                    <p className="text-sm text-gray-600">
+                        The request is complete and archived. No further actions can be taken.
+                    </p>
                 </Card>
             </section>
 
@@ -149,6 +140,6 @@ export default function UserHelpPage() {
                     </ul>
                 </Card>
             </section>
-        </div>
+        </div >
     );
 }

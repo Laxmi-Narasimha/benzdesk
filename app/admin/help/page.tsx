@@ -52,47 +52,61 @@ export default function AdminHelpPage() {
                 </Card>
             </section>
 
-            {/* 2. Changing Statuses */}
+            {/* 2. Changing Statuses - SIMPLIFIED */}
             <section className="space-y-4">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-green-100 rounded-lg">
                         <CheckCircle2 className="w-6 h-6 text-green-600" />
                     </div>
-                    <h2 className="text-xl font-semibold text-gray-900">Workflow & Statuses</h2>
+                    <h2 className="text-xl font-semibold text-gray-900">How to Update Status</h2>
                 </div>
 
-                <Card className="p-6 space-y-2">
-                    <p className="text-gray-600 mb-4">
-                        Proper status updates keep the user informed and stop them from messaging you manually.
+                <Card className="p-6 space-y-4">
+                    <p className="text-lg text-gray-800 font-medium">
+                        Your goal is to move the request from Start to Finish. Here is the rule:
                     </p>
 
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                            <span className="font-semibold text-blue-700">Open → In Progress</span>
-                            <p className="text-sm text-gray-600 mt-1">
-                                Mark this immediately when you start working so others don't pick it up.
+                    <div className="grid gap-4">
+                        <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                            <h3 className="text-lg font-bold text-blue-800 flex items-center gap-2">
+                                1. Start Work
+                            </h3>
+                            <p className="text-gray-700 mt-1">
+                                As soon as you see a new request, change status to <strong>In Progress</strong>.
+                                <br />
+                                <span className="text-sm text-gray-500">This tells everyone: "I am working on it!"</span>
                             </p>
                         </div>
 
-                        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                            <span className="font-semibold text-purple-700">→ Waiting on Requester</span>
-                            <p className="text-sm text-gray-600 mt-1">
-                                Use this if you need a missing bill or clarification. The user gets notified to reply.
+                        <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
+                            <h3 className="text-lg font-bold text-purple-800 flex items-center gap-2">
+                                2. Need Info?
+                            </h3>
+                            <p className="text-gray-700 mt-1">
+                                If the employee forgot a bill or needs to explain something, change status to <strong>Waiting on Requester</strong>.
+                                <br />
+                                <span className="text-sm text-gray-500">The system will notify them to reply to you.</span>
                             </p>
                         </div>
 
-                        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                            <span className="font-semibold text-green-700">→ Pending Closure</span>
-                            <p className="text-sm text-gray-600 mt-1">
-                                Mark this when you are done. The user will confirm and close it.
-                                <br /><em className="text-xs">If they don't respond, it auto-closes after 48 hours (Director only feature).</em>
+                        <div className="p-4 bg-green-50 rounded-xl border border-green-200 ring-2 ring-green-100">
+                            <h3 className="text-lg font-bold text-green-800 flex items-center gap-2">
+                                3. Job Done? (Important!)
+                            </h3>
+                            <p className="text-gray-900 mt-2 font-medium">
+                                When you have finished the work (payment made, booking done, etc.), you MUST change status to:
                             </p>
-                        </div>
-
-                        <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                            <span className="font-semibold text-gray-700">→ Closed</span>
-                            <p className="text-sm text-gray-600 mt-1">
-                                Final state. Can be re-opened if necessary, but try to avoid it.
+                            <div className="my-3 text-center">
+                                <span className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold shadow-sm">
+                                    Pending Closure
+                                </span>
+                            </div>
+                            <p className="text-red-600 font-bold bg-white p-3 rounded-lg border border-red-100">
+                                ✋ STOP! You cannot click "Closed". Only the Employee can close it.
+                            </p>
+                            <p className="text-gray-700 mt-2 text-sm">
+                                You set it to <strong>Pending Closure</strong>. This sends a message to the employee:
+                                <em>"I have done my part, please check and close."</em>
                             </p>
                         </div>
                     </div>
