@@ -9,7 +9,7 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "pages:build": "next build",
-    "pages:deploy": "wrangler pages deploy out --project-name=benzdesk"
+    "pages:deploy": "wrangler pages deploy out --project-name=benzdesk --branch=production"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
