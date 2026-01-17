@@ -19,6 +19,26 @@ export default function UserHelpPage() {
                 <p className="text-gray-500">
                     Welcome to BenzDesk! Here is everything you need to know to get started.
                 </p>
+
+                {/* Video Tutorial */}
+                <a
+                    href="https://www.loom.com/share/4521ef65ea314c53ad09c7bf7e02718b"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-4 group relative block overflow-hidden rounded-xl border border-blue-100 bg-blue-50 hover:bg-blue-100 transition-all cursor-pointer"
+                >
+                    <div className="p-6 flex items-center gap-4">
+                        <div className="flex-shrink-0 w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center shadow-md group-hover:scale-110 transition-transform">
+                            <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-blue-900">Watch Video Tutorial</h3>
+                            <p className="text-blue-700">Click here to watch a quick demo video on how to use the platform.</p>
+                        </div>
+                    </div>
+                </a>
             </div>
 
             {/* 1. Creating a Request */}
