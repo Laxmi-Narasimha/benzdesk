@@ -302,7 +302,7 @@ export function Sidebar() {
                 </button>
 
                 <div className="mt-4 px-4 text-xs text-gray-400 flex items-center justify-between">
-                    <span>v1.0.5</span>
+                    <span>v1.0.6</span>
                     <span className="text-green-500 font-medium">● Online</span>
                 </div>
             </div>

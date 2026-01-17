@@ -39,6 +39,7 @@ import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import type { Request, RequestComment, RequestEvent, RequestAttachment, RequestStatus, Priority } from '@/types';
 import { REQUEST_CATEGORY_LABELS, REQUEST_STATUS_LABELS } from '@/types';
+import { notifyStatusChange } from '@/lib/notificationTrigger';
 
 // ============================================================================
 // Types
@@ -163,6 +164,16 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
 
             setRequest(data);
             success('Status Updated', `Request status changed to ${REQUEST_STATUS_LABELS[newStatus]}`);
+
+            // Send push notification to requester
+            if (data.created_by && user) {
+                notifyStatusChange(
+                    data.created_by,
+                    data.title,
+                    newStatus,
+                    `/app/request?id=${data.id}`
+                );
+            }
 
             // Refresh events
             const { data: eventsData } = await supabase
