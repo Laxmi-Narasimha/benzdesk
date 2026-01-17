@@ -1,0 +1,11 @@
+# Force revalidation for all HTML files (entry points)
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Force revalidation for the root path
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Cache static assets (hashed files) for a long time
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -300,6 +300,11 @@ export function Sidebar() {
                     <LogOut className="w-5 h-5" />
                     <span className="text-sm font-medium">Sign Out</span>
                 </button>
+
+                <div className="mt-4 px-4 text-xs text-gray-400 flex items-center justify-between">
+                    <span>v1.0.1</span>
+                    <span className="text-green-500 font-medium">● Online</span>
+                </div>
             </div>
         </>
     );
