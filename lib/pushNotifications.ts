@@ -85,25 +85,36 @@ export async function subscribeToPush(userId: string): Promise<{ success: boolea
     }
 
     try {
+        // First register the service worker
         const registration = await registerServiceWorker();
         if (!registration) {
             return { success: false, error: 'Service worker not available' };
         }
 
+        // CRITICAL: Wait for the service worker to be ready/active
+        console.log('[Push] Waiting for service worker to be ready...');
+        const readyRegistration = await navigator.serviceWorker.ready;
+        console.log('[Push] Service worker is ready:', readyRegistration.active?.state);
+
         // Check if already subscribed
-        let subscription = await registration.pushManager.getSubscription();
+        let subscription = await readyRegistration.pushManager.getSubscription();
 
         if (!subscription) {
             // Create new subscription
-            subscription = await registration.pushManager.subscribe({
+            console.log('[Push] Creating new subscription with VAPID key...');
+            subscription = await readyRegistration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
             });
-            console.log('[Push] New subscription created');
+            console.log('[Push] New subscription created:', subscription.endpoint.substring(0, 50) + '...');
+        } else {
+            console.log('[Push] Existing subscription found');
         }
 
         // Save subscription to database
         const subscriptionJson = subscription.toJSON();
+        console.log('[Push] Saving subscription to database for user:', userId);
+
         const supabase = getSupabaseClient();
 
         const { error } = await supabase.from('push_subscriptions').upsert({
@@ -117,12 +128,12 @@ export async function subscribeToPush(userId: string): Promise<{ success: boolea
 
         if (error) {
             console.error('[Push] Failed to save subscription:', error);
-            return { success: false, error: 'Failed to save subscription' };
+            return { success: false, error: 'Failed to save subscription: ' + error.message };
         }
 
-        console.log('[Push] Subscription saved successfully');
+        console.log('[Push] Subscription saved successfully!');
         return { success: true };
-    } catch (error) {
+    } catch (error: any) {
         console.error('[Push] Subscription failed:', error);
         return { success: false, error: 'Failed to subscribe to notifications' };
     }
