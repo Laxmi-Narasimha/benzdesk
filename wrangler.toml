@@ -5,3 +5,4 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 NEXT_PUBLIC_SUPABASE_URL = "https://igrudnilqwmlgvmgneng.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlncnVkbmlscXdtbGd2bWduZW5nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2OTY4ODEsImV4cCI6MjA4MzI3Mjg4MX0.k0up7lc8-fnKm7x_tYxdAhM4wF5juhJuCC8WYf0H8dQ"
+NEXT_PUBLIC_VAPID_PUBLIC_KEY = "BN68gV5OViKFtES0XgM82WGpZhslNvDrLZTCSZbyUZf-FZR4NRduk6AOzWzbKkBtfSIibZzgsdFVoMMVS8wysmw"
