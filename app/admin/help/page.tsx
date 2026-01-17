@@ -9,8 +9,10 @@ import {
     CheckCircle2,
     Clock,
     Filter,
-    Shield
+    Shield,
+    Settings
 } from 'lucide-react';
+import { NotificationSettings, PWAInstallSettings } from '@/components/settings/NotificationSettings';
 
 export default function AdminHelpPage() {
     return (
@@ -169,6 +171,21 @@ export default function AdminHelpPage() {
                         </div>
                     </div>
                 </Card>
+            </section>
+
+            {/* 5. App Settings */}
+            <section className="space-y-4">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-100 rounded-lg">
+                        <Settings className="w-6 h-6 text-indigo-600" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-gray-900">App Settings</h2>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <NotificationSettings />
+                    <PWAInstallSettings />
+                </div>
             </section>
         </div>
     );
