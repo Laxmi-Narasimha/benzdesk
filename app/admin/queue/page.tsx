@@ -32,27 +32,42 @@ export default function AdminQueuePage() {
     });
     const [loadingStats, setLoadingStats] = useState(true);
 
-    // Fetch quick stats
+    // Fresh start date - only count requests after this date
+    const FRESH_START_DATE = '2026-01-14T00:00:00.000Z';
+
+    // Fetch quick stats - only counting requests after FRESH_START_DATE
     useEffect(() => {
         async function fetchStats() {
             try {
                 const supabase = getSupabaseClient();
 
+                // Query requests table directly with FRESH_START_DATE filter
                 const { data, error } = await supabase
-                    .from('v_requests_overview')
-                    .select('*');
+                    .from('requests')
+                    .select('status')
+                    .gte('created_at', FRESH_START_DATE);
 
                 if (data) {
-                    const statsMap: Record<string, number> = {};
+                    // Count by status manually
+                    const counts: Record<string, number> = {
+                        open: 0,
+                        in_progress: 0,
+                        waiting_on_requester: 0,
+                        pending_closure: 0,
+                        closed: 0,
+                    };
+
                     data.forEach((row: any) => {
-                        statsMap[row.status] = row.count;
+                        if (counts[row.status] !== undefined) {
+                            counts[row.status]++;
+                        }
                     });
 
                     setStats({
-                        open: statsMap['open'] || 0,
-                        in_progress: statsMap['in_progress'] || 0,
-                        waiting: statsMap['waiting_on_requester'] || 0,
-                        closed_today: 0, // Would need separate query
+                        open: counts['open'],
+                        in_progress: counts['in_progress'],
+                        waiting: counts['waiting_on_requester'],
+                        closed_today: counts['pending_closure'], // Repurpose as pending closure count
                     });
                 }
             } catch (err) {
@@ -96,10 +111,10 @@ export default function AdminQueuePage() {
                     className="border-l-4 border-amber-500"
                 />
                 <MetricCard
-                    title="Closed Today"
+                    title="Pending Closure"
                     value={stats.closed_today}
                     icon={<CheckCircle className="w-5 h-5" />}
-                    className="border-l-4 border-gray-500"
+                    className="border-l-4 border-purple-500"
                 />
             </div>
 

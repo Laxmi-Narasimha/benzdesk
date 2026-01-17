@@ -52,10 +52,14 @@ interface RequestDetailProps {
 // Status Options (for admin)
 // ============================================================================
 
-const statusOptions = Object.entries(REQUEST_STATUS_LABELS).map(([value, label]) => ({
+// Status options - admins can't set 'closed' directly, only 'pending_closure'
+// Directors can set any status including 'closed'
+const allStatusOptions = Object.entries(REQUEST_STATUS_LABELS).map(([value, label]) => ({
     value,
     label,
 }));
+
+const adminStatusOptions = allStatusOptions.filter(opt => opt.value !== 'closed');
 
 // ============================================================================
 // Component
@@ -404,7 +408,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                             {canManageRequests && (
                                 <div className="flex-shrink-0 w-full sm:w-auto">
                                     <Select
-                                        options={statusOptions}
+                                        options={isDirector ? allStatusOptions : adminStatusOptions}
                                         value={request.status}
                                         onChange={(e) => updateStatus(e.target.value as RequestStatus)}
                                         size="sm"
