@@ -165,13 +165,15 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
             setRequest(data);
             success('Status Updated', `Request status changed to ${REQUEST_STATUS_LABELS[newStatus]}`);
 
-            // Send push notification to requester
+            // Send push notification to requester with proper names
             if (data.created_by && user) {
                 notifyStatusChange(
                     data.created_by,
+                    '', // Email will be resolved by the trigger function
+                    data.id,
                     data.title,
                     newStatus,
-                    `/app/request?id=${data.id}`
+                    user.email
                 );
             }
 
