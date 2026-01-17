@@ -52,21 +52,27 @@ export function NotificationPrompt() {
         setLoading(true);
         try {
             const permission = await requestNotificationPermission();
+            console.log('[NotificationPrompt] Permission result:', permission);
+
             if (permission === 'granted') {
                 setEnabled(true);
-                setShow(false); // Always close after permission granted
-                // Try to subscribe in background (don't block UI)
-                subscribeToPush(user.id).catch(err => {
-                    console.error('Background subscription failed:', err);
-                });
+                setShow(false);
+
+                // Subscribe to push notifications
+                console.log('[NotificationPrompt] Subscribing user:', user.id);
+                const result = await subscribeToPush(user.id);
+                console.log('[NotificationPrompt] Subscription result:', result);
+
+                if (!result.success) {
+                    console.error('[NotificationPrompt] Subscription failed:', result.error);
+                }
             } else if (permission === 'denied') {
-                // User denied, close and don't show again
                 localStorage.setItem('notification-prompt-dismissed', 'true');
                 setShow(false);
             }
         } catch (error) {
-            console.error('Failed to enable notifications:', error);
-            setShow(false); // Close on error too
+            console.error('[NotificationPrompt] Failed to enable notifications:', error);
+            setShow(false);
         } finally {
             setLoading(false);
         }

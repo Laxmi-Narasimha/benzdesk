@@ -7,8 +7,9 @@
 
 import { getSupabaseClient } from './supabaseClient';
 
-// VAPID public key - will be generated and set in environment
-const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '';
+// VAPID public key - hardcoded since env vars may not be available in static builds
+// This is safe to expose - only the private key must be secret
+const VAPID_PUBLIC_KEY = 'BN68gV5OViKFtES0XgM82WGpZhslNvDrLZTCSZbyUZf-FZR4NRduk6AOzWzbKkBtfSIibZzgsdFVoMMVS8wysmw';
 
 // ============================================================================
 // Service Worker Registration
