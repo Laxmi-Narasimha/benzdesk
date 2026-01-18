@@ -6,7 +6,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, Mail, Lock, ArrowLeft, CheckCircle, ExternalLink, KeyRound } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { useToast } from '@/components/ui';
@@ -40,6 +40,8 @@ function getEmailProvider(email: string): { name: string; url: string } | null {
 
 export default function LoginPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const redirectTo = searchParams.get('redirect') || '/';
     const { user, loading: authLoading, sendOtp, loginWithPassword } = useAuth();
     const { success, error: showError } = useToast();
 
@@ -52,9 +54,10 @@ export default function LoginPage() {
 
     useEffect(() => {
         if (!authLoading && user) {
-            router.replace('/');
+            // Redirect to original destination or home
+            router.replace(redirectTo);
         }
-    }, [user, authLoading, router]);
+    }, [user, authLoading, router, redirectTo]);
 
     const handleEmailSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -99,7 +102,7 @@ export default function LoginPage() {
 
             if (verified) {
                 success('Welcome', 'Signed in successfully');
-                router.replace('/');
+                router.replace(redirectTo);
             } else {
                 showError('Error', error || 'Invalid credentials');
             }
