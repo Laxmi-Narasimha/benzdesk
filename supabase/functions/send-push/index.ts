@@ -1,6 +1,7 @@
 // ============================================================================
 // Supabase Edge Function: Send Push Notification
 // Uses web-push library for proper encryption and delivery
+// Also stores notification in database for in-app display
 // ============================================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -12,13 +13,109 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req) => {
+// User names mapping from employee directory
+const USER_NAMES: Record<string, string> = {
+    'paulraj@benz-packaging.com': 'A.A. Paulraj',
+    'wh.jaipur@benz-packaging.com': 'Mani Bhushan',
+    'abhishek@benz-packaging.com': 'Abhishek Kori',
+    'accounts.chennai@benz-packaging.com': 'Accounts Chennai',
+    'accounts@benz-packaging.com': 'Accounts BENZ',
+    'accounts1@benz-packaging.com': 'Accounts1',
+    'ajay@benz-packaging.com': 'Ajay',
+    'dispatch1@benz-packaging.com': 'Aman Roy',
+    'sales3@benz-packaging.com': 'Babita',
+    'sales4@benz-packaging.com': 'BENZ Sales',
+    'deepak@benz-packaging.com': 'Deepak Bhardwaj',
+    'dinesh@benz-packaging.com': 'Dinesh',
+    'sales@ergopack-india.com': 'Ergopack India',
+    'gate@benz-packaging.com': 'Gate Entry',
+    'hr@benz-packaging.com': 'HR',
+    'isha@benz-packaging.com': 'Isha Mahajan',
+    'chennai@benz-packaging.com': 'Jayashree N',
+    'karthick@benz-packaging.com': 'Karthick Ravishankar',
+    'laxmi@benz-packaging.com': 'Laxmi Narasimha',
+    'lokesh@benz-packaging.com': 'Lokesh Ronchhiya',
+    'hr.manager@benz-packaging.com': 'Mahesh Gupta',
+    'manan@benz-packaging.com': 'Manan Chopra',
+    'marketing@benz-packaging.com': 'Marketing',
+    'warehouse@benz-packaging.com': 'Narender',
+    'neeraj@benz-packaging.com': 'Neeraj Singh',
+    'neveta@benz-packaging.com': 'Neveta',
+    'supplychain@benz-packaging.com': 'Paramveer Yadav',
+    'pavan.kr@benz-packaging.com': 'Pavan Kumar',
+    'qa@benz-packaging.com': 'Pawan',
+    'po@benz-packaging.com': 'PO',
+    'ccare2@benz-packaging.com': 'Pradeep Kumar',
+    'prashansa@benz-packaging.com': 'Prashansa Madan',
+    'ccare6@benz-packaging.com': 'Preeti R',
+    'pulak@benz-packaging.com': 'Pulak Biswas',
+    'quality.chennai@benz-packaging.com': 'Quality Chennai',
+    'rahul@benz-packaging.com': 'Rahul',
+    'rekha@benz-packaging.com': 'Rekha C',
+    'samish@benz-packaging.com': 'Samish Thakur',
+    'sandeep@benz-packaging.com': 'Sandeep',
+    'satender@benz-packaging.com': 'Satender Singh',
+    'satheeswaran@benz-packaging.com': 'Sathees Waran',
+    'saurav@benz-packaging.com': 'Saurav Kumar',
+    'ccare@benz-packaging.com': 'Shikha Sharma',
+    'store@benz-packaging.com': 'Store',
+    'sales5@benz-packaging.com': 'Tarun Bhardwaj',
+    'yamada@benz-packaging.com': 'Tomy Yamada',
+    'bhandari@benz-packaging.com': 'TS Bhandari',
+    'it@benz-packaging.com': 'Udit Suri',
+    'bangalore@benz-packaging.com': 'Vijay Danieal',
+    'warehouse.ap@benz-packaging.com': 'Warehouse AP',
+    'chaitanya@benz-packaging.com': 'Chaitanya',
+    'vikky@benz-packaging.com': 'Vikky',
+    'hr.support@benz-packaging.com': 'HR Support',
+    'rfq@benz-packaging.com': 'RFQ',
+};
+
+function getDisplayName(email: string | null | undefined): string {
+    if (!email) return 'Unknown';
+    const lowerEmail = email.toLowerCase();
+    if (USER_NAMES[lowerEmail]) {
+        return USER_NAMES[lowerEmail];
+    }
+    // Fallback: format email prefix
+    return email.split('@')[0]
+        .replace(/[._]/g, ' ')
+        .split(' ')
+        .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+}
+
+// Detect notification type from title/body
+function detectNotificationType(title: string): string {
+    if (title.includes('💬') || title.toLowerCase().includes('comment') || title.toLowerCase().includes('replied')) {
+        return 'comment';
+    }
+    if (title.includes('📎') || title.toLowerCase().includes('upload') || title.toLowerCase().includes('file')) {
+        return 'file_upload';
+    }
+    if (title.includes('🔄') || title.includes('✅') || title.includes('⚠️') || title.toLowerCase().includes('status')) {
+        return 'status_change';
+    }
+    if (title.includes('📩') || title.toLowerCase().includes('new request')) {
+        return 'status_change';
+    }
+    return 'comment'; // default
+}
+
+// Extract request ID from URL
+function extractRequestId(url: string | undefined): string | null {
+    if (!url) return null;
+    const match = url.match(/[?&]id=([a-f0-9-]+)/i);
+    return match ? match[1] : null;
+}
+
+serve(async (req: Request) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
     }
 
     try {
-        const { user_id, title, body, url, tag } = await req.json()
+        const { user_id, title, body, url, tag, sender_email } = await req.json()
 
         // Environment variables
         const supabaseUrl = Deno.env.get('SUPABASE_URL') || ''
@@ -40,7 +137,67 @@ serve(async (req) => {
         // Initialize Supabase client
         const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-        // Get subscriptions for user
+        // =========================================================
+        // STEP 1: Store notification in database for in-app display
+        // =========================================================
+        const notificationType = detectNotificationType(title || '');
+        const requestId = extractRequestId(url);
+
+        // Format the title with proper display name if sender_email provided
+        let formattedTitle = title || 'BenzDesk Notification';
+        let formattedBody = body || 'You have a new update';
+
+        if (sender_email) {
+            const senderName = getDisplayName(sender_email);
+            // Replace generic "client" references with actual name
+            formattedTitle = formattedTitle.replace(/\bclient\b/gi, senderName);
+            formattedBody = formattedBody.replace(/\bclient\b/gi, senderName);
+        }
+
+        try {
+            const { error: insertError } = await supabase
+                .from('notifications')
+                .insert({
+                    user_id: user_id,
+                    request_id: requestId,
+                    type: notificationType,
+                    title: formattedTitle,
+                    message: formattedBody,
+                    is_read: false,
+                });
+
+            if (insertError) {
+                console.error('Failed to insert notification:', insertError);
+            } else {
+                console.log('In-app notification stored successfully');
+            }
+
+            // =========================================================
+            // STEP 2: Cleanup old notifications - keep only latest 10
+            // =========================================================
+            const { data: oldNotifications } = await supabase
+                .from('notifications')
+                .select('id')
+                .eq('user_id', user_id)
+                .order('created_at', { ascending: false })
+                .range(10, 1000); // Get notifications after the first 10
+
+            if (oldNotifications && oldNotifications.length > 0) {
+                const idsToDelete = oldNotifications.map((n: { id: string }) => n.id);
+                await supabase
+                    .from('notifications')
+                    .delete()
+                    .in('id', idsToDelete);
+                console.log(`Cleaned up ${idsToDelete.length} old notifications`);
+            }
+        } catch (dbErr) {
+            console.error('Database error for in-app notification:', dbErr);
+            // Continue with push notification even if in-app fails
+        }
+
+        // =========================================================
+        // STEP 3: Send push notification
+        // =========================================================
         const { data: subscriptions, error: dbError } = await supabase
             .from('push_subscriptions')
             .select('*')
@@ -52,7 +209,7 @@ serve(async (req) => {
 
         if (!subscriptions || subscriptions.length === 0) {
             return new Response(
-                JSON.stringify({ success: false, message: 'No subscriptions found', sent: 0 }),
+                JSON.stringify({ success: true, message: 'In-app notification stored, no push subscriptions', sent: 0 }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             )
         }
@@ -61,8 +218,8 @@ serve(async (req) => {
 
         // Prepare payload
         const payload = JSON.stringify({
-            title: title || 'BenzDesk Notification',
-            body: body || 'You have a new update',
+            title: formattedTitle,
+            body: formattedBody,
             url: url || '/',
             tag: tag || 'benzdesk-notification',
             icon: '/icon-192.png',
@@ -72,7 +229,7 @@ serve(async (req) => {
 
         // Send notifications
         const results = await Promise.allSettled(
-            subscriptions.map(async (sub) => {
+            subscriptions.map(async (sub: { id: string; endpoint: string; p256dh: string; auth: string }) => {
                 try {
                     const pushSubscription = {
                         endpoint: sub.endpoint,
@@ -84,11 +241,12 @@ serve(async (req) => {
 
                     await webpush.sendNotification(pushSubscription, payload)
                     return { success: true, endpoint: sub.endpoint }
-                } catch (error) {
+                } catch (error: unknown) {
                     console.error(`Failed to send to ${sub.endpoint}:`, error)
 
                     // If subscription is invalid/expired, delete it
-                    if (error.statusCode === 404 || error.statusCode === 410) {
+                    const err = error as { statusCode?: number };
+                    if (err.statusCode === 404 || err.statusCode === 410) {
                         await supabase.from('push_subscriptions').delete().eq('id', sub.id)
                         console.log(`Deleted invalid subscription: ${sub.id}`)
                     }
@@ -98,8 +256,8 @@ serve(async (req) => {
             })
         )
 
-        const sentCount = results.filter(r => r.status === 'fulfilled').length
-        const failedCount = results.filter(r => r.status === 'rejected').length
+        const sentCount = results.filter((r: PromiseSettledResult<unknown>) => r.status === 'fulfilled').length
+        const failedCount = results.filter((r: PromiseSettledResult<unknown>) => r.status === 'rejected').length
 
         console.log(`Sent: ${sentCount}, Failed: ${failedCount}`)
 
@@ -107,15 +265,17 @@ serve(async (req) => {
             JSON.stringify({
                 success: true,
                 sent: sentCount,
-                failed: failedCount
+                failed: failedCount,
+                inApp: true
             }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const err = error as { message?: string };
         console.error('Error in send-push:', error)
         return new Response(
-            JSON.stringify({ success: false, error: error.message }),
+            JSON.stringify({ success: false, error: err.message || 'Unknown error' }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
         )
     }
