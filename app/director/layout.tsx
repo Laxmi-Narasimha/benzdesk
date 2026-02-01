@@ -18,29 +18,32 @@ export default function DirectorLayout({
     children: React.ReactNode;
 }) {
     const router = useRouter();
-    const { user, loading, isDirector } = useAuth();
+    const { user, loading, isDirector, isAdmin } = useAuth();
 
-    // Redirect if not director
+    // Allow both directors and admins to access this section
+    const hasAccess = isDirector || isAdmin;
+
+    // Redirect if not authorized
     useEffect(() => {
         if (!loading) {
             if (!user) {
                 router.replace('/login');
-            } else if (!isDirector) {
+            } else if (!hasAccess) {
                 router.replace('/app/my-requests');
             }
         }
-    }, [user, loading, isDirector, router]);
+    }, [user, loading, hasAccess, router]);
 
     if (loading) {
         return <PageLoader message="Loading..." />;
     }
 
-    if (!user || !isDirector) {
+    if (!user || !hasAccess) {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <Card className="text-center p-8">
                     <h2 className="text-xl font-semibold text-dark-100">Access Denied</h2>
-                    <p className="text-dark-400 mt-2">Director access required.</p>
+                    <p className="text-dark-400 mt-2">Director or Admin access required.</p>
                 </Card>
             </div>
         );

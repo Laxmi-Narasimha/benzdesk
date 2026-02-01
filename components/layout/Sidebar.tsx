@@ -93,7 +93,7 @@ const adminNav: NavItem[] = [
         href: '/director/mobitraq',
         label: 'BenzMobiTraq Admin',
         icon: <Smartphone className="w-5 h-5" />,
-        roles: ['director'],  // Only directors can access MobiTraq
+        roles: ['accounts_admin', 'director'],  // Directors and Admins can access MobiTraq
     },
 ];
 
