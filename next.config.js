@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Using next-on-pages for Cloudflare deployment (SSR support)
-  // Static export disabled as it has compatibility issues
-  // output: 'export',
+  // Static export for Cloudflare Pages
+  // Required for static hosting without server adapter
+  output: 'export',
 
   // Disable image optimization
   images: {
