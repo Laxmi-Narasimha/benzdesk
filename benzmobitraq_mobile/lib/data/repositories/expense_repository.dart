@@ -6,19 +6,23 @@ import 'package:uuid/uuid.dart';
 
 import '../datasources/remote/supabase_client.dart';
 import '../models/expense_model.dart';
+import '../datasources/local/expense_queue_local.dart';
 
 /// Repository for handling expense operations
 class ExpenseRepository {
   final SupabaseDataSource _dataSource;
   final SupabaseClient _supabaseClient;
+  final ExpenseQueueLocal _localQueue;
   final Logger _logger = Logger();
   final Uuid _uuid = const Uuid();
 
   ExpenseRepository({
     required SupabaseDataSource dataSource,
     required SupabaseClient supabaseClient,
+    required ExpenseQueueLocal localQueue,
   })  : _dataSource = dataSource,
-        _supabaseClient = supabaseClient;
+        _supabaseClient = supabaseClient,
+        _localQueue = localQueue;
 
   // ============================================================
   // EXPENSE CLAIMS
@@ -30,18 +34,25 @@ class ExpenseRepository {
     DateTime? claimDate,
     String? notes,
   }) async {
-    try {
-      final claim = ExpenseClaimModel.create(
-        id: _uuid.v4(),
-        employeeId: employeeId,
-        claimDate: claimDate,
-        notes: notes,
-      );
+    final claim = ExpenseClaimModel.create(
+      id: _uuid.v4(),
+      employeeId: employeeId,
+      claimDate: claimDate,
+      notes: notes,
+    );
 
-      return await _dataSource.createExpenseClaim(claim);
+    try {
+      final createdComp = await _dataSource.createExpenseClaim(claim);
+      // Also save to local DB as synced for viewing when offline
+      await _localQueue.queueClaim(createdComp!.copyWith()); // Ensure synced is set?
+      // Actually queueClaim saves as is, so we might want to mark it synced
+      await _localQueue.markClaimAsSynced(claim.id); 
+      return createdComp;
     } catch (e) {
-      _logger.e('Error creating expense claim: $e');
-      return null;
+      _logger.w('Offline: Queueing expense claim: $e');
+      // Save locally as unsynced
+      await _localQueue.queueClaim(claim);
+      return claim;
     }
   }
 
@@ -62,13 +73,41 @@ class ExpenseRepository {
     int offset = 0,
   }) async {
     try {
-      return await _dataSource.getEmployeeExpenses(
+      // 1. Get remote expenses
+      final remoteClaims = await _dataSource.getEmployeeExpenses(
         employeeId: employeeId,
         limit: limit,
         offset: offset,
       );
+
+      // 2. Get local pending expenses (only on first page/offset 0)
+      List<ExpenseClaimModel> localClaims = [];
+      if (offset == 0) {
+        localClaims = await _localQueue.getPendingClaims();
+      }
+
+      // 3. Merge and sort
+      final allClaims = [...localClaims, ...remoteClaims];
+      
+      // Deduplicate
+      final seenIds = <String>{};
+      final uniqueClaims = <ExpenseClaimModel>[];
+      
+      for (final claim in allClaims) {
+        if (seenIds.add(claim.id)) {
+          uniqueClaims.add(claim);
+        }
+      }
+      
+      uniqueClaims.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      
+      return uniqueClaims;
     } catch (e) {
       _logger.e('Error getting employee expenses: $e');
+      // Fallback to local only if remote fails
+      if (offset == 0) {
+         return await _localQueue.getPendingClaims();
+      }
       return [];
     }
   }
@@ -108,34 +147,54 @@ class ExpenseRepository {
     File? receiptImage,
     DateTime? expenseDate,
   }) async {
+    // 1. Prepare item
+    final item = ExpenseItemModel.create(
+      id: _uuid.v4(),
+      claimId: claimId,
+      category: category,
+      amount: amount,
+      description: description,
+      merchant: merchant,
+      receiptPath: null, // Will be set if uploaded
+      expenseDate: expenseDate,
+    );
+    
+    // We need to store local path in the model temporarily or in the queue
+    // ExpenseItemModel now has localReceiptPath in toLocalJson logic
+    // But we need to pass it to queueItem if we fall back.
+    // The model field 'receiptPath' is for REMOTE path. 
+    // We update the item with local path before queueing if offline.
+
     try {
       String? receiptPath;
-
-      // Upload receipt image if provided
       if (receiptImage != null) {
         receiptPath = await _uploadReceipt(claimId, receiptImage);
+        if (receiptPath == null) throw Exception('Failed to upload receipt');
       }
 
-      final item = ExpenseItemModel.create(
-        id: _uuid.v4(),
-        claimId: claimId,
-        category: category,
-        amount: amount,
-        description: description,
-        merchant: merchant,
-        receiptPath: receiptPath,
-        expenseDate: expenseDate,
-      );
-
-      final createdItem = await _dataSource.addExpenseItem(item);
+      final itemWithReceipt = item.copyWith(receiptPath: receiptPath);
+      final createdItem = await _dataSource.addExpenseItem(itemWithReceipt);
 
       // Update claim total
       await _dataSource.updateExpenseClaimTotal(claimId);
 
       return createdItem;
     } catch (e) {
-      _logger.e('Error adding expense item: $e');
-      return null;
+      _logger.w('Offline: Queueing expense item: $e');
+      
+      // Save locally with local receipt path
+      // Note: We're reusing 'receiptPath' to store the local file path temporarily
+      // OR better, rely on 'local_receipt_path' in the queue map.
+      // Since `toLocalJson` uses `receiptPath` as `local_receipt_path` if present...
+      // Wait, `toLocalJson` maps `receiptPath` to `local_receipt_path`.
+      // So we set `receiptPath` to the local file path here.
+      
+      final offlineItem = item.copyWith(
+        receiptPath: receiptImage?.path, 
+      );
+      
+      await _localQueue.queueItem(offlineItem);
+      return offlineItem;
     }
   }
 
@@ -487,6 +546,65 @@ class ExpenseRepository {
     } catch (e) {
       _logger.e('Error getting attachment URL: $e');
       return null;
+    }
+  }
+  }
+
+  // ============================================================
+  // SYNCHRONIZATION
+  // ============================================================
+
+  /// Sync all pending claims and items
+  Future<int> syncPendingExpenses() async {
+    int syncedCount = 0;
+    
+    try {
+      // 1. Sync Claims
+      final pendingClaims = await _localQueue.getPendingClaims();
+      for (final claim in pendingClaims) {
+        try {
+          // Check if it already exists (idempotency check)? 
+          await _dataSource.createExpenseClaim(claim);
+          await _localQueue.markClaimAsSynced(claim.id);
+          syncedCount++;
+        } catch (e) {
+           _logger.e('Error syncing claim ${claim.id}: $e');
+        }
+      }
+
+      // 2. Sync Items
+      final pendingItems = await _localQueue.getUnuploadedItems();
+      for (final item in pendingItems) {
+        try {
+          String? remoteReceiptPath = item.receiptPath;
+          
+          // Check if we have a local receipt that needs upload
+          if (item.hasReceipt && !item.receiptPath!.startsWith('receipts/')) {
+             final file = File(item.receiptPath!);
+             if (await file.exists()) {
+               remoteReceiptPath = await _uploadReceipt(item.claimId, file);
+             } else {
+               _logger.w('Local receipt file not found: ${item.receiptPath}');
+               remoteReceiptPath = null; 
+               continue; 
+             }
+          }
+          
+          final syncItem = item.copyWith(receiptPath: remoteReceiptPath);
+          await _dataSource.addExpenseItem(syncItem);
+          
+          await _localQueue.markItemAsUploaded(item.id, remoteReceiptPath: remoteReceiptPath);
+          syncedCount++;
+        } catch (e) {
+          _logger.e('Error syncing item ${item.id}: $e');
+          await _localQueue.incrementItemUploadAttempts(item.id);
+        }
+      }
+      
+      return syncedCount;
+    } catch (e) {
+      _logger.e('Error in syncPendingExpenses: $e');
+      return syncedCount;
     }
   }
 }

@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../data/datasources/local/preferences_local.dart';
 import '../../data/datasources/local/location_queue_local.dart';
+import '../../data/datasources/local/expense_queue_local.dart';
 import '../../data/datasources/remote/supabase_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/session_repository.dart';
@@ -52,6 +53,13 @@ Future<void> configureDependencies() async {
   // Initialize location queue database
   await getIt<LocationQueueLocal>().init();
 
+  getIt.registerLazySingleton<ExpenseQueueLocal>(
+    () => ExpenseQueueLocal(),
+  );
+
+  // Initialize expense queue database
+  await getIt<ExpenseQueueLocal>().init();
+
   // ============================================================
   // REMOTE DATA SOURCES
   // ============================================================
@@ -95,6 +103,7 @@ Future<void> configureDependencies() async {
     () => ExpenseRepository(
       dataSource: getIt<SupabaseDataSource>(),
       supabaseClient: getIt<SupabaseClient>(),
+      localQueue: getIt<ExpenseQueueLocal>(),
     ),
   );
 
@@ -119,7 +128,7 @@ Future<void> configureDependencies() async {
   getIt.registerLazySingleton<SessionManager>(
     () => SessionManager(
       sessionRepository: getIt<SessionRepository>(),
-      locationQueue: getIt<LocationQueueLocal>(),
+      locationRepository: getIt<LocationRepository>(),
       preferences: getIt<PreferencesLocal>(),
       permissionService: getIt<PermissionService>(),
       notificationScheduler: getIt<NotificationScheduler>(),

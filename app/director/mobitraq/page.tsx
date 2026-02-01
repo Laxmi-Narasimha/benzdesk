@@ -23,6 +23,18 @@ interface Session {
     } | null;
 }
 
+interface ExpenseClaim {
+    id: string;
+    employee_id: string;
+    claim_date: string;
+    total_amount: number;
+    status: string;
+    employees: {
+        name: string;
+        email: string;
+    } | null;
+}
+
 interface EmployeeStats {
     id: string;
     name: string;
@@ -35,24 +47,31 @@ interface EmployeeStats {
 
 export default function MobitraqDashboard() {
     const [sessions, setSessions] = useState<Session[]>([]);
+    const [expenses, setExpenses] = useState<ExpenseClaim[]>([]);
     const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [todayStats, setTodayStats] = useState({
         activeSessions: 0,
         totalEmployees: 0,
         totalKmToday: 0,
         totalHoursToday: 0,
+        totalExpenses: 0,
+        expenseCount: 0,
     });
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        fetchData(selectedDate);
+    }, [selectedDate]);
 
-    const fetchData = async () => {
+    const fetchData = async (date: string) => {
         setIsLoading(true);
         try {
             const supabase = getSupabaseClient();
-            const today = new Date().toISOString().split('T')[0];
+
+            // Start and end of selected date
+            const startOfDay = `${date}T00:00:00`;
+            const endOfDay = `${date}T23:59:59`;
 
             const { data: sessionsData, error: sessionsError } = await supabase
                 .from('shift_sessions')
@@ -67,7 +86,8 @@ export default function MobitraqDashboard() {
                         email
                     )
                 `)
-                .gte('start_time', `${today}T00:00:00`)
+                .gte('start_time', startOfDay)
+                .lte('start_time', endOfDay)
                 .order('start_time', { ascending: false });
 
             if (sessionsError) throw sessionsError;
@@ -78,11 +98,40 @@ export default function MobitraqDashboard() {
                 employees: Array.isArray(s.employees) ? s.employees[0] : s.employees
             }));
 
+            // Fetch Expenses
+            const { data: expenseData, error: expenseError } = await supabase
+                .from('expense_claims')
+                .select(`
+                    id,
+                    employee_id,
+                    claim_date,
+                    total_amount,
+                    status,
+                    employees (
+                        name,
+                        email
+                    )
+                `)
+                .eq('claim_date', date)
+                .order('created_at', { ascending: false });
+
+            if (expenseError) throw expenseError;
+
+            const transformedExpenses: ExpenseClaim[] = (expenseData || []).map((e: any) => ({
+                ...e,
+                employees: Array.isArray(e.employees) ? e.employees[0] : e.employees
+            }));
+
             setSessions(transformedSessions);
+            setExpenses(transformedExpenses);
 
             // Calculate stats
             const activeSessions = transformedSessions.filter(s => !s.end_time).length;
             const totalKm = transformedSessions.reduce((sum, s) => sum + (s.total_km || 0), 0);
+
+            // Expense Stats
+            const totalExpenseAmount = transformedExpenses.reduce((sum, e) => sum + (e.total_amount || 0), 0);
+            const expenseCount = transformedExpenses.length;
 
             // Calculate total hours
             let totalMinutes = 0;
@@ -100,6 +149,8 @@ export default function MobitraqDashboard() {
                 totalEmployees: uniqueEmployees,
                 totalKmToday: totalKm,
                 totalHoursToday: Math.round(totalMinutes / 60 * 10) / 10,
+                totalExpenses: totalExpenseAmount,
+                expenseCount: expenseCount,
             });
 
             // Aggregate by employee
@@ -156,19 +207,21 @@ export default function MobitraqDashboard() {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">BenzMobiTraq</h1>
                     <p className="text-gray-500">Field force tracking overview</p>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <Calendar className="w-4 h-4" />
-                    {new Date().toLocaleDateString('en-IN', {
-                        weekday: 'long',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                    })}
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-gray-200">
+                        <Calendar className="w-4 h-4 text-gray-500" />
+                        <input
+                            type="date"
+                            value={selectedDate}
+                            onChange={(e) => setSelectedDate(e.target.value)}
+                            className="outline-none text-sm text-gray-700 bg-transparent"
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -202,12 +255,19 @@ export default function MobitraqDashboard() {
                     color="orange"
                     subtitle="Field time today"
                 />
+                <StatsCard
+                    icon={<div className="font-bold text-lg">₹</div>}
+                    label="Total Expenses"
+                    value={`₹${todayStats.totalExpenses.toLocaleString()}`}
+                    color="green" // Using green for money? Or maybe separate color
+                    subtitle={`${todayStats.expenseCount} claims lodged`}
+                />
             </div>
 
             {/* Employee Stats Table */}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-200">
-                    <h2 className="text-lg font-semibold text-gray-900">Today&apos;s Field Activity</h2>
+                    <h2 className="text-lg font-semibold text-gray-900">Field Activity - {selectedDate}</h2>
                 </div>
 
                 {employeeStats.length === 0 ? (
@@ -265,7 +325,101 @@ export default function MobitraqDashboard() {
                     </div>
                 )}
             </div>
+
+            {/* Expenses List */}
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-200">
+                    <h2 className="text-lg font-semibold text-gray-900">Expense Claims - {selectedDate}</h2>
+                </div>
+
+                {expenses.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">
+                        <p>No expense claims lodged for this date</p>
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                                {expenses.map((exp) => (
+                                    <tr key={exp.id} className="hover:bg-gray-50">
+                                        <td className="px-6 py-4">
+                                            <div className="font-medium text-gray-900">{exp.employees?.name || 'Unknown'}</div>
+                                            <div className="text-sm text-gray-500">{exp.employees?.email}</div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${exp.status === 'approved' ? 'bg-green-100 text-green-800' :
+                                                exp.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                                    'bg-yellow-100 text-yellow-800'
+                                                }`}>
+                                                {exp.status.charAt(0).toUpperCase() + exp.status.slice(1)}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 font-semibold text-gray-900">
+                                            ₹{exp.total_amount.toLocaleString()}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
         </div>
+
+            {/* Expenses List */ }
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Expense Claims - {selectedDate}</h2>
+        </div>
+
+        {expenses.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+                <Activity className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                <p>No expense claims lodged for this date</p>
+            </div>
+        ) : (
+            <div className="overflow-x-auto">
+                <table className="w-full">
+                    <thead className="bg-gray-50">
+                        <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                        {expenses.map((exp) => (
+                            <tr key={exp.id} className="hover:bg-gray-50">
+                                <td className="px-6 py-4">
+                                    <div className="font-medium text-gray-900">{exp.employees?.name || 'Unknown'}</div>
+                                    <div className="text-sm text-gray-500">{exp.employees?.email}</div>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${exp.status === 'approved' ? 'bg-green-100 text-green-800' :
+                                        exp.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                            'bg-yellow-100 text-yellow-800'
+                                        }`}>
+                                        {exp.status.charAt(0).toUpperCase() + exp.status.slice(1)}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 font-semibold text-gray-900">
+                                    ₹{exp.total_amount.toLocaleString()}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        )}
+    </div>
+        </div >
     );
 }
 

@@ -85,6 +85,47 @@ class ExpenseClaimModel extends Equatable {
     };
   }
 
+  /// Convert to JSON for local SQLite storage
+  Map<String, dynamic> toLocalJson() {
+    return {
+      'id': id,
+      'employee_id': employeeId,
+      'claim_date': claimDate.millisecondsSinceEpoch,
+      'total_amount': totalAmount,
+      'status': status.value,
+      'notes': notes,
+      'rejection_reason': rejectionReason,
+      'submitted_at': submittedAt?.millisecondsSinceEpoch,
+      'reviewed_at': reviewedAt?.millisecondsSinceEpoch,
+      'reviewed_by': reviewedBy,
+      'created_at': createdAt.millisecondsSinceEpoch,
+      'updated_at': updatedAt.millisecondsSinceEpoch,
+      'is_synced': 0, // Default to not synced
+    };
+  }
+
+  /// Create from local SQLite storage
+  factory ExpenseClaimModel.fromLocalJson(Map<String, dynamic> json) {
+    return ExpenseClaimModel(
+      id: json['id'] as String,
+      employeeId: json['employee_id'] as String,
+      claimDate: DateTime.fromMillisecondsSinceEpoch(json['claim_date'] as int),
+      totalAmount: (json['total_amount'] as num?)?.toDouble() ?? 0.0,
+      status: ExpenseStatus.fromString(json['status'] as String? ?? 'draft'),
+      notes: json['notes'] as String?,
+      rejectionReason: json['rejection_reason'] as String?,
+      submittedAt: json['submitted_at'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(json['submitted_at'] as int)
+          : null,
+      reviewedAt: json['reviewed_at'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(json['reviewed_at'] as int)
+          : null,
+      reviewedBy: json['reviewed_by'] as String?,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
+    );
+  }
+
   /// Create a new expense claim
   factory ExpenseClaimModel.create({
     required String id,
@@ -215,6 +256,38 @@ class ExpenseItemModel extends Equatable {
       'expense_date': expenseDate.toIso8601String().split('T')[0],
       'created_at': createdAt.toIso8601String(),
     };
+  }
+
+  /// Convert to JSON for local SQLite storage
+  Map<String, dynamic> toLocalJson() {
+    return {
+      'id': id,
+      'claim_id': claimId,
+      'category': category.value,
+      'amount': amount,
+      'description': description,
+      'merchant': merchant,
+      'receipt_path': receiptPath,
+      'local_receipt_path': receiptPath, // Store local path if not uploaded
+      'expense_date': expenseDate.millisecondsSinceEpoch,
+      'created_at': createdAt.millisecondsSinceEpoch,
+      'uploaded': 0,
+    };
+  }
+
+  /// Create from local SQLite storage
+  factory ExpenseItemModel.fromLocalJson(Map<String, dynamic> json) {
+    return ExpenseItemModel(
+      id: json['id'] as String,
+      claimId: json['claim_id'] as String,
+      category: ExpenseCategory.fromString(json['category'] as String),
+      amount: (json['amount'] as num).toDouble(),
+      description: json['description'] as String?,
+      merchant: json['merchant'] as String?,
+      receiptPath: json['receipt_path'] as String?, // Might be remote or local
+      expenseDate: DateTime.fromMillisecondsSinceEpoch(json['expense_date'] as int),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+    );
   }
 
   /// Create a new expense item

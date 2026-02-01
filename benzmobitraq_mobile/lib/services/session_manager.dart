@@ -7,7 +7,7 @@ import '../data/models/session_model.dart';
 import '../data/models/location_point_model.dart';
 import '../data/models/notification_settings.dart';
 import '../data/repositories/session_repository.dart';
-import '../data/datasources/local/location_queue_local.dart';
+import '../data/repositories/location_repository.dart';
 import '../data/datasources/local/preferences_local.dart';
 import 'tracking_service.dart';
 import 'permission_service.dart';
@@ -92,7 +92,7 @@ class ManagerSessionState {
 /// ```
 class SessionManager {
   final SessionRepository _sessionRepository;
-  final LocationQueueLocal _locationQueue;
+  final LocationRepository _locationRepository;
   final PreferencesLocal _preferences;
   final PermissionService _permissionService;
   final NotificationScheduler? _notificationScheduler;
@@ -112,12 +112,12 @@ class SessionManager {
 
   SessionManager({
     required SessionRepository sessionRepository,
-    required LocationQueueLocal locationQueue,
+    required LocationRepository locationRepository,
     required PreferencesLocal preferences,
     PermissionService? permissionService,
     NotificationScheduler? notificationScheduler,
   })  : _sessionRepository = sessionRepository,
-        _locationQueue = locationQueue,
+        _locationRepository = locationRepository,
         _preferences = preferences,
         _permissionService = permissionService ?? PermissionService(),
         _notificationScheduler = notificationScheduler;
@@ -509,7 +509,7 @@ class SessionManager {
         isMoving: update.isMoving,
       );
 
-      await _locationQueue.enqueue(point);
+      await _locationRepository.queueLocation(point);
     } catch (e) {
       _logger.e('Error queueing location: $e');
     }
@@ -517,16 +517,8 @@ class SessionManager {
 
   Future<void> _syncPendingLocations() async {
     try {
-      final pending = await _locationQueue.getUnuploaded();
-      if (pending.isEmpty) return;
-
-      _logger.i('Syncing ${pending.length} pending locations...');
-
-      // TODO: Upload to Supabase via repository
-      // For now, just mark as uploaded
-      for (final point in pending) {
-        await _locationQueue.markAsUploaded([point.id!]);
-      }
+      final uploadedCount = await _locationRepository.uploadPendingLocations();
+      _logger.i('Sync completed. Uploaded $uploadedCount points.');
 
       await _preferences.saveLastSyncTime(DateTime.now());
       _logger.i('Sync completed');
