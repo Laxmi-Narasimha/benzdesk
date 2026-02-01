@@ -89,6 +89,12 @@ const adminNav: NavItem[] = [
         icon: <BookOpen className="w-5 h-5" />,
         roles: ['accounts_admin', 'director'],
     },
+    {
+        href: '/director/mobitraq',
+        label: 'BenzMobiTraq Admin',
+        icon: <Smartphone className="w-5 h-5" />,
+        roles: ['director'],  // Only directors can access MobiTraq
+    },
 ];
 
 const directorNav: NavItem[] = [
@@ -231,7 +237,7 @@ export function Sidebar() {
 
         if (isDirector) {
             items.push(...directorNav);
-            items.push(...mobitraqNav); // BenzMobiTraq field tracking
+            // MobiTraq link is now in adminNav under 'BenzMobiTraq Admin'
         }
 
         return items;

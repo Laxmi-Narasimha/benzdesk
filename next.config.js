@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Static export for robust Cloudflare Pages deployment
-  // Using query params instead of dynamic routes for compatibility
-  output: 'export',
+  // Using next-on-pages for Cloudflare deployment (SSR support)
+  // Static export disabled as it has compatibility issues
+  // output: 'export',
 
   // Disable image optimization
   images: {
