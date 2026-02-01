@@ -1,0 +1,250 @@
+﻿Analyzing benzmobitraq_mobile...                                
+
+   info - Use 'package:' imports for files in the 'lib' directory - lib\app.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\app.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\app.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\app.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\app.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\app.dart:9:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\app.dart:10:8 - always_use_package_imports
+   info - Use 'const' with the constructor to improve performance - lib\core\constants\theme_constants.dart:54:20 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\core\constants\theme_constants.dart:261:20 - prefer_const_constructors
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:9:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:10:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:11:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:12:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:13:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:14:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:15:8 - always_use_package_imports
+warning - Unused import: '../../services/tracking_service.dart' - lib\core\di\injection.dart:15:8 - unused_import
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:16:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:17:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:18:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\di\injection.dart:19:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:3:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:9:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\router\app_router.dart:10:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\core\router\app_router.dart:187:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\core\router\app_router.dart:198:64 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\core\utils\location_filter.dart:1:8 - always_use_package_imports
+   info - Statements in a while should be enclosed in a block - lib\core\utils\location_filter.dart:149:20 - curly_braces_in_flow_control_structures
+   info - Statements in a while should be enclosed in a block - lib\core\utils\location_filter.dart:150:21 - curly_braces_in_flow_control_structures
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\datasources\local\location_queue_local.dart:4:8 - always_use_package_imports
+warning - The value of the local variable 'latDiff' isn't used - lib\data\datasources\local\location_queue_local.dart:214:13 - unused_local_variable
+warning - The value of the local variable 'lonDiff' isn't used - lib\data\datasources\local\location_queue_local.dart:215:13 - unused_local_variable
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\datasources\local\preferences_local.dart:3:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\datasources\remote\supabase_client.dart:3:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\datasources\remote\supabase_client.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\datasources\remote\supabase_client.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\datasources\remote\supabase_client.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\datasources\remote\supabase_client.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\auth_repository.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\auth_repository.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\expense_repository.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\expense_repository.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\location_repository.dart:3:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\location_repository.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\location_repository.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\location_repository.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\notification_repository.dart:3:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\notification_repository.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\session_repository.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\session_repository.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\data\repositories\session_repository.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\main.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\main.dart:9:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\main.dart:10:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\main.dart:11:8 - always_use_package_imports
+warning - The stack trace variable 'stack' isn't used and can be removed - lib\main.dart:132:17 - unused_catch_stack
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\auth\auth_bloc.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\auth\auth_bloc.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\auth\auth_bloc.dart:7:8 - always_use_package_imports
+   info - Use 'const' with the constructor to improve performance - lib\presentation\blocs\auth\auth_bloc.dart:157:12 - prefer_const_constructors
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\expense\expense_bloc.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\expense\expense_bloc.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\expense\expense_bloc.dart:9:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\expense\expense_bloc.dart:10:8 - always_use_package_imports
+warning - The value of the local variable 'claimId' isn't used - lib\presentation\blocs\expense\expense_bloc.dart:113:13 - unused_local_variable
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\notification\notification_bloc.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\notification\notification_bloc.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\session\session_bloc.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\session\session_bloc.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\session\session_bloc.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\blocs\session\session_bloc.dart:9:8 - always_use_package_imports
+warning - This default clause is covered by the previous cases - lib\presentation\blocs\session\session_bloc.dart:180:7 - unreachable_switch_default
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\add_expense_screen.dart:8:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:135:78 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:233:76 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:252:66 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:279:78 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:345:78 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:348:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:358:66 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:372:70 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:460:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\add_expense_screen.dart:481:66 - deprecated_member_use
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\add_expense_screen.dart:518:28 - use_build_context_synchronously
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\expenses_screen.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\expenses_screen.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\expenses_screen.dart:7:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:92:58 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:98:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:105:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:195:22 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:197:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:252:28 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:293:56 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:297:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:323:66 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:350:74 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\expenses_screen.dart:360:76 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\home_screen.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\home_screen.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\home_screen.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\home_screen.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\home_screen.dart:8:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:91:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:123:70 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:302:18 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:323:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:357:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:410:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:416:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home_screen.dart:578:60 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\login_screen.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\login_screen.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\login_screen.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\login_screen.dart:8:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:83:57 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:84:59 - deprecated_member_use
+warning - Unnecessary cast - lib\presentation\screens\login_screen.dart:93:58 - unnecessary_cast
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:115:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:140:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:161:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:242:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:256:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:303:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:310:68 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\login_screen.dart:339:62 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\notifications_screen.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\notifications_screen.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\notifications_screen.dart:7:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\notifications_screen.dart:108:58 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\notifications_screen.dart:114:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\notifications_screen.dart:121:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\notifications_screen.dart:187:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\notifications_screen.dart:195:30 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\notifications_screen.dart:215:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\notifications_screen.dart:222:64 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\profile_screen.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\profile_screen.dart:5:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:60:58 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:73:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:106:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:115:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:139:56 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:143:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:173:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:187:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:225:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:300:56 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:317:26 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:341:74 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\profile_screen.dart:349:66 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\session_history_screen.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\session_history_screen.dart:6:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:66:58 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:72:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:79:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:143:72 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:158:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:220:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:221:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:226:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:251:74 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:268:47 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:313:68 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:353:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\session_history_screen.dart:531:64 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\splash_screen.dart:4:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\screens\splash_screen.dart:5:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\splash_screen.dart:109:49 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\splash_screen.dart:136:45 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\splash_screen.dart:147:40 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\custom_text_field.dart:45:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\custom_text_field.dart:65:68 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\custom_text_field.dart:74:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\custom_text_field.dart:80:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\custom_text_field.dart:106:62 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\loading_button.dart:38:95 - deprecated_member_use
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\widgets\session_card.dart:3:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\presentation\widgets\session_card.dart:4:8 - always_use_package_imports
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\session_card.dart:46:18 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\session_card.dart:67:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\session_card.dart:101:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\session_card.dart:154:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\session_card.dart:160:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:32:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:44:32 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:71:66 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:117:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:128:32 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:149:72 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:165:74 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\stats_card.dart:178:74 - deprecated_member_use
+   info - The import of 'package:flutter_background_service_android/flutter_background_service_android.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_background_service/flutter_background_service.dart' - lib\services\background_location_service.dart:5:8 - unnecessary_import
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\background_location_service.dart:9:8 - always_use_package_imports
+warning - Unnecessary cast - lib\services\background_location_service.dart:183:8 - unnecessary_cast
+warning - The receiver can't be null, so the null-aware operator '?.' is unnecessary - lib\services\background_location_service.dart:197:38 - invalid_null_aware_operator
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\location_queue_service.dart:5:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\location_queue_service.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\location_queue_service.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\location_queue_service.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\location_queue_service.dart:9:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\motion_detector_service.dart:5:8 - always_use_package_imports
+   info - Use 'const' with the constructor to improve performance - lib\services\motion_detector_service.dart:47:7 - prefer_const_constructors
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\notification_service.dart:8:8 - always_use_package_imports
+warning - The value of the local variable 'data' isn't used - lib\services\notification_service.dart:186:15 - unused_local_variable
+warning - Unused import: 'package:flutter/foundation.dart' - lib\services\permission_service.dart:3:8 - unused_import
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\session_manager.dart:6:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\session_manager.dart:7:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\session_manager.dart:8:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\session_manager.dart:9:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\session_manager.dart:10:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\session_manager.dart:11:8 - always_use_package_imports
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\session_manager.dart:12:8 - always_use_package_imports
+warning - The '!' will have no effect because the receiver can't be null - lib\services\session_manager.dart:464:54 - unnecessary_non_null_assertion
+   info - The import of 'package:flutter_background_service_android/flutter_background_service_android.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_background_service/flutter_background_service.dart' - lib\services\tracking_service.dart:6:8 - unnecessary_import
+   info - Use 'package:' imports for files in the 'lib' directory - lib\services\tracking_service.dart:11:8 - always_use_package_imports
+warning - The value of the local variable 'lastLat' isn't used - lib\services\tracking_service.dart:299:9 - unused_local_variable
+warning - The value of the local variable 'lastLon' isn't used - lib\services\tracking_service.dart:300:9 - unused_local_variable
+   info - The local variable '_onPositionReceived' starts with an underscore - lib\services\tracking_service.dart:306:8 - no_leading_underscores_for_local_identifiers
+warning - Unnecessary cast - lib\services\tracking_service.dart:407:8 - unnecessary_cast
+   info - The local variable '_startLocationUpdates' starts with an underscore - lib\services\tracking_service.dart:419:16 - no_leading_underscores_for_local_identifiers
+   info - The local variable '_stopLocationUpdates' starts with an underscore - lib\services\tracking_service.dart:443:16 - no_leading_underscores_for_local_identifiers
+warning - Unused import: 'package:benzmobitraq_mobile/app.dart' - test\widget_test.dart:8:8 - unused_import
+
+C:\Users\user\Downloads\flutter_windows_3.3
+8.9-stable\flutter\bin\flutter.bat : 233 
+issues found. (ran in 2.5s)
+At line:1 char:1
++ C:\Users\user\Downloads\flutter_windows_3
+.38.9-stable\flutter\bin\flu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified 
+   : (233 issues found. (ran in 2.5s):Str  
+  ing) [], RemoteException
+    + FullyQualifiedErrorId : NativeComman 
+   dError
+ 

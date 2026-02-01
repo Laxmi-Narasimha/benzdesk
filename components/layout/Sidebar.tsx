@@ -23,6 +23,9 @@ import {
     Menu,
     X,
     BookOpen,
+    Smartphone,
+    MapPin,
+    Receipt,
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { RoleBadge } from '@/components/ui';
@@ -113,6 +116,28 @@ const directorNav: NavItem[] = [
     },
 ];
 
+// BenzMobiTraq navigation (field tracking app)
+const mobitraqNav: NavItem[] = [
+    {
+        href: '/director/mobitraq',
+        label: 'Field Overview',
+        icon: <Smartphone className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/sessions',
+        label: 'Employee Sessions',
+        icon: <MapPin className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/expenses',
+        label: 'Field Expenses',
+        icon: <Receipt className="w-5 h-5" />,
+        roles: ['director'],
+    },
+];
+
 // ============================================================================
 // Mobile Header Component
 // ============================================================================
@@ -192,6 +217,7 @@ export function Sidebar() {
 
         if (isDirector) {
             items.push(...directorNav);
+            items.push(...mobitraqNav); // BenzMobiTraq field tracking
         }
 
         return items;

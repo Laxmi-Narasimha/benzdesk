@@ -1,7 +1,7 @@
 // ============================================================================
 // Supabase Edge Function: Send Push Notification
 // Uses web-push library for proper encryption and delivery
-// Also stores notification in database for in-app display
+// ALSO stores notification in database for in-app display with proper names
 // ============================================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -19,7 +19,7 @@ const USER_NAMES: Record<string, string> = {
     'wh.jaipur@benz-packaging.com': 'Mani Bhushan',
     'abhishek@benz-packaging.com': 'Abhishek Kori',
     'accounts.chennai@benz-packaging.com': 'Accounts Chennai',
-    'accounts@benz-packaging.com': 'Accounts BENZ',
+    'accounts@benz-packaging.com': 'Accounts Team',
     'accounts1@benz-packaging.com': 'Accounts1',
     'ajay@benz-packaging.com': 'Ajay',
     'dispatch1@benz-packaging.com': 'Aman Roy',
@@ -72,12 +72,12 @@ const USER_NAMES: Record<string, string> = {
 };
 
 function getDisplayName(email: string | null | undefined): string {
-    if (!email) return 'Unknown';
+    if (!email) return 'Someone';
     const lowerEmail = email.toLowerCase();
     if (USER_NAMES[lowerEmail]) {
         return USER_NAMES[lowerEmail];
     }
-    // Fallback: format email prefix
+    // Fallback: format email prefix nicely
     return email.split('@')[0]
         .replace(/[._]/g, ' ')
         .split(' ')
@@ -85,21 +85,19 @@ function getDisplayName(email: string | null | undefined): string {
         .join(' ');
 }
 
-// Detect notification type from title/body
+// Detect notification type from title
 function detectNotificationType(title: string): string {
-    if (title.includes('💬') || title.toLowerCase().includes('comment') || title.toLowerCase().includes('replied')) {
+    const t = title.toLowerCase();
+    if (t.includes('comment') || t.includes('replied') || title.includes('💬')) {
         return 'comment';
     }
-    if (title.includes('📎') || title.toLowerCase().includes('upload') || title.toLowerCase().includes('file')) {
+    if (t.includes('upload') || t.includes('file') || t.includes('document') || title.includes('📎')) {
         return 'file_upload';
     }
-    if (title.includes('🔄') || title.includes('✅') || title.includes('⚠️') || title.toLowerCase().includes('status')) {
+    if (t.includes('status') || title.includes('🔄') || title.includes('✅') || title.includes('⚠️')) {
         return 'status_change';
     }
-    if (title.includes('📩') || title.toLowerCase().includes('new request')) {
-        return 'status_change';
-    }
-    return 'comment'; // default
+    return 'comment';
 }
 
 // Extract request ID from URL
@@ -110,12 +108,19 @@ function extractRequestId(url: string | undefined): string | null {
 }
 
 serve(async (req: Request) => {
+    // Handle CORS preflight
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
     }
 
     try {
-        const { user_id, title, body, url, tag, sender_email } = await req.json()
+        const requestBody = await req.json()
+        const { user_id, title, body, url, tag, sender_email } = requestBody
+
+        console.log('=== SEND-PUSH INVOKED ===')
+        console.log('user_id:', user_id)
+        console.log('title:', title)
+        console.log('sender_email:', sender_email)
 
         // Environment variables
         const supabaseUrl = Deno.env.get('SUPABASE_URL') || ''
@@ -124,6 +129,7 @@ serve(async (req: Request) => {
         const vapidPrivateKey = Deno.env.get('VAPID_PRIVATE_KEY') || ''
 
         if (!vapidPublicKey || !vapidPrivateKey) {
+            console.error('Missing VAPID keys!')
             throw new Error('Missing VAPID keys')
         }
 
@@ -134,25 +140,34 @@ serve(async (req: Request) => {
             vapidPrivateKey
         )
 
-        // Initialize Supabase client
+        // Initialize Supabase client with service role
         const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+        // Get the proper display name for the sender
+        const senderName = getDisplayName(sender_email);
+        console.log('Sender display name:', senderName)
+
+        // Format title and body - REPLACE "client" with actual name
+        let formattedTitle = title || 'BenzDesk Notification';
+        let formattedBody = body || 'You have a new update';
+
+        // Replace any occurrence of "client" with actual sender name
+        formattedTitle = formattedTitle.replace(/\bThe client\b/gi, senderName);
+        formattedTitle = formattedTitle.replace(/\bclient\b/gi, senderName);
+        formattedBody = formattedBody.replace(/\bThe client\b/gi, senderName);
+        formattedBody = formattedBody.replace(/\bclient\b/gi, senderName);
+
+        console.log('Formatted title:', formattedTitle)
+        console.log('Formatted body:', formattedBody)
 
         // =========================================================
         // STEP 1: Store notification in database for in-app display
         // =========================================================
-        const notificationType = detectNotificationType(title || '');
+        const notificationType = detectNotificationType(formattedTitle);
         const requestId = extractRequestId(url);
 
-        // Format the title with proper display name if sender_email provided
-        let formattedTitle = title || 'BenzDesk Notification';
-        let formattedBody = body || 'You have a new update';
-
-        if (sender_email) {
-            const senderName = getDisplayName(sender_email);
-            // Replace generic "client" references with actual name
-            formattedTitle = formattedTitle.replace(/\bclient\b/gi, senderName);
-            formattedBody = formattedBody.replace(/\bclient\b/gi, senderName);
-        }
+        console.log('Storing in-app notification...')
+        console.log('Type:', notificationType, 'Request ID:', requestId)
 
         try {
             const { error: insertError } = await supabase
@@ -167,20 +182,18 @@ serve(async (req: Request) => {
                 });
 
             if (insertError) {
-                console.error('Failed to insert notification:', insertError);
+                console.error('Failed to insert notification:', insertError.message);
             } else {
-                console.log('In-app notification stored successfully');
+                console.log('✅ In-app notification stored successfully');
             }
 
-            // =========================================================
-            // STEP 2: Cleanup old notifications - keep only latest 10
-            // =========================================================
+            // Cleanup old notifications - keep only latest 10 per user
             const { data: oldNotifications } = await supabase
                 .from('notifications')
                 .select('id')
                 .eq('user_id', user_id)
                 .order('created_at', { ascending: false })
-                .range(10, 1000); // Get notifications after the first 10
+                .range(10, 1000);
 
             if (oldNotifications && oldNotifications.length > 0) {
                 const idsToDelete = oldNotifications.map((n: { id: string }) => n.id);
@@ -196,7 +209,7 @@ serve(async (req: Request) => {
         }
 
         // =========================================================
-        // STEP 3: Send push notification
+        // STEP 2: Send push notification to all user subscriptions
         // =========================================================
         const { data: subscriptions, error: dbError } = await supabase
             .from('push_subscriptions')
@@ -204,19 +217,21 @@ serve(async (req: Request) => {
             .eq('user_id', user_id)
 
         if (dbError) {
+            console.error('Error fetching subscriptions:', dbError.message)
             throw new Error(`Database error: ${dbError.message}`)
         }
 
         if (!subscriptions || subscriptions.length === 0) {
+            console.log('No push subscriptions found for user, in-app only')
             return new Response(
-                JSON.stringify({ success: true, message: 'In-app notification stored, no push subscriptions', sent: 0 }),
+                JSON.stringify({ success: true, message: 'In-app notification stored, no push subscriptions', sent: 0, inApp: true }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             )
         }
 
-        console.log(`Found ${subscriptions.length} subscriptions for user ${user_id}`)
+        console.log(`Found ${subscriptions.length} push subscription(s) for user ${user_id}`)
 
-        // Prepare payload
+        // Prepare push payload
         const payload = JSON.stringify({
             title: formattedTitle,
             body: formattedBody,
@@ -227,7 +242,7 @@ serve(async (req: Request) => {
             timestamp: Date.now()
         })
 
-        // Send notifications
+        // Send push to all subscriptions
         const results = await Promise.allSettled(
             subscriptions.map(async (sub: { id: string; endpoint: string; p256dh: string; auth: string }) => {
                 try {
@@ -240,9 +255,10 @@ serve(async (req: Request) => {
                     }
 
                     await webpush.sendNotification(pushSubscription, payload)
+                    console.log(`✅ Push sent to endpoint: ${sub.endpoint.substring(0, 50)}...`)
                     return { success: true, endpoint: sub.endpoint }
                 } catch (error: unknown) {
-                    console.error(`Failed to send to ${sub.endpoint}:`, error)
+                    console.error(`❌ Failed to send to ${sub.endpoint.substring(0, 50)}:`, error)
 
                     // If subscription is invalid/expired, delete it
                     const err = error as { statusCode?: number };
@@ -259,7 +275,7 @@ serve(async (req: Request) => {
         const sentCount = results.filter((r: PromiseSettledResult<unknown>) => r.status === 'fulfilled').length
         const failedCount = results.filter((r: PromiseSettledResult<unknown>) => r.status === 'rejected').length
 
-        console.log(`Sent: ${sentCount}, Failed: ${failedCount}`)
+        console.log(`=== COMPLETE: Sent ${sentCount}, Failed ${failedCount} ===`)
 
         return new Response(
             JSON.stringify({
@@ -273,7 +289,7 @@ serve(async (req: Request) => {
 
     } catch (error: unknown) {
         const err = error as { message?: string };
-        console.error('Error in send-push:', error)
+        console.error('=== ERROR in send-push ===', error)
         return new Response(
             JSON.stringify({ success: false, error: err.message || 'Unknown error' }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }

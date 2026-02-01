@@ -1,0 +1,21 @@
+include: package:flutter_lints/flutter.yaml
+
+# Additional linter rules
+linter:
+  rules:
+    - always_declare_return_types
+    - always_use_package_imports
+    - avoid_empty_else
+    - avoid_print
+    - avoid_relative_lib_imports
+    - avoid_unnecessary_containers
+    - cancel_subscriptions
+    - close_sinks
+    - prefer_const_constructors
+    - prefer_const_declarations
+    - prefer_final_fields
+    - prefer_final_in_for_each
+    - prefer_single_quotes
+    - sort_child_properties_last
+    - unnecessary_brace_in_string_interps
+    - use_key_in_widget_constructors
