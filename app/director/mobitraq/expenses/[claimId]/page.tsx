@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { getSupabaseClient } from '@/lib/supabaseClient';
 import { PageLoader, Card } from '@/components/ui';
 import {
     Receipt,
@@ -95,7 +95,7 @@ export default function ExpenseDetailPage() {
 
     async function loadData() {
         setLoading(true);
-        const supabase = createClient();
+        const supabase = getSupabaseClient();
 
         // Load claim details
         const { data: claimData, error: claimError } = await supabase
@@ -160,7 +160,7 @@ export default function ExpenseDetailPage() {
         if (!commentBody.trim()) return;
 
         setIsSubmitting(true);
-        const supabase = createClient();
+        const supabase = getSupabaseClient();
 
         const { data: { user } } = await supabase.auth.getUser();
 
@@ -182,7 +182,7 @@ export default function ExpenseDetailPage() {
     }
 
     async function handleApprove() {
-        const supabase = createClient();
+        const supabase = getSupabaseClient();
 
         const { error } = await supabase
             .from('expense_claims')
@@ -198,7 +198,7 @@ export default function ExpenseDetailPage() {
     }
 
     async function handleReject() {
-        const supabase = createClient();
+        const supabase = getSupabaseClient();
 
         const { error } = await supabase
             .from('expense_claims')
@@ -302,9 +302,9 @@ export default function ExpenseDetailPage() {
                             Status
                         </div>
                         <div className={`inline-flex px-3 py-1 rounded-full text-sm font-medium ${claim.status === 'approved' ? 'bg-green-100 text-green-700' :
-                                claim.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                                    claim.status === 'in_review' ? 'bg-yellow-100 text-yellow-700' :
-                                        'bg-blue-100 text-blue-700'
+                            claim.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                                claim.status === 'in_review' ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-blue-100 text-blue-700'
                             }`}>
                             {claim.status.toUpperCase()}
                         </div>
@@ -323,8 +323,8 @@ export default function ExpenseDetailPage() {
                 <button
                     onClick={() => setActiveTab('chat')}
                     className={`px-4 py-2 font-medium transition-colors ${activeTab === 'chat'
-                            ? 'text-primary-500 border-b-2 border-primary-500'
-                            : 'text-dark-400 hover:text-dark-200'
+                        ? 'text-primary-500 border-b-2 border-primary-500'
+                        : 'text-dark-400 hover:text-dark-200'
                         }`}
                 >
                     <MessageSquare className="w-4 h-4 inline mr-2" />
@@ -333,8 +333,8 @@ export default function ExpenseDetailPage() {
                 <button
                     onClick={() => setActiveTab('timeline')}
                     className={`px-4 py-2 font-medium transition-colors ${activeTab === 'timeline'
-                            ? 'text-primary-500 border-b-2 border-primary-500'
-                            : 'text-dark-400 hover:text-dark-200'
+                        ? 'text-primary-500 border-b-2 border-primary-500'
+                        : 'text-dark-400 hover:text-dark-200'
                         }`}
                 >
                     <History className="w-4 h-4 inline mr-2" />
@@ -343,8 +343,8 @@ export default function ExpenseDetailPage() {
                 <button
                     onClick={() => setActiveTab('attachments')}
                     className={`px-4 py-2 font-medium transition-colors ${activeTab === 'attachments'
-                            ? 'text-primary-500 border-b-2 border-primary-500'
-                            : 'text-dark-400 hover:text-dark-200'
+                        ? 'text-primary-500 border-b-2 border-primary-500'
+                        : 'text-dark-400 hover:text-dark-200'
                         }`}
                 >
                     <Paperclip className="w-4 h-4 inline mr-2" />
