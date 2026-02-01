@@ -26,6 +26,8 @@ import {
     Smartphone,
     MapPin,
     Receipt,
+    Route,
+    Bell,
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { RoleBadge } from '@/components/ui';
@@ -128,6 +130,18 @@ const mobitraqNav: NavItem[] = [
         href: '/director/mobitraq/sessions',
         label: 'Employee Sessions',
         icon: <MapPin className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/timeline',
+        label: 'Timeline & Map',
+        icon: <Route className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/alerts',
+        label: 'Alerts',
+        icon: <Bell className="w-5 h-5" />,
         roles: ['director'],
     },
     {
