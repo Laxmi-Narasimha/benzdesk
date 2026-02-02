@@ -413,10 +413,13 @@ void _onServiceStart(ServiceInstance service) async {
           }
         }
       } else {
-        // Movement detected
+        // Movement detected - distance delta exceeds threshold
+        // Since the distance threshold already filters GPS drift,
+        // we always accumulate distance when it passes
         stationaryCount = 0;
         isMoving = true;
         totalDistance += distanceDelta;
+        logger.d('Distance accumulated: +${distanceDelta.toStringAsFixed(1)}m, total=${totalDistance.toStringAsFixed(1)}m');
       }
 
     }
@@ -483,11 +486,12 @@ void _onServiceStart(ServiceInstance service) async {
     final distanceFilter = 5; // Was AppConstants.distanceFilterDefault (50m)
 
     // CRITICAL FIX: Use bestForNavigation for highest accuracy
+    // NOTE: Removed timeLimit as it causes TimeoutException on real devices
+    // when GPS takes time to get initial fix (especially indoors)
     positionSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high, // Balanced accuracy (battery friendly)
-        distanceFilter: 30, // Update every 30 meters (was 5m - too aggressive)
-        timeLimit: Duration(seconds: 30),
+        distanceFilter: 30, // Update every 30 meters
       ),
     ).listen(
       _onPositionReceived,
@@ -499,7 +503,7 @@ void _onServiceStart(ServiceInstance service) async {
     );
 
     service.invoke('trackingStateChanged', {'isTracking': true});
-    logger.i('Location updates started with AGGRESSIVE settings (5m filter, bestForNavigation accuracy)');
+    logger.i('Location updates started (30m filter, high accuracy)');
   }
 
   Future<void> _stopLocationUpdates() async {

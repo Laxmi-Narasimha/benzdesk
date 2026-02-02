@@ -21,7 +21,7 @@ interface Session {
     status: 'active' | 'completed' | 'cancelled';
     employees: {
         name: string;
-        email: string;
+        phone: string;
     } | null;
 }
 
@@ -53,7 +53,7 @@ export default function SessionsPage() {
                     status,
                     employees (
                         name,
-                        email
+                        phone
                     )
                 `)
                 .order('start_time', { ascending: false });
@@ -117,8 +117,8 @@ export default function SessionsPage() {
     const filteredSessions = sessions.filter(session => {
         if (!searchTerm) return true;
         const empName = session.employees?.name?.toLowerCase() || '';
-        const empEmail = session.employees?.email?.toLowerCase() || '';
-        return empName.includes(searchTerm.toLowerCase()) || empEmail.includes(searchTerm.toLowerCase());
+        const empPhone = session.employees?.phone?.toLowerCase() || '';
+        return empName.includes(searchTerm.toLowerCase()) || empPhone.includes(searchTerm.toLowerCase());
     });
 
     // Pagination
@@ -208,7 +208,7 @@ export default function SessionsPage() {
                                                     </div>
                                                     <div>
                                                         <div className="font-medium text-gray-900">{session.employees?.name || 'Unknown'}</div>
-                                                        <div className="text-xs text-gray-500">{session.employees?.email}</div>
+                                                        <div className="text-xs text-gray-500">{session.employees?.phone || ''}</div>
                                                     </div>
                                                 </div>
                                             </td>

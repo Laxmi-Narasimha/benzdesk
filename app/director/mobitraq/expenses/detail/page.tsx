@@ -29,7 +29,7 @@ interface ExpenseClaim {
     submitted_at: string;
     employee?: {
         name: string;
-        email: string;
+        phone: string;
     };
 }
 
@@ -59,6 +59,35 @@ function ExpenseDetailContent() {
         }
     }, [claimId]);
 
+    // Real-time comments subscription
+    useEffect(() => {
+        if (!claimId) return;
+
+        const supabase = getSupabaseClient();
+        const channelName = `comments_${claimId}`;
+
+        const channel = supabase
+            .channel(channelName)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'expense_claim_comments',
+                    filter: `claim_id=eq.${claimId}`
+                },
+                (payload) => {
+                    const newComment = payload.new as Comment;
+                    setComments(prev => [...prev, newComment]);
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [claimId]);
+
     async function loadData() {
         setLoading(true);
         const supabase = getSupabaseClient();
@@ -69,7 +98,7 @@ function ExpenseDetailContent() {
                 *,
                 employee:employees!employee_id (
                     name,
-                    email
+                    phone
                 )
             `)
             .eq('id', claimId)
@@ -199,8 +228,8 @@ function ExpenseDetailContent() {
                     <div>
                         <p className="text-dark-500 text-sm">Status</p>
                         <p className={`text-lg font-semibold ${claim.status === 'approved' ? 'text-green-400' :
-                                claim.status === 'rejected' ? 'text-red-400' :
-                                    'text-amber-400'
+                            claim.status === 'rejected' ? 'text-red-400' :
+                                'text-amber-400'
                             }`}>
                             {claim.status}
                         </p>
@@ -211,7 +240,7 @@ function ExpenseDetailContent() {
                     </div>
                     <div>
                         <p className="text-dark-500 text-sm">Employee</p>
-                        <p className="text-dark-200">{claim.employee?.email}</p>
+                        <p className="text-dark-200">{claim.employee?.phone || claim.employee?.name || 'Unknown'}</p>
                     </div>
                 </div>
             </Card>

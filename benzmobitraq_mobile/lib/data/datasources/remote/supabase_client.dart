@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:logger/logger.dart';
 
 import '../../models/employee_model.dart';
 import '../../models/session_model.dart';
@@ -9,8 +10,12 @@ import '../../models/expense_model.dart';
 /// Remote data source for Supabase operations
 class SupabaseDataSource {
   final SupabaseClient _client;
+  final Logger _logger = Logger();
 
   SupabaseDataSource(this._client);
+
+  /// Get the current logged in user's ID
+  String? get currentUserId => _client.auth.currentUser?.id;
 
   // ============================================================
   // EMPLOYEES
@@ -203,8 +208,44 @@ class SupabaseDataSource {
   Future<void> uploadLocationBatch(List<LocationPointModel> points) async {
     if (points.isEmpty) return;
 
-    final data = points.map((p) => p.toJson()).toList();
-    await _client.from('location_points').upsert(data, onConflict: 'hash');
+    try {
+      final data = points.map((p) => p.toJson()).toList();
+      
+      // Enhanced diagnostic logging
+      _logger.i('SYNC: Uploading ${points.length} location points...');
+      _logger.d('SYNC: Session: ${points.first.sessionId}');
+      _logger.d('SYNC: Employee: ${points.first.employeeId}');
+      _logger.d('SYNC: Auth UID: $currentUserId');
+      _logger.d('SYNC: Hash: ${data.first['hash']}');
+      
+      // Verify employee_id matches auth.uid (RLS requirement)
+      if (points.first.employeeId != currentUserId) {
+        _logger.e('SYNC WARNING: employee_id (${points.first.employeeId}) != auth.uid ($currentUserId)');
+      }
+      
+      try {
+        // Try upsert first (idempotent)
+        await _client.from('location_points').upsert(data, onConflict: 'hash');
+        _logger.i('SYNC: Successfully uploaded ${points.length} points via upsert');
+      } catch (upsertError) {
+        _logger.w('SYNC: Upsert failed, trying insert: $upsertError');
+        
+        // Fallback to insert (handles case where hash column issue)
+        try {
+          await _client.from('location_points').insert(data);
+          _logger.i('SYNC: Successfully uploaded ${points.length} points via insert');
+        } catch (insertError) {
+          // If insert also fails, it's likely an RLS issue
+          _logger.e('SYNC CRITICAL: Insert also failed: $insertError');
+          _logger.e('SYNC: This is likely an RLS policy issue. Check employee_id matches auth.uid.');
+          rethrow;
+        }
+      }
+    } catch (e) {
+      _logger.e('SYNC FAILED: $e');
+      _logger.e('SYNC: Points employee_id: ${points.first.employeeId}, auth.uid: $currentUserId');
+      rethrow;
+    }
   }
 
   /// Get location points for a session
@@ -376,13 +417,25 @@ class SupabaseDataSource {
 
   /// Create expense claim
   Future<ExpenseClaimModel> createExpenseClaim(ExpenseClaimModel claim) async {
-    final response = await _client
-        .from('expense_claims')
-        .insert(claim.toJson())
-        .select()
-        .single();
+    try {
+      _logger.d('Creating expense claim...');
+      _logger.d('Claim employee_id: ${claim.employeeId}');
+      _logger.d('Current auth.uid: $currentUserId');
+      
+      final response = await _client
+          .from('expense_claims')
+          .insert(claim.toJson())
+          .select()
+          .single();
 
-    return ExpenseClaimModel.fromJson(response);
+      _logger.i('Expense claim created successfully: ${response['id']}');
+      return ExpenseClaimModel.fromJson(response);
+    } catch (e) {
+      _logger.e('CRITICAL: Failed to create expense claim: $e');
+      _logger.e('Claim employee_id: ${claim.employeeId}');
+      _logger.e('Current auth.uid: $currentUserId');
+      rethrow;
+    }
   }
 
   /// Get expense claim by ID

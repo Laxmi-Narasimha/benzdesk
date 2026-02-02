@@ -23,9 +23,10 @@ import {
 } from 'lucide-react';
 
 // Dynamic import for Leaflet (SSR incompatible)
+// Must use default export for React components
 const MapContainer = dynamic(
     () => import('react-leaflet').then((mod) => mod.MapContainer),
-    { ssr: false }
+    { ssr: false, loading: () => <div className="h-[400px] bg-dark-900 flex items-center justify-center"><span className="text-dark-400">Loading map...</span></div> }
 );
 const TileLayer = dynamic(
     () => import('react-leaflet').then((mod) => mod.TileLayer),
@@ -48,7 +49,7 @@ const Popup = dynamic(
 interface Employee {
     id: string;
     name: string;
-    email: string;
+    phone: string;
 }
 
 interface LocationPoint {
@@ -92,6 +93,10 @@ interface DailyRollup {
     point_count: number;
 }
 
+interface DataError {
+    message: string;
+}
+
 export default function TimelinePage() {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [selectedEmployee, setSelectedEmployee] = useState<string>('');
@@ -117,6 +122,43 @@ export default function TimelinePage() {
         setTimeout(() => setMapReady(true), 100);
     }, []);
 
+    // Real-time tracking subscription
+    useEffect(() => {
+        // Only track if a specific employee is selected and we are viewing "today"
+        const today = new Date().toISOString().split('T')[0];
+        const isToday = selectedDate === today;
+
+        if (!selectedEmployee || !isToday) return;
+
+        const supabase = getSupabaseClient();
+        const channelName = `tracking_${selectedEmployee}`;
+
+        console.log('Subscribing to realtime updates for:', selectedEmployee);
+
+        const channel = supabase
+            .channel(channelName)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'location_points',
+                    filter: `employee_id=eq.${selectedEmployee}`
+                },
+                (payload) => {
+                    // console.log('New location point:', payload.new);
+                    const newPoint = payload.new as LocationPoint;
+                    setPoints(prev => [...prev, newPoint]);
+                }
+            )
+            .subscribe();
+
+        return () => {
+            console.log('Unsubscribing from:', channelName);
+            supabase.removeChannel(channel);
+        };
+    }, [selectedEmployee, selectedDate]);
+
     // Load data when employee or date changes
     useEffect(() => {
         if (selectedEmployee && selectedDate) {
@@ -128,7 +170,7 @@ export default function TimelinePage() {
         const supabase = getSupabaseClient();
         const { data } = await supabase
             .from('employees')
-            .select('id, name, email')
+            .select('id, name, phone')
             .order('name');
 
         if (data) {
@@ -142,68 +184,84 @@ export default function TimelinePage() {
 
     async function loadTimelineData() {
         setDataLoading(true);
-        const supabase = getSupabaseClient();
 
-        const startOfDay = `${selectedDate}T00:00:00`;
-        const endOfDay = `${selectedDate}T23:59:59`;
+        try {
+            const supabase = getSupabaseClient();
 
-        // Fetch sessions for the day
-        const { data: sessionsData } = await supabase
-            .from('shift_sessions')
-            .select('id, session_name, start_time, end_time, status')
-            .eq('employee_id', selectedEmployee)
-            .gte('start_time', startOfDay)
-            .lte('start_time', endOfDay)
-            .order('start_time', { ascending: true });
+            // Ensure date is valid
+            const validDate = selectedDate && selectedDate.length >= 10 ? selectedDate : new Date().toISOString().split('T')[0];
+            const startOfDay = `${validDate}T00:00:00`;
+            const endOfDay = `${validDate}T23:59:59`;
 
-        setSessions(sessionsData || []);
+            console.log('Loading timeline data for:', { employee: selectedEmployee, date: validDate });
 
-        // Fetch location points for the day
-        const { data: pointsData } = await supabase
-            .from('location_points')
-            .select('id, latitude, longitude, recorded_at, speed_mps, accuracy')
-            .eq('employee_id', selectedEmployee)
-            .gte('recorded_at', startOfDay)
-            .lte('recorded_at', endOfDay)
-            .order('recorded_at', { ascending: true });
+            // Fetch sessions for the day
+            const { data: sessionsData, error: sessionsError } = await supabase
+                .from('shift_sessions')
+                .select('id, session_name, start_time, end_time, status')
+                .eq('employee_id', selectedEmployee)
+                .gte('start_time', startOfDay)
+                .lte('start_time', endOfDay)
+                .order('start_time', { ascending: true });
 
-        setPoints(pointsData || []);
+            if (sessionsError) {
+                console.error('Error fetching sessions:', sessionsError);
+            }
+            setSessions(sessionsData || []);
 
-        // Fetch session rollups
-        if (sessionsData && sessionsData.length > 0) {
-            const sessionIds = sessionsData.map((s) => s.id);
-            const { data: rollupsData } = await supabase
-                .from('session_rollups')
-                .select('session_id, distance_km, point_count')
-                .in('session_id', sessionIds);
+            // Fetch location points for the day
+            const { data: pointsData, error: pointsError } = await supabase
+                .from('location_points')
+                .select('id, latitude, longitude, recorded_at, speed_mps, accuracy')
+                .eq('employee_id', selectedEmployee)
+                .gte('recorded_at', startOfDay)
+                .lte('recorded_at', endOfDay)
+                .order('recorded_at', { ascending: true });
 
-            setRollups(rollupsData || []);
-        } else {
-            setRollups([]);
+            if (pointsError) {
+                console.error('Error fetching location points:', pointsError);
+            }
+            setPoints(pointsData || []);
+
+            // Fetch session rollups (if sessions exist)
+            if (sessionsData && sessionsData.length > 0) {
+                const sessionIds = sessionsData.map((s) => s.id);
+                const { data: rollupsData, error: rollupsError } = await supabase
+                    .from('session_rollups')
+                    .select('session_id, distance_km, point_count')
+                    .in('session_id', sessionIds);
+
+                if (rollupsError) {
+                    console.error('Error fetching session rollups:', rollupsError);
+                }
+                setRollups(rollupsData || []);
+            } else {
+                setRollups([]);
+            }
+
+            // Fetch timeline events (table exists but may be empty)
+            const { data: eventsData, error: eventsError } = await supabase
+                .from('timeline_events')
+                .select('*')
+                .eq('employee_id', selectedEmployee)
+                .gte('start_time', startOfDay)
+                .lte('start_time', endOfDay)
+                .order('start_time', { ascending: true });
+
+            if (eventsError) {
+                console.error('Error fetching timeline events:', eventsError);
+            }
+            setTimelineEvents(eventsData || []);
+
+            // Skip daily_rollups - table doesn't exist in database
+            // Calculate from session_rollups instead
+            setDailyRollup(null);
+
+        } catch (error) {
+            console.error('Error loading timeline data:', error);
+        } finally {
+            setDataLoading(false);
         }
-
-        // Fetch timeline events
-        const { data: eventsData } = await supabase
-            .from('timeline_events')
-            .select('*')
-            .eq('employee_id', selectedEmployee)
-            .gte('start_time', startOfDay)
-            .lte('start_time', endOfDay)
-            .order('start_time', { ascending: true });
-
-        setTimelineEvents(eventsData || []);
-
-        // Fetch daily rollup
-        const { data: dailyData } = await supabase
-            .from('daily_rollups')
-            .select('*')
-            .eq('employee_id', selectedEmployee)
-            .eq('day', selectedDate)
-            .single();
-
-        setDailyRollup(dailyData);
-
-        setDataLoading(false);
     }
 
     // Calculate map bounds and center
@@ -534,14 +592,14 @@ export default function TimelinePage() {
                         <div
                             key={event.id}
                             className={`flex items-center gap-4 p-3 rounded-lg ${event.event_type === 'stop'
-                                    ? 'bg-amber-500/10 border-l-4 border-amber-500'
-                                    : 'bg-blue-500/10 border-l-4 border-blue-500'
+                                ? 'bg-amber-500/10 border-l-4 border-amber-500'
+                                : 'bg-blue-500/10 border-l-4 border-blue-500'
                                 }`}
                         >
                             <div
                                 className={`p-2 rounded-full ${event.event_type === 'stop'
-                                        ? 'bg-amber-500/20'
-                                        : 'bg-blue-500/20'
+                                    ? 'bg-amber-500/20'
+                                    : 'bg-blue-500/20'
                                     }`}
                             >
                                 {event.event_type === 'stop' ? (

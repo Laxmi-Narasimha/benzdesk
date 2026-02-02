@@ -108,6 +108,7 @@ class PreferencesLocal {
   Future<void> clearActiveSession() async {
     await setActiveSessionId(null);
     await clearSessionStartTime();
+    await clearSessionDistance();
   }
 
   /// Get session start time for duration calculation
@@ -125,6 +126,21 @@ class PreferencesLocal {
   /// Clear session start time
   Future<bool> clearSessionStartTime() {
     return prefs.remove('session_start_time');
+  }
+
+  /// Get session distance in meters (for persistence across app restart)
+  double getSessionDistanceMeters() {
+    return prefs.getDouble('session_distance_meters') ?? 0.0;
+  }
+
+  /// Set session distance in meters (called on each location update)
+  Future<bool> setSessionDistanceMeters(double meters) {
+    return prefs.setDouble('session_distance_meters', meters);
+  }
+
+  /// Clear session distance
+  Future<bool> clearSessionDistance() {
+    return prefs.remove('session_distance_meters');
   }
 
   /// Check if there's an active session

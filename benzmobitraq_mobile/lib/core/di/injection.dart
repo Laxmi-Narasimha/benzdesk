@@ -132,6 +132,7 @@ Future<void> configureDependencies() async {
       preferences: getIt<PreferencesLocal>(),
       permissionService: getIt<PermissionService>(),
       notificationScheduler: getIt<NotificationScheduler>(),
+      expenseRepository: getIt<ExpenseRepository>(),
     ),
   );
 

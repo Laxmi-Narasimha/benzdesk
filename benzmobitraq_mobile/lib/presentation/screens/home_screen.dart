@@ -43,16 +43,36 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isLoadingAddress = true);
     
     try {
-      final position = await TrackingService.getCurrentLocation();
+      // First try to get last known position (fast)
+      Position? position = await Geolocator.getLastKnownPosition();
+      
+      // If no last known, try current position
+      if (position == null) {
+        final permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.always || 
+            permission == LocationPermission.whileInUse) {
+          position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium, // Less aggressive
+          ).timeout(const Duration(seconds: 10), onTimeout: () => throw 'Timeout');
+        }
+      }
+      
       if (position != null && mounted) {
         final address = await GeocodingService.getAddressFromCoordinates(
           position.latitude,
           position.longitude,
         );
-        setState(() => _currentAddress = address);
+        if (mounted) {
+          setState(() => _currentAddress = address);
+        }
+      } else if (mounted) {
+        setState(() => _currentAddress = 'Location unavailable');
       }
     } catch (e) {
       debugPrint('Error fetching location: $e');
+      if (mounted) {
+        setState(() => _currentAddress = 'Location unavailable');
+      }
     } finally {
       if (mounted) setState(() => _isLoadingAddress = false);
     }
@@ -624,7 +644,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        // First row - Live Location and Settings
+        // First row - Live Location and My Timeline
         Row(
           children: [
             Expanded(
@@ -639,13 +659,10 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: _buildActionCard(
                 context,
-                icon: Icons.settings_outlined,
-                label: 'Settings',
+                icon: Icons.timeline_rounded,
+                label: 'My Timeline',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                  );
+                  AppRouter.navigateTo(context, AppRouter.myTimeline);
                 },
               ),
             ),
@@ -676,6 +693,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
             ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Third row - Settings (single button, full width would look awkward)
+        Row(
+          children: [
+            Expanded(
+              child: _buildActionCard(
+                context,
+                icon: Icons.settings_outlined,
+                label: 'Settings',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Placeholder for future action or leave empty
+            const Expanded(child: SizedBox()),
           ],
         ),
       ],

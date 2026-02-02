@@ -55,23 +55,29 @@ class AppConstants {
   
   /// Maximum acceptable accuracy (in meters)
   /// Per spec: "Reject points where accuracy_m > 50"
+  /// LOOSENED: Accept up to 50m for typical urban GPS
   static const double maxAccuracyThreshold = 50.0;
   
   /// Minimum distance delta for moving mode (in meters)
   /// Used as base for jitter filtering
-  static const double minDistanceDelta = 10.0;
+  static const double minDistanceDelta = 15.0;
+  
+  /// Minimum speed to consider as movement (in m/s)
+  /// DISABLED: Many devices report speed=0 even when moving
+  /// Rely on distance+time filtering instead
+  static const double minSpeedForMovement = 0.0; // Disabled
   
   /// Maximum realistic speed (in km/h)
   /// Per spec: "if implied speed > 160 km/h... ignore segment"
   static const double maxSpeedKmh = 160.0;
   
   /// Distance threshold for bike mode (in meters)
-  /// Per spec: "if speed_mps <= 8 (bike-like): accept new point when moved ≥ 30m"
-  static const double bikeDistanceThreshold = 30.0;
+  /// LOOSENED: Accept points when moved >= 20m for better tracking
+  static const double bikeDistanceThreshold = 20.0;
   
   /// Distance threshold for car mode (in meters)
-  /// Per spec: "else (car-like): accept new point when moved ≥ 60m"
-  static const double carDistanceThreshold = 60.0;
+  /// LOOSENED: Accept points when moved >= 50m for better tracking
+  static const double carDistanceThreshold = 50.0;
   
   /// Distance filter for geolocator (in meters)
   static const int distanceFilterDefault = 10;

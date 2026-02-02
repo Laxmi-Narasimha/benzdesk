@@ -22,7 +22,7 @@ class AppBottomNavBar extends StatelessWidget {
             AppRouter.navigateAndClear(context, AppRouter.home);
             break;
           case 1:
-            AppRouter.navigateTo(context, AppRouter.sessionHistory);
+            AppRouter.navigateTo(context, AppRouter.myTimeline);
             break;
           case 2:
             AppRouter.navigateTo(context, AppRouter.expenses);
@@ -41,7 +41,7 @@ class AppBottomNavBar extends StatelessWidget {
         BottomNavigationBarItem(
           icon: Icon(Icons.timeline_outlined),
           activeIcon: Icon(Icons.timeline),
-          label: 'History',
+          label: 'Timeline',
         ),
         BottomNavigationBarItem(
           icon: Icon(Icons.receipt_long_outlined),

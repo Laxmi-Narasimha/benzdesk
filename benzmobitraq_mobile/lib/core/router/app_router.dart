@@ -8,6 +8,7 @@ import '../../presentation/screens/expenses_screen.dart';
 import '../../presentation/screens/add_expense_screen.dart';
 import '../../presentation/screens/profile_screen.dart';
 import '../../presentation/screens/notifications_screen.dart';
+import '../../presentation/screens/my_timeline_screen.dart';
 
 /// Application router for named route navigation
 class AppRouter {
@@ -27,6 +28,7 @@ class AppRouter {
   static const String addExpense = '/expenses/add';
   static const String expenseDetail = '/expenses/detail';
   static const String profile = '/profile';
+  static const String myTimeline = '/timeline';
 
   // ============================================================
   // ROUTE GENERATOR
@@ -93,6 +95,12 @@ class AppRouter {
         return _buildRoute(
           settings,
           const ProfileScreen(),
+        );
+
+      case myTimeline:
+        return _buildRoute(
+          settings,
+          const MyTimelineScreen(),
         );
 
       default:

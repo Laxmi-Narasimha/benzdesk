@@ -35,11 +35,39 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen>
   List<ExpenseClaimAttachment> _attachments = [];
   bool _loading = true;
 
+  StreamSubscription? _commentSubscription;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _loadData();
+    _subscribeToComments();
+  }
+
+  void _subscribeToComments() {
+    final repo = context.read<ExpenseRepository>();
+    _commentSubscription = repo.subscribeToComments(widget.claimId).listen((_) {
+      // Reload comments to get author details (which aren't in the stream payload)
+      _loadCommentsOnly();
+    });
+  }
+
+  Future<void> _loadCommentsOnly() async {
+    if (!mounted) return;
+    final repo = context.read<ExpenseRepository>();
+    final results = await repo.getClaimComments(widget.claimId);
+    
+    if (!mounted) return;
+    setState(() {
+      _comments = results
+          .map((json) => ExpenseClaimComment.fromJson({
+            ...json,
+            'author_name': json['author']?['name'],
+            'author_role': json['author']?['role'],
+          }))
+          .toList();
+    });
   }
 
   Future<void> _loadData() async {
@@ -412,6 +440,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen>
 
   @override
   void dispose() {
+    _commentSubscription?.cancel();
     _tabController.dispose();
     _commentController.dispose();
     super.dispose();

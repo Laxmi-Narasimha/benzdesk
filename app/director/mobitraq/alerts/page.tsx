@@ -34,7 +34,7 @@ interface Alert {
     acknowledged_by: string | null;
     employee?: {
         name: string;
-        email: string;
+        phone: string;
     };
 }
 
@@ -89,7 +89,7 @@ export default function AlertsPage() {
                 *,
                 employee:employees!employee_id (
                     name,
-                    email
+                    phone
                 )
             `)
             .order('created_at', { ascending: false })
@@ -236,8 +236,8 @@ export default function AlertsPage() {
                                 key={f}
                                 onClick={() => setFilter(f as typeof filter)}
                                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter === f
-                                        ? 'bg-primary-600 text-white'
-                                        : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
+                                    ? 'bg-primary-600 text-white'
+                                    : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
                                     }`}
                             >
                                 {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -285,8 +285,8 @@ export default function AlertsPage() {
                         <Card
                             key={alert.id}
                             className={`p-4 ${alert.is_open
-                                    ? 'border-l-4 border-' + severity.color.replace('bg-', '')
-                                    : 'opacity-60'
+                                ? 'border-l-4 border-' + severity.color.replace('bg-', '')
+                                : 'opacity-60'
                                 }`}
                         >
                             <div className="flex items-start gap-4">

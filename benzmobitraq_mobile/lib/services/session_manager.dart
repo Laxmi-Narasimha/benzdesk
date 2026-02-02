@@ -8,6 +8,7 @@ import '../data/models/location_point_model.dart';
 import '../data/models/notification_settings.dart';
 import '../data/repositories/session_repository.dart';
 import '../data/repositories/location_repository.dart';
+import '../data/repositories/expense_repository.dart';
 import '../data/datasources/local/preferences_local.dart';
 import 'tracking_service.dart';
 import 'permission_service.dart';
@@ -93,6 +94,7 @@ class ManagerSessionState {
 class SessionManager {
   final SessionRepository _sessionRepository;
   final LocationRepository _locationRepository;
+  final ExpenseRepository? _expenseRepository;
   final PreferencesLocal _preferences;
   final PermissionService _permissionService;
   final NotificationScheduler? _notificationScheduler;
@@ -116,8 +118,10 @@ class SessionManager {
     required PreferencesLocal preferences,
     PermissionService? permissionService,
     NotificationScheduler? notificationScheduler,
+    ExpenseRepository? expenseRepository,
   })  : _sessionRepository = sessionRepository,
         _locationRepository = locationRepository,
+        _expenseRepository = expenseRepository,
         _preferences = preferences,
         _permissionService = permissionService ?? PermissionService(),
         _notificationScheduler = notificationScheduler;
@@ -199,6 +203,17 @@ class SessionManager {
     ));
 
     try {
+      // Step 0: Check for existing active session (PREVENT DUPLICATES)
+      final existingSessionId = await _preferences.getActiveSessionId();
+      if (existingSessionId != null) {
+        _logger.w('Cannot start new session: Already have active session $existingSessionId');
+        _updateState(_state.copyWith(
+          status: ManagerSessionStatus.error,
+          errorMessage: 'You already have an active session running. Please end it first.',
+        ));
+        return false;
+      }
+
       // Step 1: Check permissions
       final readiness = await checkReadiness();
       if (!readiness.canTrack) {
@@ -288,8 +303,9 @@ class SessionManager {
         return false;
       }
 
-      // Step 7: Start timers
+      // Step 7: Start timers and clear any old persisted distance
       await _preferences.setSessionStartTime(session.startTime);
+      await _preferences.setSessionDistanceMeters(0); // Clear for new session
       _startDurationTimer(session.startTime);
       _startSyncTimer();
 
@@ -421,17 +437,27 @@ class SessionManager {
       final persistedStart = _preferences.getSessionStartTime();
       final startTime = persistedStart ?? session.startTime;
       
+      // Get persisted distance (more accurate than database value)
+      // Fall back to database value only if nothing persisted
+      final persistedDistanceM = _preferences.getSessionDistanceMeters();
+      final distanceMeters = persistedDistanceM > 0 
+          ? persistedDistanceM 
+          : session.totalKm * 1000;
+      
       _updateState(ManagerSessionState(
         status: ManagerSessionStatus.active,
         session: session,
-        currentDistanceMeters: session.totalKm * 1000,
+        currentDistanceMeters: distanceMeters,
         duration: DateTime.now().difference(startTime),
       ));
 
       _startDurationTimer(startTime);
       _startSyncTimer();
+      
+      // Attempt to restart tracking
+      await TrackingService.resumeIfNeeded();
 
-      _logger.i('Session resumed: ${session.id}');
+      _logger.i('Session resumed: ${session.id}, distance: ${distanceMeters / 1000} km');
     } catch (e) {
       _logger.e('Error resuming session: $e');
     }
@@ -446,6 +472,9 @@ class SessionManager {
 
     // Queue location for sync
     _queueLocation(update);
+
+    // Persist distance for app restart recovery
+    _preferences.setSessionDistanceMeters(update.totalDistance);
 
     // Forward to notification scheduler for distance-based notifications
     if (_notificationScheduler != null) {
@@ -521,6 +550,15 @@ class SessionManager {
       );
 
       await _locationRepository.queueLocation(point);
+      
+      // CRITICAL FIX: Sync more aggressively - every 5 points instead of waiting for timer
+      final pendingCount = await _locationRepository.getPendingCount();
+      _logger.d('Queued location point. Pending: $pendingCount');
+      
+      if (pendingCount >= 5) {
+        _logger.i('Triggering immediate sync (5+ points pending)');
+        _syncPendingLocations();
+      }
     } catch (e) {
       _logger.e('Error queueing location: $e');
     }
@@ -528,11 +566,24 @@ class SessionManager {
 
   Future<void> _syncPendingLocations() async {
     try {
+      // Sync location points
       final uploadedCount = await _locationRepository.uploadPendingLocations();
-      _logger.i('Sync completed. Uploaded $uploadedCount points.');
+      _logger.i('Location sync completed. Uploaded $uploadedCount points.');
+
+      // Sync pending expenses  
+      if (_expenseRepository != null) {
+        try {
+          final expenseSyncCount = await _expenseRepository!.syncPendingExpenses();
+          if (expenseSyncCount > 0) {
+            _logger.i('Expense sync completed. Synced $expenseSyncCount items.');
+          }
+        } catch (e) {
+          _logger.e('Error syncing expenses: $e');
+        }
+      }
 
       await _preferences.saveLastSyncTime(DateTime.now());
-      _logger.i('Sync completed');
+      _logger.i('Full sync completed');
     } catch (e) {
       _logger.e('Error syncing locations: $e');
     }

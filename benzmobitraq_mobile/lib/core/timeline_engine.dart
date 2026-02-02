@@ -7,7 +7,7 @@ import 'distance_engine.dart';
 class TimelineEngine {
   // Configuration constants (should match mobitraq_config in database)
   static const double stopRadiusM = 120.0;
-  static const int stopMinDurationSec = 600; // 10 minutes
+  static const int stopMinDurationSec = 300; // 5 minutes (was 10)
 
   /// Detect stops and moves from a chronologically sorted list of points
   /// Returns a list of TimelineEvent objects representing stops and moves

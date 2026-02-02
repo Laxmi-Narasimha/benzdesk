@@ -43,7 +43,7 @@ interface ExpenseClaim {
     rejection_reason: string | null;
     employees: {
         name: string;
-        email: string;
+        phone: string;
         band: string | null;
     } | null;
     expense_items?: ExpenseItem[];
@@ -118,7 +118,7 @@ export default function ExpensesPage() {
                     rejection_reason,
                     employees (
                         name,
-                        email,
+                        phone,
                         band
                     ),
                     expense_items (
@@ -246,10 +246,10 @@ export default function ExpensesPage() {
     const filteredExpenses = expenses.filter(expense => {
         if (!searchTerm) return true;
         const empName = expense.employees?.name?.toLowerCase() || '';
-        const empEmail = expense.employees?.email?.toLowerCase() || '';
+        const empPhone = expense.employees?.phone?.toLowerCase() || '';
         const notes = expense.notes?.toLowerCase() || '';
         return empName.includes(searchTerm.toLowerCase()) ||
-            empEmail.includes(searchTerm.toLowerCase()) ||
+            empPhone.includes(searchTerm.toLowerCase()) ||
             notes.includes(searchTerm.toLowerCase());
     });
 
@@ -376,8 +376,8 @@ export default function ExpensesPage() {
                             <div
                                 key={expense.id}
                                 className={`bg-white rounded-xl border transition-all ${hasExceedsLimit
-                                        ? 'border-orange-300 bg-orange-50/30'
-                                        : 'border-gray-200'
+                                    ? 'border-orange-300 bg-orange-50/30'
+                                    : 'border-gray-200'
                                     }`}
                             >
                                 {/* Main Row */}

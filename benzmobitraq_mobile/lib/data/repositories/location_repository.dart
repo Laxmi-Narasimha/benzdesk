@@ -187,6 +187,31 @@ class LocationRepository {
     }
   }
 
+  /// Get location points for the current user within a date range
+  /// Used by MyTimelineScreen for the logged-in employee's timeline
+  Future<List<LocationPointModel>> getLocationPointsForDateRange(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    try {
+      // Get current user ID from Supabase auth
+      final userId = _dataSource.currentUserId;
+      if (userId == null) {
+        _logger.e('No logged in user');
+        return [];
+      }
+      
+      return await _dataSource.getPointsByEmployeeAndDateRange(
+        employeeId: userId,
+        startDate: startDate,
+        endDate: endDate,
+      );
+    } catch (e) {
+      _logger.e('Error getting points for date range: $e');
+      return [];
+    }
+  }
+
 
   // ============================================================
   // EMPLOYEE STATE

@@ -399,6 +399,16 @@ class ExpenseRepository {
     }
   }
 
+  /// Subscribe to comments for a claim
+  Stream<List<Map<String, dynamic>>> subscribeToComments(String claimId) {
+    return _supabaseClient
+        .from('expense_claim_comments')
+        .stream(primaryKey: ['id'])
+        .eq('claim_id', claimId)
+        .order('created_at', ascending: true)
+        .map((event) => event);
+  }
+  
   /// Add a comment to an expense claim
   Future<Map<String, dynamic>?> addComment({
     required String claimId,

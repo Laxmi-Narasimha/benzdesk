@@ -139,17 +139,26 @@ class NotificationScheduler {
     _periodicTimer?.cancel();
     _periodicTimer = null;
     
-    // Cancel the ongoing tracking notification
-    await _notificationService.cancelTrackingNotification();
+    // Cancel the ongoing tracking notification (wrapped in try-catch to prevent crash)
+    try {
+      await _notificationService.cancelTrackingNotification();
+    } catch (e) {
+      _logger.w('Failed to cancel tracking notification: $e');
+      // Continue even if notification cancel fails
+    }
     
     // Show session summary notification
     final hours = totalDuration.inHours;
     final minutes = totalDuration.inMinutes % 60;
     
-    await _notificationService.showLocalNotification(
-      title: '✅ Session Complete',
-      body: 'Total: ${totalKm.toStringAsFixed(2)} km in ${hours}h ${minutes}m',
-    );
+    try {
+      await _notificationService.showLocalNotification(
+        title: '✅ Session Complete',
+        body: 'Total: ${totalKm.toStringAsFixed(2)} km in ${hours}h ${minutes}m',
+      );
+    } catch (e) {
+      _logger.w('Failed to show session summary notification: $e');
+    }
     
     _logger.i('NotificationScheduler stopped. Summary: ${totalKm}km, ${totalDuration.inMinutes}min');
   }

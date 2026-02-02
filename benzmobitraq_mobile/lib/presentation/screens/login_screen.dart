@@ -18,10 +18,13 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _showPasswordField = false;
 
   @override
   void dispose() {
     _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -29,6 +32,15 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_formKey.currentState?.validate() ?? false) {
       context.read<AuthBloc>().add(AuthMagicLinkRequested(
         email: _emailController.text.trim(),
+      ));
+    }
+  }
+
+  void _onPasswordLogin() {
+    if (_formKey.currentState?.validate() ?? false) {
+      context.read<AuthBloc>().add(AuthSignInRequested(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
       ));
     }
   }
@@ -279,14 +291,79 @@ class _LoginScreenState extends State<LoginScreen> {
                     return null;
                   },
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 
-                // Login button
-                LoadingButton(
-                  onPressed: _onSendMagicLink,
-                  isLoading: isLoading,
-                  label: 'Send Login Link',
-                ),
+                // Password field (shown when toggle is on)
+                if (_showPasswordField) ...[
+                  CustomTextField(
+                    controller: _passwordController,
+                    label: 'Password',
+                    hint: 'Enter your password',
+                    prefixIcon: Icons.lock_outlined,
+                    obscureText: true,
+                    enabled: !isLoading,
+                    validator: (value) {
+                      if (_showPasswordField && (value == null || value.isEmpty)) {
+                        return 'Please enter your password';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Password Login button
+                  LoadingButton(
+                    onPressed: _onPasswordLogin,
+                    isLoading: isLoading,
+                    label: 'Login with Password',
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: () => setState(() => _showPasswordField = false),
+                    child: const Text('Use Magic Link Instead'),
+                  ),
+                ] else ...[
+                  // Magic Link button
+                  LoadingButton(
+                    onPressed: _onSendMagicLink,
+                    isLoading: isLoading,
+                    label: 'Send Login Link',
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Divider with OR
+                  Row(
+                    children: [
+                      Expanded(child: Divider(color: Colors.grey.shade300)),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'OR',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      Expanded(child: Divider(color: Colors.grey.shade300)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Password login option
+                  OutlinedButton.icon(
+                    onPressed: () => setState(() => _showPasswordField = true),
+                    icon: const Icon(Icons.lock_outline),
+                    label: const Text('Login with Password'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

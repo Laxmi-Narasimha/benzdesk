@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import {
     MapPin,
@@ -8,7 +9,8 @@ import {
     Clock,
     Gauge,
     Activity,
-    Calendar
+    Calendar,
+    Map
 } from 'lucide-react';
 
 interface Session {
@@ -19,7 +21,7 @@ interface Session {
     total_km: number;
     employees: {
         name: string;
-        email: string;
+        phone: string;
     } | null;
 }
 
@@ -31,14 +33,14 @@ interface ExpenseClaim {
     status: string;
     employees: {
         name: string;
-        email: string;
+        phone: string;
     } | null;
 }
 
 interface EmployeeStats {
     id: string;
     name: string;
-    email: string;
+    phone: string;
     totalSessions: number;
     totalDistance: number; // in km
     totalDuration: number;
@@ -69,9 +71,12 @@ export default function MobitraqDashboard() {
         try {
             const supabase = getSupabaseClient();
 
+            // Ensure date is valid, fallback to today if empty
+            const validDate = date && date.length >= 10 ? date : new Date().toISOString().split('T')[0];
+
             // Start and end of selected date
-            const startOfDay = `${date}T00:00:00`;
-            const endOfDay = `${date}T23:59:59`;
+            const startOfDay = `${validDate}T00:00:00`;
+            const endOfDay = `${validDate}T23:59:59`;
 
             const { data: sessionsData, error: sessionsError } = await supabase
                 .from('shift_sessions')
@@ -83,7 +88,7 @@ export default function MobitraqDashboard() {
                     total_km,
                     employees (
                         name,
-                        email
+                        phone
                     )
                 `)
                 .gte('start_time', startOfDay)
@@ -107,9 +112,9 @@ export default function MobitraqDashboard() {
                     claim_date,
                     total_amount,
                     status,
-                    employees (
+                    employees!expense_claims_employee_id_fkey (
                         name,
-                        email
+                        phone
                     )
                 `)
                 .eq('claim_date', date)
@@ -153,16 +158,16 @@ export default function MobitraqDashboard() {
                 expenseCount: expenseCount,
             });
 
-            // Aggregate by employee
-            const statsMap = new Map<string, EmployeeStats>();
+            // Aggregate by employee using plain object (Map causes runtime issues in minified bundle)
+            const statsRecord: Record<string, EmployeeStats> = {};
             transformedSessions.forEach(session => {
                 const emp = session.employees;
                 if (!emp) return;
 
-                const existing = statsMap.get(session.employee_id) || {
+                const existing = statsRecord[session.employee_id] || {
                     id: session.employee_id,
                     name: emp.name,
-                    email: emp.email,
+                    phone: emp.phone || '',
                     totalSessions: 0,
                     totalDistance: 0,
                     totalDuration: 0,
@@ -178,10 +183,10 @@ export default function MobitraqDashboard() {
 
                 if (!session.end_time) existing.isActive = true;
 
-                statsMap.set(session.employee_id, existing);
+                statsRecord[session.employee_id] = existing;
             });
 
-            setEmployeeStats(Array.from(statsMap.values()));
+            setEmployeeStats(Object.values(statsRecord));
 
         } catch (error) {
             console.error('Error fetching mobitraq data:', error);
@@ -213,6 +218,13 @@ export default function MobitraqDashboard() {
                     <p className="text-gray-500">Field force tracking overview</p>
                 </div>
                 <div className="flex items-center gap-4">
+                    <Link
+                        href="/director/mobitraq/timeline"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
+                    >
+                        <Map className="w-4 h-4" />
+                        View Timeline
+                    </Link>
                     <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-gray-200">
                         <Calendar className="w-4 h-4 text-gray-500" />
                         <input
@@ -285,6 +297,7 @@ export default function MobitraqDashboard() {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sessions</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Distance</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -299,7 +312,7 @@ export default function MobitraqDashboard() {
                                                 </div>
                                                 <div>
                                                     <div className="font-medium text-gray-900">{emp.name}</div>
-                                                    <div className="text-sm text-gray-500">{emp.email}</div>
+                                                    <div className="text-sm text-gray-500">{emp.phone || 'No phone'}</div>
                                                 </div>
                                             </div>
                                         </td>
@@ -318,6 +331,15 @@ export default function MobitraqDashboard() {
                                         <td className="px-6 py-4 text-gray-900 font-medium">{emp.totalSessions}</td>
                                         <td className="px-6 py-4 text-gray-900">{emp.totalDistance.toFixed(2)} km</td>
                                         <td className="px-6 py-4 text-gray-900">{formatDuration(emp.totalDuration)}</td>
+                                        <td className="px-6 py-4">
+                                            <Link
+                                                href={`/director/mobitraq/timeline?employee=${emp.id}&date=${selectedDate}`}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-md hover:bg-primary-100 transition-colors"
+                                            >
+                                                <Map className="w-3.5 h-3.5" />
+                                                View Timeline
+                                            </Link>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -351,7 +373,7 @@ export default function MobitraqDashboard() {
                                     <tr key={exp.id} className="hover:bg-gray-50">
                                         <td className="px-6 py-4">
                                             <div className="font-medium text-gray-900">{exp.employees?.name || 'Unknown'}</div>
-                                            <div className="text-sm text-gray-500">{exp.employees?.email}</div>
+                                            <div className="text-sm text-gray-500">{exp.employees?.phone || ''}</div>
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${exp.status === 'approved' ? 'bg-green-100 text-green-800' :
