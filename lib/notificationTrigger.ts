@@ -13,6 +13,7 @@ interface NotificationPayload {
     url?: string;
     tag?: string;
     icon?: string;
+    sender_email?: string;
 }
 
 // ============================================================================
@@ -110,6 +111,7 @@ export async function notifyStatusChange(
         body: `${requestTitle}\n${statusInfo.description}\nUpdated by: ${changedByName}`,
         url: `/app/request?id=${requestId}`,
         tag: `status-${requestId}`,
+        sender_email: changedByEmail,
     });
 }
 
@@ -165,6 +167,7 @@ export async function notifyNewRequest(
                 body: `${requestTitle}\nCategory: ${requestCategory}`,
                 url: `/admin/request?id=${requestId}`,
                 tag: `new-request-${requestId}`,
+                sender_email: creatorEmail,
             });
         }
 
@@ -214,6 +217,7 @@ export async function notifyNewComment(
         body: `On: ${requestTitle}\n"${preview}"`,
         url,
         tag: `comment-${requestId}`,
+        sender_email: senderEmail,
     });
     console.log(`[${debugId}] ✅ DONE`);
 }
@@ -267,6 +271,7 @@ export async function notifyAdminsOfNewComment(
                 body: `On: ${requestTitle}\n"${preview}"`,
                 url: `/admin/request?id=${requestId}`,
                 tag: `comment-${requestId}`,
+                sender_email: senderEmail,
             });
         }
         console.log(`[${debugId}] ✅ COMPLETE: Notified ${admins.length} admin(s)`);

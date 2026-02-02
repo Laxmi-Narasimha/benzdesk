@@ -23,6 +23,11 @@ import {
     Menu,
     X,
     BookOpen,
+    Smartphone,
+    MapPin,
+    Receipt,
+    Route,
+    Bell,
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { RoleBadge } from '@/components/ui';
@@ -84,6 +89,12 @@ const adminNav: NavItem[] = [
         icon: <BookOpen className="w-5 h-5" />,
         roles: ['accounts_admin', 'director'],
     },
+    {
+        href: '/director/mobitraq',
+        label: 'BenzMobiTraq Admin',
+        icon: <Smartphone className="w-5 h-5" />,
+        roles: ['accounts_admin', 'director'],  // Directors and Admins can access MobiTraq
+    },
 ];
 
 const directorNav: NavItem[] = [
@@ -109,6 +120,40 @@ const directorNav: NavItem[] = [
         href: '/director/stale',
         label: 'Stale Requests',
         icon: <AlertTriangle className="w-5 h-5" />,
+        roles: ['director'],
+    },
+];
+
+// BenzMobiTraq navigation (field tracking app)
+const mobitraqNav: NavItem[] = [
+    {
+        href: '/director/mobitraq',
+        label: 'Field Overview',
+        icon: <Smartphone className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/sessions',
+        label: 'Employee Sessions',
+        icon: <MapPin className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/timeline',
+        label: 'Timeline & Map',
+        icon: <Route className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/alerts',
+        label: 'Alerts',
+        icon: <Bell className="w-5 h-5" />,
+        roles: ['director'],
+    },
+    {
+        href: '/director/mobitraq/expenses',
+        label: 'Field Expenses',
+        icon: <Receipt className="w-5 h-5" />,
         roles: ['director'],
     },
 ];
@@ -192,6 +237,7 @@ export function Sidebar() {
 
         if (isDirector) {
             items.push(...directorNav);
+            // MobiTraq link is now in adminNav under 'BenzMobiTraq Admin'
         }
 
         return items;

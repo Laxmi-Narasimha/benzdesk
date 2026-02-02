@@ -1,6 +1,7 @@
 // ============================================================================
 // NotificationBell Component
 // Displays notification indicator and dropdown with recent notifications
+// Improved formatting, better names/titles display, responsive design
 // ============================================================================
 
 'use client';
@@ -17,6 +18,8 @@ import {
     Upload,
     CheckCheck,
     X,
+    ArrowRight,
+    User,
 } from 'lucide-react';
 import { useNotifications, Notification } from '@/hooks/useNotifications';
 import { useAuth } from '@/lib/AuthContext';
@@ -26,15 +29,35 @@ import { useAuth } from '@/lib/AuthContext';
 // ============================================================================
 
 function getNotificationIcon(type: Notification['type']) {
+    const iconClass = "w-4 h-4";
     switch (type) {
         case 'comment':
-            return <MessageSquare className="w-4 h-4 text-blue-400" />;
+            return <MessageSquare className={`${iconClass} text-blue-400`} />;
         case 'status_change':
-            return <FileText className="w-4 h-4 text-green-400" />;
+            return <FileText className={`${iconClass} text-emerald-400`} />;
         case 'file_upload':
-            return <Upload className="w-4 h-4 text-purple-400" />;
+            return <Upload className={`${iconClass} text-purple-400`} />;
         default:
-            return <Bell className="w-4 h-4 text-gray-400" />;
+            return <Bell className={`${iconClass} text-amber-400`} />;
+    }
+}
+
+// ============================================================================
+// Type Label Helper
+// ============================================================================
+
+function getTypeLabel(type: Notification['type']) {
+    switch (type) {
+        case 'comment':
+            return 'New Comment';
+        case 'status_change':
+            return 'Status Updated';
+        case 'file_upload':
+            return 'File Uploaded';
+        case 'mention':
+            return 'You were mentioned';
+        default:
+            return 'Notification';
     }
 }
 
@@ -67,14 +90,12 @@ export function NotificationBell() {
             setIsMobile(isMobileView);
 
             if (isMobileView) {
-                // On mobile: center the modal (we'll use fixed centering in CSS)
                 setDropdownPosition({ top: 0, left: 0 });
             } else {
-                // On desktop: position dropdown above the button
                 const rect = buttonRef.current.getBoundingClientRect();
                 setDropdownPosition({
                     top: rect.top - 8,
-                    left: Math.max(16, rect.right - 320),
+                    left: Math.max(16, rect.right - 360),
                 });
             }
         }
@@ -126,12 +147,43 @@ export function NotificationBell() {
         setIsOpen(false);
     };
 
+    // Parse notification content for better display
+    const parseNotificationContent = (notification: Notification) => {
+        // Extract sender name from title if present (format: "Name commented" or similar)
+        const title = notification.title || '';
+        const message = notification.message || '';
+
+        // Try to extract person name and request title from message
+        // Common formats: "On: Request Title", "Request: Title"
+        let requestTitle = '';
+        let senderName = '';
+        let content = message;
+
+        // Extract sender from title (e.g., "💬 John commented" -> "John")
+        const titleMatch = title.match(/(?:💬|📎|🔄|📩)\s*(.+?)\s+(?:commented|replied|uploaded|updated|submitted)/i);
+        if (titleMatch) {
+            senderName = titleMatch[1].trim();
+        }
+
+        // Extract request title from message (e.g., "On: My Request\n...")
+        const requestMatch = message.match(/(?:On:|Request:)\s*(.+?)(?:\n|$)/i);
+        if (requestMatch) {
+            requestTitle = requestMatch[1].trim();
+            content = message.replace(requestMatch[0], '').trim();
+        }
+
+        // Clean up content - remove quotes and excess whitespace
+        content = content.replace(/^["']|["']$/g, '').trim();
+
+        return { senderName, requestTitle, content };
+    };
+
     const dropdownContent = (
         <>
             {/* Mobile backdrop */}
             {isMobile && (
                 <div
-                    className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm"
                     style={{ zIndex: 9998 }}
                     onClick={() => setIsOpen(false)}
                 />
@@ -141,8 +193,8 @@ export function NotificationBell() {
                 className={clsx(
                     'fixed bg-white border border-gray-200 shadow-2xl flex flex-col',
                     isMobile
-                        ? 'inset-2 rounded-2xl'
-                        : 'w-80 rounded-xl overflow-hidden'
+                        ? 'inset-3 rounded-2xl'
+                        : 'w-[360px] rounded-xl overflow-hidden'
                 )}
                 style={isMobile ? { zIndex: 9999 } : {
                     top: dropdownPosition.top,
@@ -151,25 +203,33 @@ export function NotificationBell() {
                     zIndex: 9999,
                 }}
             >
-                {/* Header with X close button */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
-                    <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-primary-500 to-primary-600">
                     <div className="flex items-center gap-2">
+                        <Bell className="w-4 h-4 text-white" />
+                        <h3 className="text-sm font-semibold text-white">Notifications</h3>
+                        {unreadCount > 0 && (
+                            <span className="px-1.5 py-0.5 text-xs font-bold bg-white/20 text-white rounded-full">
+                                {unreadCount} new
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-1">
                         {unreadCount > 0 && (
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     markAllAsRead();
                                 }}
-                                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors px-2 py-1 rounded hover:bg-gray-200"
+                                className="flex items-center gap-1 text-xs text-white/80 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/10"
                             >
                                 <CheckCheck className="w-3.5 h-3.5" />
-                                Mark all read
+                                <span className="hidden sm:inline">Mark all read</span>
                             </button>
                         )}
                         <button
                             onClick={() => setIsOpen(false)}
-                            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+                            className="p-1.5 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
                             aria-label="Close notifications"
                         >
                             <X className="w-5 h-5" />
@@ -177,68 +237,114 @@ export function NotificationBell() {
                     </div>
                 </div>
 
+                {/* Notification List */}
                 <div className={clsx(
                     'overflow-y-auto',
-                    isMobile ? 'flex-1' : 'max-h-80'
+                    isMobile ? 'flex-1' : 'max-h-[400px]'
                 )}>
                     {notifications.length === 0 ? (
-                        <div className="px-4 py-8 text-center">
-                            <Bell className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                            <p className="text-sm text-gray-500">No notifications yet</p>
-                            <p className="text-xs text-gray-400 mt-1">
-                                You'll be notified of updates to your requests
+                        <div className="px-6 py-12 text-center">
+                            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center">
+                                <Bell className="w-8 h-8 text-gray-300" />
+                            </div>
+                            <p className="text-sm font-medium text-gray-600">No notifications yet</p>
+                            <p className="text-xs text-gray-400 mt-1 max-w-[200px] mx-auto">
+                                You'll be notified when there are updates to your requests
                             </p>
                         </div>
                     ) : (
-                        <div className="divide-y divide-gray-100">
-                            {notifications.slice(0, 10).map((notification) => (
-                                <button
-                                    key={notification.id}
-                                    onClick={() => handleNotificationClick(notification)}
-                                    className={clsx(
-                                        'w-full flex items-start gap-3 px-4 py-3 text-left transition-colors',
-                                        'hover:bg-gray-50',
-                                        !notification.is_read && 'bg-primary-50'
-                                    )}
-                                >
-                                    {/* Icon */}
-                                    <div className="flex-shrink-0 mt-0.5 p-1.5 rounded-lg bg-dark-800">
-                                        {getNotificationIcon(notification.type)}
-                                    </div>
+                        <div className="divide-y divide-gray-50">
+                            {notifications.map((notification) => {
+                                const { senderName, requestTitle, content } = parseNotificationContent(notification);
 
-                                    {/* Content */}
-                                    <div className="flex-1 min-w-0">
-                                        <p className={clsx(
-                                            'text-sm leading-tight',
-                                            notification.is_read ? 'text-dark-300' : 'text-dark-100 font-medium'
+                                return (
+                                    <button
+                                        key={notification.id}
+                                        onClick={() => handleNotificationClick(notification)}
+                                        className={clsx(
+                                            'w-full flex items-start gap-3 px-4 py-3 text-left transition-all duration-200',
+                                            'hover:bg-gray-50 active:bg-gray-100',
+                                            !notification.is_read && 'bg-primary-50/50 border-l-3 border-l-primary-500'
+                                        )}
+                                    >
+                                        {/* Icon with colored background */}
+                                        <div className={clsx(
+                                            'flex-shrink-0 mt-0.5 p-2 rounded-lg',
+                                            notification.type === 'comment' && 'bg-blue-100',
+                                            notification.type === 'status_change' && 'bg-emerald-100',
+                                            notification.type === 'file_upload' && 'bg-purple-100',
+                                            notification.type === 'mention' && 'bg-amber-100',
+                                            !['comment', 'status_change', 'file_upload', 'mention'].includes(notification.type) && 'bg-gray-100'
                                         )}>
-                                            {notification.title}
-                                        </p>
-                                        <p className="text-xs text-dark-500 mt-1 line-clamp-2">
-                                            {notification.message}
-                                        </p>
-                                        <p className="text-xs text-gray-400 mt-1.5" suppressHydrationWarning>
-                                            {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
-                                        </p>
-                                    </div>
-
-                                    {/* Unread indicator */}
-                                    {!notification.is_read && (
-                                        <div className="flex-shrink-0 mt-1.5">
-                                            <span className="w-2 h-2 rounded-full bg-primary-500 block animate-pulse" />
+                                            {getNotificationIcon(notification.type)}
                                         </div>
-                                    )}
-                                </button>
-                            ))}
+
+                                        {/* Content */}
+                                        <div className="flex-1 min-w-0 space-y-1">
+                                            {/* Type Label */}
+                                            <div className="flex items-center gap-2">
+                                                <span className={clsx(
+                                                    'text-xs font-semibold uppercase tracking-wide',
+                                                    notification.type === 'comment' && 'text-blue-600',
+                                                    notification.type === 'status_change' && 'text-emerald-600',
+                                                    notification.type === 'file_upload' && 'text-purple-600',
+                                                    notification.type === 'mention' && 'text-amber-600',
+                                                    !['comment', 'status_change', 'file_upload', 'mention'].includes(notification.type) && 'text-gray-600'
+                                                )}>
+                                                    {getTypeLabel(notification.type)}
+                                                </span>
+                                                {!notification.is_read && (
+                                                    <span className="w-2 h-2 rounded-full bg-primary-500 animate-pulse" />
+                                                )}
+                                            </div>
+
+                                            {/* Sender Name */}
+                                            {senderName && (
+                                                <div className="flex items-center gap-1.5">
+                                                    <User className="w-3 h-3 text-gray-400" />
+                                                    <span className="text-sm font-medium text-gray-800 truncate">
+                                                        {senderName}
+                                                    </span>
+                                                </div>
+                                            )}
+
+                                            {/* Request Title */}
+                                            {requestTitle && (
+                                                <p className="text-sm text-gray-700 font-medium truncate">
+                                                    <span className="text-gray-400">on </span>
+                                                    "{requestTitle}"
+                                                </p>
+                                            )}
+
+                                            {/* Message Preview */}
+                                            {content && (
+                                                <p className="text-xs text-gray-500 line-clamp-2">
+                                                    {content}
+                                                </p>
+                                            )}
+
+                                            {/* Timestamp */}
+                                            <p className="text-xs text-gray-400 mt-1" suppressHydrationWarning>
+                                                {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+                                            </p>
+                                        </div>
+
+                                        {/* Arrow indicator */}
+                                        <div className="flex-shrink-0 self-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <ArrowRight className="w-4 h-4 text-gray-300" />
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
 
                 {/* Footer */}
-                {notifications.length > 10 && (
-                    <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-center">
+                {notifications.length > 0 && (
+                    <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50/50 text-center">
                         <span className="text-xs text-gray-500">
-                            Showing 10 of {notifications.length} notifications
+                            Showing latest {notifications.length} notification{notifications.length !== 1 ? 's' : ''}
                         </span>
                     </div>
                 )}
@@ -252,9 +358,9 @@ export function NotificationBell() {
                 ref={buttonRef}
                 onClick={() => setIsOpen(!isOpen)}
                 className={clsx(
-                    'relative p-2 rounded-lg transition-all duration-200',
+                    'relative p-2.5 rounded-xl transition-all duration-200',
                     'text-gray-500 hover:text-gray-700 hover:bg-gray-100',
-                    isOpen && 'bg-gray-100 text-gray-700 ring-2 ring-primary-500/30'
+                    isOpen && 'bg-primary-100 text-primary-600 ring-2 ring-primary-500/30'
                 )}
                 aria-label={`Notifications ${unreadCount > 0 ? `(${unreadCount} unread)` : ''}`}
             >
@@ -262,8 +368,8 @@ export function NotificationBell() {
 
                 {/* Unread Badge */}
                 {unreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[20px] h-5 flex items-center justify-center text-xs font-bold text-white bg-red-500 rounded-full px-1 shadow-lg animate-pulse">
-                        {unreadCount > 99 ? '99+' : unreadCount}
+                    <span className="absolute -top-1 -right-1 min-w-[20px] h-5 flex items-center justify-center text-xs font-bold text-white bg-red-500 rounded-full px-1.5 shadow-lg ring-2 ring-white animate-pulse">
+                        {unreadCount > 9 ? '9+' : unreadCount}
                     </span>
                 )}
             </button>
@@ -275,4 +381,3 @@ export function NotificationBell() {
 }
 
 export default NotificationBell;
-

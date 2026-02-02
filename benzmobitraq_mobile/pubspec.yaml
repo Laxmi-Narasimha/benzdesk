@@ -1,0 +1,96 @@
+name: benzmobitraq_mobile
+description: Field-force tracking app for sales team with km tracking, stuck alerts, and expense management.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Core
+  cupertino_icons: ^1.0.6
+
+  # State Management
+  flutter_bloc: ^8.1.3
+  equatable: ^2.0.5
+  get_it: ^7.6.4
+  injectable: ^2.3.2
+
+  # Backend - Supabase
+  supabase_flutter: ^2.3.0
+
+  # Location Tracking - FREE reliable background tracking stack
+  # geolocator: Core location services (GPS)
+  # flutter_background_service: Foreground service for background execution
+  # sensors_plus: Accelerometer for motion detection (saves battery)
+  # permission_handler: Comprehensive permission management
+  geolocator: ^11.0.0
+  flutter_background_service: ^5.0.5
+  flutter_background_service_android: ^6.2.2
+  sensors_plus: ^4.0.2
+  permission_handler: ^11.1.0
+
+  # Local Storage
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.2
+  crypto: ^3.0.3  # For hash computation (idempotency)
+
+
+  # Notifications
+  firebase_core: ^2.24.2
+  firebase_messaging: ^14.7.10
+  flutter_local_notifications: ^18.0.1
+
+  # Networking & Connectivity
+  connectivity_plus: ^6.0.0
+  dio: ^5.4.0
+
+  # URL Launcher
+  url_launcher: ^6.2.2
+
+  # UI Components
+  intl: ^0.19.0
+  cached_network_image: ^3.3.0
+  image_picker: ^1.0.7
+  file_picker: ^8.1.6
+  flutter_svg: ^2.0.9
+  shimmer: ^3.0.0
+
+  # Utilities
+  uuid: ^4.2.2
+  logger: ^2.0.2+1
+  json_annotation: ^4.8.1
+
+  # Geocoding (coordinates to address)
+  geocoding: ^3.0.0
+
+  # Premium Fonts
+  google_fonts: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  build_runner: ^2.4.8
+  injectable_generator: ^2.4.1
+  json_serializable: ^6.7.1
+  mocktail: ^1.0.1
+  flutter_launcher_icons: ^0.13.1
+
+flutter_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/logo.png"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
