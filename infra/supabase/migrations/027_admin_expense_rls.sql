@@ -87,21 +87,20 @@ FOR SELECT USING (
 );
 
 -- ============================================================================
--- STEP 6: Add Admin SELECT policy for employees (needed for joins)
+-- STEP 6: Add SELECT policy for employees (for viewing own profile)
+-- NOTE: We CANNOT reference employees table inside employees policy
+-- This causes infinite recursion! Use simple id = auth.uid() check.
 -- ============================================================================
 
 DROP POLICY IF EXISTS "Admins can view all employees" ON employees;
+DROP POLICY IF EXISTS "Users can view own profile" ON employees;
 
-CREATE POLICY "Admins can view all employees" ON employees
-FOR SELECT USING (
-  -- Either viewing own profile OR is an admin
-  id = auth.uid() OR
-  EXISTS (
-    SELECT 1 FROM employees e 
-    WHERE e.id = auth.uid() 
-    AND e.role IN ('admin', 'super_admin', 'director')
-  )
-);
+-- Simple policy: users can see their own profile
+CREATE POLICY "Users can view own profile" ON employees
+FOR SELECT USING (id = auth.uid());
+
+-- NOTE: For admin panel to see all employees, use service_role key
+-- which bypasses RLS completely
 
 -- ============================================================================
 -- SUCCESS
