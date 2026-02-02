@@ -57,7 +57,7 @@ interface LocationPoint {
     latitude: number;
     longitude: number;
     recorded_at: string;
-    speed_mps: number | null;
+    speed: number | null;
     accuracy: number | null;
 }
 
@@ -212,7 +212,7 @@ export default function TimelinePage() {
             // Fetch location points for the day
             const { data: pointsData, error: pointsError } = await supabase
                 .from('location_points')
-                .select('id, latitude, longitude, recorded_at, speed_mps, accuracy')
+                .select('id, latitude, longitude, recorded_at, speed, accuracy')
                 .eq('employee_id', selectedEmployee)
                 .gte('recorded_at', startOfDay)
                 .lte('recorded_at', endOfDay)
