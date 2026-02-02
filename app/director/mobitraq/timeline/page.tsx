@@ -22,27 +22,20 @@ import {
     Target,
 } from 'lucide-react';
 
-// Dynamic import for Leaflet (SSR incompatible)
-// Must use default export for React components
-const MapContainer = dynamic(
-    () => import('react-leaflet').then((mod) => mod.MapContainer),
-    { ssr: false, loading: () => <div className="h-[400px] bg-dark-900 flex items-center justify-center"><span className="text-dark-400">Loading map...</span></div> }
-);
-const TileLayer = dynamic(
-    () => import('react-leaflet').then((mod) => mod.TileLayer),
-    { ssr: false }
-);
-const Polyline = dynamic(
-    () => import('react-leaflet').then((mod) => mod.Polyline),
-    { ssr: false }
-);
-const CircleMarker = dynamic(
-    () => import('react-leaflet').then((mod) => mod.CircleMarker),
-    { ssr: false }
-);
-const Popup = dynamic(
-    () => import('react-leaflet').then((mod) => mod.Popup),
-    { ssr: false }
+// Dynamic import for the MapComponent to avoid SSR issues
+const MapComponent = dynamic(
+    () => import('./MapComponent'),
+    {
+        ssr: false,
+        loading: () => (
+            <div className="absolute inset-0 bg-dark-950/80 flex items-center justify-center z-10">
+                <div className="flex items-center gap-2 text-dark-400">
+                    <div className="animate-spin w-5 h-5 border-2 border-primary-500 border-t-transparent rounded-full" />
+                    Loading map...
+                </div>
+            </div>
+        )
+    }
 );
 
 // Types
@@ -84,6 +77,7 @@ interface TimelineEvent {
     distance_km: number | null;
     center_lat: number | null;
     center_lng: number | null;
+    address: string | null;
 }
 
 interface DailyRollup {
@@ -450,89 +444,15 @@ export default function TimelinePage() {
                         </div>
                     )}
                     {mapReady && (
-                        <MapContainer
+                        <MapComponent
                             key={`${mapConfig.center[0]}-${mapConfig.center[1]}-${mapConfig.zoom}`}
                             center={mapConfig.center}
                             zoom={mapConfig.zoom}
-                            className="h-full w-full"
-                            style={{ background: '#1a1a2e' }}
-                        >
-                            <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            />
-
-                            {/* Route polyline */}
-                            {routePositions.length > 1 && (
-                                <Polyline
-                                    positions={routePositions}
-                                    color="#3b82f6"
-                                    weight={4}
-                                    opacity={0.8}
-                                />
-                            )}
-
-                            {/* Start marker */}
-                            {points.length > 0 && (
-                                <CircleMarker
-                                    center={[points[0].latitude, points[0].longitude]}
-                                    radius={10}
-                                    fillColor="#22c55e"
-                                    fillOpacity={1}
-                                    color="#fff"
-                                    weight={2}
-                                >
-                                    <Popup>
-                                        <strong>Start</strong>
-                                        <br />
-                                        {formatTime(points[0].recorded_at)}
-                                    </Popup>
-                                </CircleMarker>
-                            )}
-
-                            {/* End marker */}
-                            {points.length > 1 && (
-                                <CircleMarker
-                                    center={[
-                                        points[points.length - 1].latitude,
-                                        points[points.length - 1].longitude,
-                                    ]}
-                                    radius={10}
-                                    fillColor="#ef4444"
-                                    fillOpacity={1}
-                                    color="#fff"
-                                    weight={2}
-                                >
-                                    <Popup>
-                                        <strong>End</strong>
-                                        <br />
-                                        {formatTime(points[points.length - 1].recorded_at)}
-                                    </Popup>
-                                </CircleMarker>
-                            )}
-
-                            {/* Stop markers */}
-                            {timelineEvents
-                                .filter((e) => e.event_type === 'stop' && e.center_lat && e.center_lng)
-                                .map((stop) => (
-                                    <CircleMarker
-                                        key={stop.id}
-                                        center={[stop.center_lat!, stop.center_lng!]}
-                                        radius={8}
-                                        fillColor="#f59e0b"
-                                        fillOpacity={0.9}
-                                        color="#fff"
-                                        weight={2}
-                                    >
-                                        <Popup>
-                                            <strong>Stop</strong>
-                                            <br />
-                                            {formatTime(stop.start_time)}
-                                            {stop.duration_min && ` (${formatDuration(stop.duration_min)})`}
-                                        </Popup>
-                                    </CircleMarker>
-                                ))}
-                        </MapContainer>
+                            routePositions={routePositions}
+                            points={points}
+                            timelineEvents={timelineEvents}
+                            formatTime={formatTime}
+                        />
                     )}
                 </div>
             </Card>
