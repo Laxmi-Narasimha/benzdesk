@@ -485,9 +485,9 @@ void _onServiceStart(ServiceInstance service) async {
     // CRITICAL FIX: Use bestForNavigation for highest accuracy
     positionSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation, // Highest accuracy available
-        distanceFilter: 5, // Update every 5 meters (was 50m)
-        timeLimit: Duration(seconds: 30), // Maximum time to wait for location
+        accuracy: LocationAccuracy.high, // Balanced accuracy (battery friendly)
+        distanceFilter: 30, // Update every 30 meters (was 5m - too aggressive)
+        timeLimit: Duration(seconds: 30),
       ),
     ).listen(
       _onPositionReceived,

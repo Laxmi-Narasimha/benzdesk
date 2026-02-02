@@ -1,12 +1,10 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../../models/expense_model.dart';
-import 'package:logger/logger.dart';
 
 /// Local SQLite database for storing expense data when offline
 class ExpenseQueueLocal {
   Database? _database;
-  final Logger _logger = Logger();
 
   static const String _dbName = 'benzmobitraq_expenses.db';
   static const int _dbVersion = 1;

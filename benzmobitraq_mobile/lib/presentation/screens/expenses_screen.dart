@@ -145,7 +145,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
   }
 
   Widget _buildExpenseList(List<ExpenseModel> expenses) {
-    // Group by status - 'submitted' and 'draft' are treated as pending
+    // Group by status
     final pending = expenses.where((e) => e.status == 'pending' || e.status == 'submitted' || e.status == 'draft').toList();
     final approved = expenses.where((e) => e.status == 'approved').toList();
     final rejected = expenses.where((e) => e.status == 'rejected').toList();
@@ -154,34 +154,72 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       onRefresh: () async {
         context.read<ExpenseBloc>().add(const ExpenseLoadRequested());
       },
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Summary cards
-          _buildSummaryRow(expenses),
-          const SizedBox(height: 24),
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverToBoxAdapter(
+              child: _buildSummaryRow(expenses),
+            ),
+          ),
           
-          // Pending expenses
           if (pending.isNotEmpty) ...[
-            _buildSectionHeader('Pending', pending.length, Colors.orange),
-            ...pending.map((e) => _buildExpenseCard(e)),
-            const SizedBox(height: 16),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverToBoxAdapter(
+                child: _buildSectionHeader('Pending', pending.length, Colors.orange),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildExpenseCard(pending[index]),
+                  childCount: pending.length,
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
           ],
-          
-          // Approved expenses
+
           if (approved.isNotEmpty) ...[
-            _buildSectionHeader('Approved', approved.length, Colors.green),
-            ...approved.map((e) => _buildExpenseCard(e)),
-            const SizedBox(height: 16),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverToBoxAdapter(
+                child: _buildSectionHeader('Approved', approved.length, Colors.green),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildExpenseCard(approved[index]),
+                  childCount: approved.length,
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
           ],
-          
-          // Rejected expenses
+
           if (rejected.isNotEmpty) ...[
-            _buildSectionHeader('Rejected', rejected.length, Colors.red),
-            ...rejected.map((e) => _buildExpenseCard(e)),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverToBoxAdapter(
+                child: _buildSectionHeader('Rejected', rejected.length, Colors.red),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildExpenseCard(rejected[index]),
+                  childCount: rejected.length,
+                ),
+              ),
+            ),
           ],
-          
-          const SizedBox(height: 80), // FAB space
+
+          const SliverToBoxAdapter(child: SizedBox(height: 80)), // FAB space
         ],
       ),
     );
@@ -300,6 +338,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
     );
   }
 
+  // NOTE: This now only builds when the item is scrolled into view!
   Widget _buildExpenseCard(ExpenseModel expense) {
     Color statusColor;
     IconData statusIcon;

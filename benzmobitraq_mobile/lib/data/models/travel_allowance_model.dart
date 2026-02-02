@@ -1,5 +1,5 @@
-/// Travel allowance limits based on employee grade
-/// Based on BENZ Packaging Travel Policy
+// Travel allowance limits based on employee grade
+// Based on BENZ Packaging Travel Policy (Updated Feb 2026)
 
 /// Employee grade/band for travel allowance
 enum EmployeeGrade {
@@ -24,13 +24,15 @@ enum EmployeeGrade {
     if (lowered.contains('director')) return EmployeeGrade.director;
     if (lowered.contains('vp') || lowered.contains('vice president')) return EmployeeGrade.vp;
     if (lowered.contains('plant head')) return EmployeeGrade.plantHead;
+    if (lowered.contains('cxo')) return EmployeeGrade.vp;
     if (lowered.contains('general manager') || lowered.contains('gm')) return EmployeeGrade.gm;
     if (lowered.contains('agm') || lowered.contains('assistant general manager')) return EmployeeGrade.agm;
-    if (lowered.contains('senior manager')) return EmployeeGrade.seniorManager;
+    if (lowered.contains('senior manager') || lowered.contains('sr. manager')) return EmployeeGrade.seniorManager;
     if (lowered.contains('manager') && !lowered.contains('assistant')) return EmployeeGrade.manager;
-    if (lowered.contains('assistant manager')) return EmployeeGrade.assistantManager;
-    if (lowered.contains('assistant')) return EmployeeGrade.assistant;
+    if (lowered.contains('assistant manager') || lowered.contains('asst. manager')) return EmployeeGrade.assistantManager;
+    if (lowered.contains('assistant') || lowered.contains('asst')) return EmployeeGrade.assistant;
     if (lowered.contains('senior executive') || lowered.contains('sr. executive')) return EmployeeGrade.seniorExecutive;
+    if (lowered.contains('operator')) return EmployeeGrade.executive;
     
     return EmployeeGrade.executive;
   }
@@ -51,23 +53,131 @@ enum EmployeeGrade {
       case EmployeeGrade.director: return 'Director';
     }
   }
+
+  /// Get band name for display (grouped)
+  String get bandName {
+    switch (this) {
+      case EmployeeGrade.executive:
+      case EmployeeGrade.seniorExecutive:
+        return 'Executives / Sr. Executives';
+      case EmployeeGrade.assistant:
+      case EmployeeGrade.assistantManager:
+        return 'Assistant Managers';
+      case EmployeeGrade.manager:
+      case EmployeeGrade.seniorManager:
+        return 'Managers / Sr. Managers';
+      case EmployeeGrade.agm:
+      case EmployeeGrade.gm:
+      case EmployeeGrade.plantHead:
+      case EmployeeGrade.vp:
+      case EmployeeGrade.director:
+        return 'AGM / GM / VP / CXO';
+    }
+  }
 }
 
 /// Travel allowance limits per category and grade
+/// Based on BENZ Packaging Travel Policy
 class TravelAllowanceLimits {
-  // Local Travel Daily Limits
-  static double getLocalDailyLimit(EmployeeGrade grade) {
+  // ============================================================
+  // HOTEL STAY ENTITLEMENTS (Per Night)
+  // All bookings via Corporate Make My Trip (CMMT)
+  // ============================================================
+  static double getHotelNightLimit(EmployeeGrade grade) {
     switch (grade) {
       case EmployeeGrade.executive:
-        return 300.0; // ₹300/day
       case EmployeeGrade.seniorExecutive:
+        return 2000.0; // Budget (3-Star, Standard Rooms)
       case EmployeeGrade.assistant:
-        return 500.0; // ₹500/day
       case EmployeeGrade.assistantManager:
-        return 700.0; // ₹700/day
+        return 3000.0; // 3-Star / Business Hotels
+      case EmployeeGrade.manager:
+      case EmployeeGrade.seniorManager:
+        return 3500.0; // 3-4 Star Hotels
+      case EmployeeGrade.agm:
+      case EmployeeGrade.gm:
+      case EmployeeGrade.plantHead:
+      case EmployeeGrade.vp:
+      case EmployeeGrade.director:
+        return 4000.0; // 4-5 Star Hotels
+    }
+  }
+
+  /// Get hotel category for grade
+  static String getHotelCategory(EmployeeGrade grade) {
+    switch (grade) {
+      case EmployeeGrade.executive:
+      case EmployeeGrade.seniorExecutive:
+        return 'Budget (3-Star, Standard Rooms)';
+      case EmployeeGrade.assistant:
+      case EmployeeGrade.assistantManager:
+        return '3-Star / Business Hotels';
+      case EmployeeGrade.manager:
+      case EmployeeGrade.seniorManager:
+        return '3-4 Star Hotels';
+      case EmployeeGrade.agm:
+      case EmployeeGrade.gm:
+      case EmployeeGrade.plantHead:
+      case EmployeeGrade.vp:
+      case EmployeeGrade.director:
+        return '4-5 Star Hotels';
+    }
+  }
+
+  // ============================================================
+  // FOOD & DAILY ALLOWANCE (Per Day)
+  // Applicable for travel beyond 50 km or requiring overnight stay
+  // ============================================================
+  static double getFoodDailyLimit(EmployeeGrade grade) {
+    switch (grade) {
+      case EmployeeGrade.executive:
+      case EmployeeGrade.seniorExecutive:
+        return 600.0; // ₹600/day - No alcohol reimbursed
+      case EmployeeGrade.assistant:
+      case EmployeeGrade.assistantManager:
+        return 800.0; // ₹800/day - Bills mandatory
       case EmployeeGrade.manager:
       case EmployeeGrade.seniorManager:
         return 1000.0; // ₹1,000/day
+      case EmployeeGrade.agm:
+      case EmployeeGrade.gm:
+      case EmployeeGrade.plantHead:
+      case EmployeeGrade.vp:
+      case EmployeeGrade.director:
+        return 1500.0; // ₹1,500/day
+    }
+  }
+
+  /// Get food allowance notes for display
+  static String getFoodAllowanceNote(EmployeeGrade grade) {
+    switch (grade) {
+      case EmployeeGrade.executive:
+      case EmployeeGrade.seniorExecutive:
+        return 'No alcohol reimbursed';
+      case EmployeeGrade.assistant:
+      case EmployeeGrade.assistantManager:
+        return 'Bills mandatory';
+      default:
+        return '';
+    }
+  }
+
+  // ============================================================
+  // LOCAL TRAVEL DAILY LIMITS
+  // Band-wise Travel Entitlements (Within City / Factory / Client Visits)
+  // ============================================================
+  static double getLocalDailyLimit(EmployeeGrade grade) {
+    switch (grade) {
+      case EmployeeGrade.executive:
+        return 300.0; // ₹300/day - Auto, Bus, Shared Cab
+      case EmployeeGrade.seniorExecutive:
+      case EmployeeGrade.assistant:
+        return 500.0; // ₹500/day - Auto, Cab (Ola/Uber), Bus
+      case EmployeeGrade.assistantManager:
+        return 700.0; // ₹700/day - Cab (Ola/Uber)
+      case EmployeeGrade.manager:
+      case EmployeeGrade.seniorManager:
+        return 1000.0; // ₹1,000/day - Cab, Personal Car, Bike
       case EmployeeGrade.agm:
       case EmployeeGrade.gm:
       case EmployeeGrade.plantHead:
@@ -77,52 +187,11 @@ class TravelAllowanceLimits {
     }
   }
 
-  // Outstation Hotel Night Limits
-  static double getHotelNightLimit(EmployeeGrade grade) {
-    switch (grade) {
-      case EmployeeGrade.executive:
-      case EmployeeGrade.seniorExecutive:
-      case EmployeeGrade.assistant:
-        return 1500.0; // ₹1,500/night
-      case EmployeeGrade.assistantManager:
-        return 2000.0; // ₹2,000/night
-      case EmployeeGrade.manager:
-      case EmployeeGrade.seniorManager:
-        return 3000.0; // ₹3,000/night
-      case EmployeeGrade.agm:
-      case EmployeeGrade.gm:
-        return 4000.0; // ₹4,000/night
-      case EmployeeGrade.plantHead:
-      case EmployeeGrade.vp:
-      case EmployeeGrade.director:
-        return 5000.0; // ₹5,000/night
-    }
-  }
-
-  // Outstation Food Daily Limits
-  static double getFoodDailyLimit(EmployeeGrade grade) {
-    switch (grade) {
-      case EmployeeGrade.executive:
-      case EmployeeGrade.seniorExecutive:
-      case EmployeeGrade.assistant:
-        return 300.0; // ₹300/day
-      case EmployeeGrade.assistantManager:
-        return 400.0; // ₹400/day
-      case EmployeeGrade.manager:
-      case EmployeeGrade.seniorManager:
-        return 500.0; // ₹500/day
-      case EmployeeGrade.agm:
-      case EmployeeGrade.gm:
-      case EmployeeGrade.plantHead:
-      case EmployeeGrade.vp:
-      case EmployeeGrade.director:
-        return 700.0; // ₹700/day
-    }
-  }
-
-  // Fuel Reimbursement Rate per KM
+  // ============================================================
+  // FUEL REIMBURSEMENT (Per KM)
+  // ============================================================
   static double getFuelRatePerKm(EmployeeGrade grade) {
-    // Managers and above: ₹7.5/km for car, ₹5/km for bike
+    // Managers and above: ₹7.5/km for car
     switch (grade) {
       case EmployeeGrade.manager:
       case EmployeeGrade.seniorManager:
@@ -153,7 +222,22 @@ class TravelAllowanceLimits {
     }
   }
 
-  /// Get allowed transport modes for grade
+  // ============================================================
+  // MISCELLANEOUS ALLOWANCES
+  // ============================================================
+  
+  /// Laundry allowance (if stay > 3 nights)
+  static double getLaundryDailyLimit() => 300.0; // Max ₹300/day
+
+  /// Internet/Connectivity - Actuals with bill (no limit)
+  static double getInternetLimit() => -1; // Actuals
+
+  /// Toll/Parking - Actuals (no limit)
+  static double getTollLimit() => -1; // Actuals
+
+  // ============================================================
+  // TRANSPORT MODES
+  // ============================================================
   static List<String> getAllowedTransportModes(EmployeeGrade grade) {
     switch (grade) {
       case EmployeeGrade.executive:
@@ -165,7 +249,7 @@ class TravelAllowanceLimits {
         return ['Cab (Ola/Uber)'];
       case EmployeeGrade.manager:
       case EmployeeGrade.seniorManager:
-        return ['Cab', 'Personal Car (Fuel Reimbursement)', 'Bike'];
+        return ['Cab', 'Personal Car (Fuel Reimbursement @₹7.5/km)', 'Bike (@₹5/km)'];
       case EmployeeGrade.agm:
       case EmployeeGrade.gm:
       case EmployeeGrade.plantHead:
@@ -175,51 +259,40 @@ class TravelAllowanceLimits {
     }
   }
 
-  /// Get allowed outstation travel modes
+  // ============================================================
+  // OUTSTATION TRAVEL MODES
+  // ============================================================
   static String getOutstationTravelMode(EmployeeGrade grade) {
     switch (grade) {
       case EmployeeGrade.executive:
       case EmployeeGrade.seniorExecutive:
       case EmployeeGrade.assistant:
-        return 'Sleeper / 3AC Train, Volvo Bus\n(Flight only if >800km & urgent)';
+        return 'Sleeper / 3AC (Train), Bus (Volvo)\n(Flight only if >800km & urgent)';
       case EmployeeGrade.assistantManager:
-        return '3AC Train, Volvo Bus, Economy Flight (case-to-case)';
+        return '3AC (Train), Volvo, Economy Flight (case-to-case)\nManager approval mandatory';
       case EmployeeGrade.manager:
       case EmployeeGrade.seniorManager:
-        return 'Economy Flight, 2AC Train';
+        return 'Economy Flight / 2AC\nMust be booked via TOC';
       case EmployeeGrade.agm:
       case EmployeeGrade.gm:
       case EmployeeGrade.plantHead:
       case EmployeeGrade.vp:
       case EmployeeGrade.director:
-        return 'Economy Flight, 2AC Train (FH Approval)';
+        return 'Economy Flight, 2AC\nNeed FH approval';
     }
   }
 
+  // ============================================================
+  // LIMIT CHECKING UTILITIES
+  // ============================================================
+  
   /// Check if expense exceeds limit
   static bool exceedsLimit({
     required EmployeeGrade grade,
     required String category,
     required double amount,
   }) {
-    double limit;
-    
-    switch (category.toLowerCase()) {
-      case 'food':
-      case 'food & meals':
-        limit = getFoodDailyLimit(grade);
-        break;
-      case 'accommodation':
-        limit = getHotelNightLimit(grade);
-        break;
-      case 'travel':
-      case 'conveyance':
-        limit = getLocalDailyLimit(grade);
-        break;
-      default:
-        return false; // No limit for other categories
-    }
-    
+    double limit = getLimitForCategory(grade: grade, category: category) ?? -1;
     if (limit < 0) return false; // -1 means actuals accepted
     return amount > limit;
   }
@@ -234,30 +307,25 @@ class TravelAllowanceLimits {
       return null;
     }
 
-    double limit;
-    String limitType;
-    
-    switch (category.toLowerCase()) {
-      case 'food':
-      case 'food & meals':
-        limit = getFoodDailyLimit(grade);
-        limitType = 'daily food allowance';
-        break;
-      case 'accommodation':
-        limit = getHotelNightLimit(grade);
-        limitType = 'nightly hotel allowance';
-        break;
-      case 'travel':
-      case 'conveyance':
-        limit = getLocalDailyLimit(grade);
-        limitType = 'daily travel allowance';
-        break;
-      default:
-        return null;
-    }
+    double? limit = getLimitForCategory(grade: grade, category: category);
+    if (limit == null || limit < 0) return null;
+
+    String limitType = _getLimitTypeForCategory(category);
 
     return 'Amount exceeds your $limitType of ₹${limit.toInt()}\n'
-           'For ${grade.displayName} grade. Skip-level approval may be required.';
+           'For ${grade.bandName}. Skip-level approval required.';
+  }
+
+  static String _getLimitTypeForCategory(String category) {
+    final lowered = category.toLowerCase();
+    if (lowered == 'accommodation' || lowered == 'hotel') {
+      return 'nightly hotel allowance';
+    } else if (lowered == 'food' || lowered == 'food & meals' || lowered == 'food_da') {
+      return 'daily food allowance';
+    } else if (lowered == 'laundry') {
+      return 'daily laundry allowance';
+    }
+    return 'daily travel allowance';
   }
 
   /// Check if category has daily limits
@@ -265,10 +333,13 @@ class TravelAllowanceLimits {
     final lowered = category.toLowerCase();
     return lowered == 'travel' || 
            lowered == 'conveyance' || 
-           lowered == 'local conveyance' ||
+           lowered == 'local_conveyance' ||
            lowered == 'food' || 
+           lowered == 'food_da' ||
            lowered == 'food & meals' ||
-           lowered == 'accommodation';
+           lowered == 'accommodation' ||
+           lowered == 'hotel' ||
+           lowered == 'laundry';
   }
 
   /// Get the limit for a specific category and grade
@@ -278,20 +349,29 @@ class TravelAllowanceLimits {
   }) {
     final lowered = category.toLowerCase();
     
-    if (lowered == 'travel' || lowered == 'conveyance' || lowered == 'local conveyance') {
+    // Local Travel
+    if (lowered == 'travel' || lowered == 'conveyance' || lowered == 'local_conveyance' ||
+        lowered == 'travel_allowance' || lowered == 'transport_expense') {
       final limit = getLocalDailyLimit(grade);
-      return limit < 0 ? null : limit; // null means no limit
+      return limit < 0 ? null : limit; // null means actuals
     }
     
-    if (lowered == 'food' || lowered == 'food & meals') {
+    // Food DA
+    if (lowered == 'food' || lowered == 'food_da' || lowered == 'food & meals') {
       return getFoodDailyLimit(grade);
     }
     
-    if (lowered == 'accommodation') {
+    // Accommodation
+    if (lowered == 'accommodation' || lowered == 'hotel') {
       return getHotelNightLimit(grade);
     }
+
+    // Laundry
+    if (lowered == 'laundry') {
+      return getLaundryDailyLimit();
+    }
     
-    return null; // No limit for other categories
+    return null; // No limit for other categories (Toll, Parking, Internet, etc.)
   }
 
   /// Get limit info text for display
@@ -302,16 +382,16 @@ class TravelAllowanceLimits {
     final limit = getLimitForCategory(grade: grade, category: category);
     
     if (limit == null) {
-      return 'No daily limit for ${grade.displayName}';
+      return 'Actuals with bill for ${grade.bandName}';
     }
     
     final lowered = category.toLowerCase();
     String period = 'per day';
-    if (lowered == 'accommodation') {
+    if (lowered == 'accommodation' || lowered == 'hotel') {
       period = 'per night';
     }
     
-    return 'Limit: ₹${limit.toInt()} $period for ${grade.displayName}';
+    return 'Limit: ₹${limit.toInt()} $period for ${grade.bandName}';
   }
 
   /// Calculate remaining allowance for the day
@@ -355,6 +435,7 @@ class ExpenseCategoryInfo {
   final String icon;
   final bool hasDailyLimit;
   final bool isTravelRelated;
+  final String? description;
 
   const ExpenseCategoryInfo({
     required this.name,
@@ -362,31 +443,21 @@ class ExpenseCategoryInfo {
     required this.icon,
     required this.hasDailyLimit,
     required this.isTravelRelated,
+    this.description,
   });
 
-  /// All expense categories aligned with BenzDesk request types
+  /// All expense categories aligned with BENZ Travel Policy
   static const List<ExpenseCategoryInfo> allCategories = [
-    // Travel & Transport (with daily limits)
-    ExpenseCategoryInfo(
-      name: 'travel_allowance',
-      displayName: 'Travel Allowance (TA/DA)',
-      icon: '🚗',
-      hasDailyLimit: true,
-      isTravelRelated: true,
-    ),
-    ExpenseCategoryInfo(
-      name: 'transport_expense',
-      displayName: 'Transport Expense',
-      icon: '🚐',
-      hasDailyLimit: true,
-      isTravelRelated: true,
-    ),
+    // ========================================
+    // TRAVEL & TRANSPORT
+    // ========================================
     ExpenseCategoryInfo(
       name: 'local_conveyance',
       displayName: 'Local Conveyance',
-      icon: '🚌',
+      icon: '🚗',
       hasDailyLimit: true,
       isTravelRelated: true,
+      description: 'Auto, Bus, Cab for local travel',
     ),
     ExpenseCategoryInfo(
       name: 'fuel',
@@ -394,50 +465,91 @@ class ExpenseCategoryInfo {
       icon: '⛽',
       hasDailyLimit: false,
       isTravelRelated: true,
+      description: 'Car @₹7.5/km, Bike @₹5/km (Mgrs+)',
     ),
     ExpenseCategoryInfo(
       name: 'toll',
-      displayName: 'Toll',
+      displayName: 'Toll / Parking',
       icon: '🛣️',
       hasDailyLimit: false,
       isTravelRelated: true,
+      description: 'Actuals with receipt',
     ),
-    // Daily Expenses (with daily limits)
     ExpenseCategoryInfo(
-      name: 'food',
-      displayName: 'Food & Meals',
+      name: 'outstation_travel',
+      displayName: 'Outstation Travel',
+      icon: '✈️',
+      hasDailyLimit: false,
+      isTravelRelated: true,
+      description: 'Flight / Train / Bus tickets',
+    ),
+
+    // ========================================
+    // DAILY ALLOWANCES (Outstation)
+    // ========================================
+    ExpenseCategoryInfo(
+      name: 'food_da',
+      displayName: 'Food & Daily Allowance',
       icon: '🍽️',
       hasDailyLimit: true,
       isTravelRelated: true,
+      description: 'For travel >50km or overnight',
     ),
     ExpenseCategoryInfo(
       name: 'accommodation',
-      displayName: 'Accommodation',
+      displayName: 'Hotel / Accommodation',
       icon: '🏨',
       hasDailyLimit: true,
       isTravelRelated: true,
+      description: 'Book via Corporate MMT',
     ),
-    // Business Expenses (no daily limits)
+    ExpenseCategoryInfo(
+      name: 'laundry',
+      displayName: 'Laundry',
+      icon: '👔',
+      hasDailyLimit: true,
+      isTravelRelated: true,
+      description: 'Max ₹300/day if stay >3 nights',
+    ),
+
+    // ========================================
+    // MISCELLANEOUS (Actuals)
+    // ========================================
+    ExpenseCategoryInfo(
+      name: 'internet',
+      displayName: 'Internet / Connectivity',
+      icon: '📶',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'Actuals with bill',
+    ),
+    ExpenseCategoryInfo(
+      name: 'mobile',
+      displayName: 'Mobile Recharge',
+      icon: '📱',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'Work-related only',
+    ),
+
+    // ========================================
+    // BUSINESS EXPENSES
+    // ========================================
     ExpenseCategoryInfo(
       name: 'petty_cash',
       displayName: 'Petty Cash',
       icon: '💵',
       hasDailyLimit: false,
       isTravelRelated: false,
+      description: 'Small office expenses',
     ),
     ExpenseCategoryInfo(
       name: 'advance_request',
-      displayName: 'Advance Expense',
+      displayName: 'Advance Request',
       icon: '💳',
       hasDailyLimit: false,
       isTravelRelated: false,
-    ),
-    ExpenseCategoryInfo(
-      name: 'mobile_internet',
-      displayName: 'Mobile/Internet',
-      icon: '📱',
-      hasDailyLimit: false,
-      isTravelRelated: false,
+      description: 'Pre-approved advances',
     ),
     ExpenseCategoryInfo(
       name: 'stationary',
@@ -445,6 +557,7 @@ class ExpenseCategoryInfo {
       icon: '✏️',
       hasDailyLimit: false,
       isTravelRelated: false,
+      description: 'Office supplies',
     ),
     ExpenseCategoryInfo(
       name: 'medical',
@@ -452,6 +565,7 @@ class ExpenseCategoryInfo {
       icon: '🏥',
       hasDailyLimit: false,
       isTravelRelated: false,
+      description: 'Emergency medical expenses',
     ),
     ExpenseCategoryInfo(
       name: 'other',
@@ -459,16 +573,19 @@ class ExpenseCategoryInfo {
       icon: '📋',
       hasDailyLimit: false,
       isTravelRelated: false,
+      description: 'Miscellaneous expenses',
     ),
   ];
 
-
+  /// Get travel-related categories
   static List<ExpenseCategoryInfo> get travelCategories =>
       allCategories.where((c) => c.isTravelRelated).toList();
 
+  /// Get non-travel categories
   static List<ExpenseCategoryInfo> get otherCategories =>
       allCategories.where((c) => !c.isTravelRelated).toList();
 
+  /// Find category by name
   static ExpenseCategoryInfo? findByName(String name) {
     try {
       return allCategories.firstWhere(

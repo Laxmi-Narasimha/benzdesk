@@ -60,11 +60,10 @@ class _AdminAlertsScreenState extends State<AdminAlertsScreen> {
     });
 
     try {
-      var query = _supabase
+      // Build query with filters applied conditionally
+      dynamic query = _supabase
           .from('mobitraq_alerts')
-          .select('*, employees!inner(name)')
-          .order('created_at', ascending: false)
-          .limit(100);
+          .select('*, employees!inner(name)');
 
       if (_showOpenOnly) {
         query = query.eq('is_open', true);
@@ -73,6 +72,8 @@ class _AdminAlertsScreenState extends State<AdminAlertsScreen> {
       if (_filterType != 'all') {
         query = query.eq('alert_type', _filterType);
       }
+
+      query = query.order('created_at', ascending: false).limit(100);
 
       final response = await query;
       
@@ -97,13 +98,15 @@ class _AdminAlertsScreenState extends State<AdminAlertsScreen> {
   }
 
   Future<void> _acknowledgeAlert(MobiTraqAlert alert) async {
+    if (alert.id == null) return; // Guard against null ID
+    
     try {
       await _supabase.from('mobitraq_alerts').update({
         'is_open': false,
         'end_time': DateTime.now().toIso8601String(),
         'acknowledged_by': _supabase.auth.currentUser?.id,
         'acknowledged_at': DateTime.now().toIso8601String(),
-      }).eq('id', alert.id);
+      }).eq('id', alert.id!);
 
       _loadAlerts();
       

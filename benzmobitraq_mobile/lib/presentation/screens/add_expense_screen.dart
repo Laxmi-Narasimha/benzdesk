@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../data/models/travel_allowance_model.dart';
@@ -384,58 +385,203 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Select ${_isTravelExpense ? "travel" : "expense"} category:',
-          style: const TextStyle(fontSize: 16),
+        // Grade info banner
+        Container(
+          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.badge_outlined,
+                color: Theme.of(context).colorScheme.primary,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Your Band: ${_employeeGrade.bandName}',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: categories.map((category) {
-            final isSelected = _selectedCategory?.name == category.name;
-            return ChoiceChip(
-              label: Row(
-                mainAxisSize: MainAxisSize.min,
+
+        Text(
+          'Select ${_isTravelExpense ? "travel" : "business"} expense category:',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 12),
+
+        // Category cards
+        ...categories.map((category) {
+          final isSelected = _selectedCategory?.name == category.name;
+          final limit = TravelAllowanceLimits.getLimitForCategory(
+            grade: _employeeGrade,
+            category: category.name,
+          );
+
+          return GestureDetector(
+            onTap: () => setState(() => _selectedCategory = category),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+                    : Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: Row(
                 children: [
-                  Text(category.icon, style: const TextStyle(fontSize: 16)),
-                  const SizedBox(width: 6),
-                  Text(category.displayName),
+                  // Icon
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Theme.of(context).colorScheme.primary.withOpacity(0.2)
+                          : Colors.grey.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: Text(
+                        category.icon,
+                        style: const TextStyle(fontSize: 20),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // Name and description
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          category.displayName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: isSelected
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        if (category.description != null)
+                          Text(
+                            category.description!,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  // Limit badge
+                  if (limit != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        '₹${limit.toInt()}/day',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.orange,
+                        ),
+                      ),
+                    )
+                  else if (category.name == 'accommodation')
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '₹${TravelAllowanceLimits.getHotelNightLimit(_employeeGrade).toInt()}/night',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.purple,
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        'Actuals',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ),
+
+                  const SizedBox(width: 8),
+
+                  // Selection indicator
+                  Icon(
+                    isSelected ? Icons.check_circle : Icons.circle_outlined,
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.grey.withOpacity(0.3),
+                    size: 24,
+                  ),
                 ],
               ),
-              selected: isSelected,
-              onSelected: (_) {
-                setState(() => _selectedCategory = category);
-              },
-              selectedColor: Theme.of(context).colorScheme.primary,
-              labelStyle: TextStyle(
-                color: isSelected
-                    ? Theme.of(context).colorScheme.onPrimary
-                    : Theme.of(context).colorScheme.onSurface,
-              ),
-            );
-          }).toList(),
-        ),
+            ),
+          );
+        }).toList(),
+
+        // Selected category info
         if (_selectedCategory != null && _selectedCategory!.hasDailyLimit) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.1),
+              color: Colors.blue.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              border: Border.all(color: Colors.blue.withOpacity(0.3)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.access_time, color: Colors.orange, size: 20),
+                const Icon(Icons.info_outline, color: Colors.blue, size: 20),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     TravelAllowanceLimits.getLimitInfoText(
                       grade: _employeeGrade,
-                      category: _selectedCategory!.displayName,
+                      category: _selectedCategory!.name,
                     ),
-                    style: const TextStyle(fontSize: 12, color: Colors.orange),
+                    style: const TextStyle(fontSize: 12, color: Colors.blue),
                   ),
                 ),
               ],
@@ -590,32 +736,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         const SizedBox(height: 16),
 
         // Receipt
-        _buildLabel('Receipt'),
+        _buildLabel('Receipt / Document'),
         if (_receiptImage != null)
-          Stack(
-            children: [
-              Container(
-                height: 150,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  image: DecorationImage(
-                    image: FileImage(_receiptImage!),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  style: IconButton.styleFrom(backgroundColor: Colors.black54),
-                  onPressed: () => setState(() => _receiptImage = null),
-                ),
-              ),
-            ],
-          )
+          _buildReceiptPreview()
         else
           InkWell(
             onTap: _showImagePicker,
@@ -633,16 +756,24 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    Icons.add_a_photo_outlined,
+                    Icons.attach_file,
                     size: 32,
                     color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Add Receipt Photo',
+                    'Add Receipt (Image, PDF, Excel)',
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.primary,
                       fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tap to select file',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                     ),
                   ),
                 ],
@@ -662,6 +793,81 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           fontWeight: FontWeight.bold,
         ),
       ),
+    );
+  }
+
+  /// Build receipt preview based on file type
+  Widget _buildReceiptPreview() {
+    final path = _receiptImage!.path.toLowerCase();
+    final isImage = path.endsWith('.jpg') || 
+                    path.endsWith('.jpeg') || 
+                    path.endsWith('.png') ||
+                    path.endsWith('.gif') ||
+                    path.endsWith('.webp');
+    final isPdf = path.endsWith('.pdf');
+    final isExcel = path.endsWith('.xls') || path.endsWith('.xlsx');
+
+    return Stack(
+      children: [
+        Container(
+          height: 120,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: isImage 
+                ? null 
+                : Theme.of(context).colorScheme.surfaceContainerHighest,
+            image: isImage 
+                ? DecorationImage(
+                    image: FileImage(_receiptImage!),
+                    fit: BoxFit.cover,
+                  )
+                : null,
+          ),
+          child: isImage 
+              ? null 
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      isPdf ? Icons.picture_as_pdf : Icons.table_chart,
+                      size: 40,
+                      color: isPdf ? Colors.red : Colors.green,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _receiptImage!.path.split('/').last,
+                      style: const TextStyle(fontSize: 12),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isPdf ? 'PDF Document' : 'Excel File',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        Positioned(
+          top: 8,
+          right: 8,
+          child: IconButton(
+            icon: Icon(
+              Icons.close, 
+              color: isImage ? Colors.white : Colors.grey[700],
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: isImage ? Colors.black54 : Colors.grey[200],
+            ),
+            onPressed: () => setState(() => _receiptImage = null),
+          ),
+        ),
+      ],
     );
   }
 
@@ -716,6 +922,16 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const Text(
+              'Add Receipt',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Supports: JPG, PNG, PDF, Excel',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+            const SizedBox(height: 16),
             ListTile(
               leading: Container(
                 width: 48,
@@ -730,6 +946,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 ),
               ),
               title: const Text('Take Photo'),
+              subtitle: const Text('Use camera to capture receipt'),
               onTap: () async {
                 Navigator.pop(context);
                 await _pickImage(ImageSource.camera);
@@ -748,10 +965,31 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                   color: Theme.of(context).colorScheme.secondary,
                 ),
               ),
-              title: const Text('Choose from Gallery'),
+              title: const Text('Choose Image'),
+              subtitle: const Text('Select from gallery'),
               onTap: () async {
                 Navigator.pop(context);
                 await _pickImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.attach_file,
+                  color: Colors.orange,
+                ),
+              ),
+              title: const Text('Choose Document'),
+              subtitle: const Text('PDF, Excel, or other files'),
+              onTap: () async {
+                Navigator.pop(context);
+                await _pickDocument();
               },
             ),
           ],
@@ -776,6 +1014,23 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  Future<void> _pickDocument() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'],
+      );
+      
+      if (result != null && result.files.single.path != null) {
+        setState(() => _receiptImage = File(result.files.single.path!));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error picking file: $e')),
       );
     }
   }

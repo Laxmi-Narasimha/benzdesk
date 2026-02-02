@@ -18,7 +18,7 @@ class ExpenseDetailScreen extends StatefulWidget {
   const ExpenseDetailScreen({
     Key? key,
     required this.claimId,
-    required this. claimTitle,
+    required this.claimTitle,
   }) : super(key: key);
 
   @override
@@ -233,7 +233,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen>
     );
   }
 
-  Widget _build ChatInput() {
+  Widget _buildChatInput() {
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(

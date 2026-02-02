@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 import '../../core/distance_engine.dart';
 import '../../core/timeline_engine.dart';
@@ -24,8 +25,8 @@ class AdminTimelineScreen extends StatefulWidget {
 }
 
 class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
-  final LocationRepository _locationRepo = LocationRepository();
-  final SessionRepository _sessionRepo = SessionRepository();
+  final LocationRepository _locationRepo = GetIt.instance<LocationRepository>();
+  final SessionRepository _sessionRepo = GetIt.instance<SessionRepository>();
 
   String? _selectedEmployeeId;
   DateTime _selectedDate = DateTime.now();

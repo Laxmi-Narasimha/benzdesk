@@ -204,7 +204,7 @@ class SupabaseDataSource {
     if (points.isEmpty) return;
 
     final data = points.map((p) => p.toJson()).toList();
-    await _client.from('location_points').insert(data);
+    await _client.from('location_points').upsert(data, onConflict: 'hash');
   }
 
   /// Get location points for a session

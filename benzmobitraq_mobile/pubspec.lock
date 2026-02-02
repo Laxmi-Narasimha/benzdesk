@@ -237,18 +237,18 @@ packages:
     dependency: "direct main"
     description:
       name: connectivity_plus
-      sha256: "224a77051d52a11fbad53dd57827594d3bd24f945af28bd70bab376d68d437f0"
+      sha256: b5e72753cf63becce2c61fd04dfe0f1c430cc5278b53a1342dc5ad839eab29ec
       url: "https://pub.dev"
     source: hosted
-    version: "5.0.2"
+    version: "6.1.5"
   connectivity_plus_platform_interface:
     dependency: transitive
     description:
       name: connectivity_plus_platform_interface
-      sha256: cf1d1c28f4416f8c654d7dc3cd638ec586076255d407cef3ddbdaf178272a71a
+      sha256: "42657c1715d48b167930d5f34d00222ac100475f73d10162ddf43e714932f204"
       url: "https://pub.dev"
     source: hosted
-    version: "1.2.4"
+    version: "2.0.1"
   convert:
     dependency: transitive
     description:
@@ -361,6 +361,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.1"
+  file_picker:
+    dependency: "direct main"
+    description:
+      name: file_picker
+      sha256: "1bbf65dd997458a08b531042ec3794112a6c39c07c37ff22113d2e7e4f81d4e4"
+      url: "https://pub.dev"
+    source: hosted
+    version: "6.2.1"
   file_selector_linux:
     dependency: transitive
     description:
@@ -1669,6 +1677,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.3"
+  win32:
+    dependency: transitive
+    description:
+      name: win32
+      sha256: d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e
+      url: "https://pub.dev"
+    source: hosted
+    version: "5.15.0"
   xdg_directories:
     dependency: transitive
     description:

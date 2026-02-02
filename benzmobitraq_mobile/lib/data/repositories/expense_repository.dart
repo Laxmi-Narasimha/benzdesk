@@ -217,15 +217,35 @@ class ExpenseRepository {
   // RECEIPTS
   // ============================================================
 
-  /// Upload receipt image to Supabase Storage
-  Future<String?> _uploadReceipt(String claimId, File imageFile) async {
+  /// Upload receipt file to Supabase Storage (images, PDFs, Excel)
+  Future<String?> _uploadReceipt(String claimId, File file) async {
     try {
-      final fileName = '${_uuid.v4()}.jpg';
+      // Detect file extension from the file path
+      final originalPath = file.path.toLowerCase();
+      String extension = 'jpg'; // default
+      
+      if (originalPath.endsWith('.pdf')) {
+        extension = 'pdf';
+      } else if (originalPath.endsWith('.xlsx')) {
+        extension = 'xlsx';
+      } else if (originalPath.endsWith('.xls')) {
+        extension = 'xls';
+      } else if (originalPath.endsWith('.png')) {
+        extension = 'png';
+      } else if (originalPath.endsWith('.jpeg')) {
+        extension = 'jpeg';
+      } else if (originalPath.endsWith('.gif')) {
+        extension = 'gif';
+      } else if (originalPath.endsWith('.webp')) {
+        extension = 'webp';
+      }
+
+      final fileName = '${_uuid.v4()}.$extension';
       final storagePath = 'receipts/$claimId/$fileName';
 
       await _supabaseClient.storage
-          .from('expense-receipts')
-          .upload(storagePath, imageFile);
+          .from('benzmobitraq-receipts')
+          .upload(storagePath, file);
 
       _logger.i('Receipt uploaded: $storagePath');
       return storagePath;
@@ -239,7 +259,7 @@ class ExpenseRepository {
   Future<String?> getReceiptUrl(String receiptPath) async {
     try {
       final url = await _supabaseClient.storage
-          .from('expense-receipts')
+          .from('benzmobitraq-receipts')
           .createSignedUrl(receiptPath, 3600); // 1 hour expiry
 
       return url;
@@ -253,7 +273,7 @@ class ExpenseRepository {
   Future<bool> deleteReceipt(String receiptPath) async {
     try {
       await _supabaseClient.storage
-          .from('expense-receipts')
+          .from('benzmobitraq-receipts')
           .remove([receiptPath]);
 
       return true;
@@ -548,7 +568,7 @@ class ExpenseRepository {
       return null;
     }
   }
-  }
+
 
   // ============================================================
   // SYNCHRONIZATION

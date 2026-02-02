@@ -209,13 +209,7 @@ class LocationQueueLocal {
       final prev = points[i - 1];
       final curr = points[i];
       
-      // Calculate distance using simple approximation
-      // For more accurate calculation, use DistanceCalculator
-      final latDiff = curr.latitude - prev.latitude;
-      final lonDiff = curr.longitude - prev.longitude;
-      
-      // Approximate meters per degree at equator
-      // This is a rough estimate - actual distance calculation should use Haversine
+      // Calculate distance using Haversine approximation
       final distanceMeters = _approximateDistance(
         prev.latitude, prev.longitude,
         curr.latitude, curr.longitude,

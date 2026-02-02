@@ -106,7 +106,7 @@ class LocationRepository {
         final ids = pendingPoints.map((p) => p.id).toList();
         await _localQueue.incrementUploadAttempts(ids);
         
-        _logger.e('Failed to upload locations: $e');
+        _logger.e('Failed to upload batch of ${pendingPoints.length} locations. First ID: ${pendingPoints.first.id}. Error: $e');
         return 0;
       }
     } catch (e) {

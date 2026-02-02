@@ -243,8 +243,25 @@ class SessionManager {
         return false;
       }
 
-      // Step 4: Create session
+      // Step 4: Generate Session ID
       final sessionId = _uuid.v4();
+
+      // CRITICAL FIX: Start tracking FIRST to allow rollback
+      // Step 5: Start tracking
+      // Save session ID locally temporarily for the service
+      await _preferences.saveActiveSession(sessionId);
+      
+      final trackingStarted = await TrackingService.startTracking(sessionId);
+      if (!trackingStarted) {
+        await _preferences.clearActiveSession(); // Rollback
+        _updateState(_state.copyWith(
+          status: ManagerSessionStatus.error,
+          errorMessage: 'Failed to start location tracking',
+        ));
+        return false;
+      }
+
+      // Step 6: Create session in backend
       final session = SessionModel.start(
         id: sessionId,
         employeeId: userId,
@@ -253,7 +270,6 @@ class SessionManager {
         address: address,
       );
 
-      // Save to backend
       final success = await _sessionRepository.startSession(
         session,
         position.latitude,
@@ -261,22 +277,13 @@ class SessionManager {
       );
 
       if (!success) {
+        // Rollback tracking if DB fails
+        await TrackingService.stopTracking();
+        await _preferences.clearActiveSession();
+        
         _updateState(_state.copyWith(
           status: ManagerSessionStatus.error,
           errorMessage: 'Failed to create session. Please check your connection.',
-        ));
-        return false;
-      }
-
-      // Step 5: Save session ID locally
-      await _preferences.saveActiveSession(sessionId);
-
-      // Step 6: Start tracking
-      final trackingStarted = await TrackingService.startTracking(sessionId);
-      if (!trackingStarted) {
-        _updateState(_state.copyWith(
-          status: ManagerSessionStatus.error,
-          errorMessage: 'Failed to start location tracking',
         ));
         return false;
       }
@@ -307,6 +314,10 @@ class SessionManager {
       return true;
     } catch (e) {
       _logger.e('Error starting session: $e');
+      // Emergency rollback
+      await TrackingService.stopTracking();
+      await _preferences.clearActiveSession();
+      
       _updateState(_state.copyWith(
         status: ManagerSessionStatus.error,
         errorMessage: 'Error starting session: $e',

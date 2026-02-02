@@ -373,53 +373,6 @@ export default function MobitraqDashboard() {
             </div>
         </div>
 
-            {/* Expenses List */ }
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Expense Claims - {selectedDate}</h2>
-        </div>
-
-        {expenses.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-                <Activity className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-                <p>No expense claims lodged for this date</p>
-            </div>
-        ) : (
-            <div className="overflow-x-auto">
-                <table className="w-full">
-                    <thead className="bg-gray-50">
-                        <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                        {expenses.map((exp) => (
-                            <tr key={exp.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-4">
-                                    <div className="font-medium text-gray-900">{exp.employees?.name || 'Unknown'}</div>
-                                    <div className="text-sm text-gray-500">{exp.employees?.email}</div>
-                                </td>
-                                <td className="px-6 py-4">
-                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${exp.status === 'approved' ? 'bg-green-100 text-green-800' :
-                                        exp.status === 'rejected' ? 'bg-red-100 text-red-800' :
-                                            'bg-yellow-100 text-yellow-800'
-                                        }`}>
-                                        {exp.status.charAt(0).toUpperCase() + exp.status.slice(1)}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 font-semibold text-gray-900">
-                                    ₹{exp.total_amount.toLocaleString()}
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        )}
-    </div>
-        </div >
     );
 }
 
