@@ -9,7 +9,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { PageLoader, Card } from '@/components/ui';
 import dynamic from 'next/dynamic';
-import ErrorBoundary from '@/components/ErrorBoundary';
+
 import {
     MapPin,
     Calendar,
@@ -23,21 +23,8 @@ import {
     Target,
 } from 'lucide-react';
 
-// Dynamic import for the MapComponent to avoid SSR issues
-const MapComponent = dynamic(
-    () => import('./MapComponent'),
-    {
-        ssr: false,
-        loading: () => (
-            <div className="absolute inset-0 bg-dark-950/80 flex items-center justify-center z-10">
-                <div className="flex items-center gap-2 text-dark-400">
-                    <div className="animate-spin w-5 h-5 border-2 border-primary-500 border-t-transparent rounded-full" />
-                    Loading map...
-                </div>
-            </div>
-        )
-    }
-);
+// Map temporarily disabled to fix crash
+// const MapComponent = dynamic(() => import('./MapComponent'), { ssr: false });
 
 // Types
 interface Employee {
