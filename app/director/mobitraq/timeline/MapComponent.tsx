@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Polyline, CircleMarker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -9,16 +9,6 @@ import L from 'leaflet';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-
-// Delete the default icon configuration to fix the "missing icon" issue
-// @ts-ignore
-delete L.Icon.Default.prototype._getIconUrl;
-
-L.Icon.Default.mergeOptions({
-    iconRetinaUrl: markerIcon2x.src,
-    iconUrl: markerIcon.src,
-    shadowUrl: markerShadow.src,
-});
 
 interface LocationPoint {
     id: string;
@@ -37,7 +27,7 @@ interface TimelineEvent {
     duration_min: number | null;
     center_lat: number | null;
     center_lng: number | null;
-    address: string | null;
+    address?: string | null;
 }
 
 interface MapComponentProps {
@@ -57,6 +47,18 @@ const MapComponent: React.FC<MapComponentProps> = ({
     timelineEvents,
     formatTime,
 }) => {
+    useEffect(() => {
+        // Fix for default marker icon in Leaflet
+        // @ts-ignore
+        delete L.Icon.Default.prototype._getIconUrl;
+
+        L.Icon.Default.mergeOptions({
+            iconRetinaUrl: markerIcon2x.src,
+            iconUrl: markerIcon.src,
+            shadowUrl: markerShadow.src,
+        });
+    }, []);
+
     return (
         <MapContainer
             center={center}
