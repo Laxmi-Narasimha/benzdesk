@@ -24,6 +24,25 @@ class SessionRepository {
   /// Get active session ID from local storage
   String? get activeSessionId => _preferences.activeSessionId;
 
+  /// Resolve the current authenticated user id (Supabase auth.uid).
+  ///
+  /// RLS policies require employee_id to match auth.uid(). If preferences are
+  /// stale (or were never set), prefer the live Supabase auth uid and sync it
+  /// back into preferences.
+  Future<String?> resolveCurrentUserId() async {
+    final authUid = _dataSource.currentUserId;
+    final prefsUid = _preferences.userId;
+
+    if (authUid != null) {
+      if (prefsUid != authUid) {
+        await _preferences.setUserId(authUid);
+      }
+      return authUid;
+    }
+
+    return prefsUid;
+  }
+
   /// Start a new work session with a pre-created model (used by SessionManager)
   Future<bool> startSession(
     SessionModel session,
@@ -31,7 +50,7 @@ class SessionRepository {
     double longitude,
   ) async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) {
         _logger.e('User not authenticated');
         return false;
@@ -69,7 +88,7 @@ class SessionRepository {
     String? address,
   }) async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) {
         return SessionResult.failure('User not authenticated');
       }
@@ -126,7 +145,7 @@ class SessionRepository {
     String? address,
   }) async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) {
         _logger.e('User not authenticated');
         return null;
@@ -183,7 +202,7 @@ class SessionRepository {
   /// Get the current active session
   Future<SessionModel?> getActiveSession() async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) return null;
 
       // First check local storage
@@ -233,7 +252,7 @@ class SessionRepository {
   /// Get today's sessions for current user
   Future<List<SessionModel>> getTodaySessions() async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) return [];
 
       return await _dataSource.getTodaySessions(userId);
@@ -249,7 +268,7 @@ class SessionRepository {
     int offset = 0,
   }) async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) return [];
 
       return await _dataSource.getEmployeeSessions(
@@ -283,7 +302,7 @@ class SessionRepository {
   /// Get monthly statistics
   Future<Map<String, dynamic>> getMonthlyStats() async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) return {'distance': 0.0, 'duration': Duration.zero, 'count': 0};
 
       final sessions = await _dataSource.getMonthlySessions(userId);
@@ -315,7 +334,7 @@ class SessionRepository {
   /// Sync active session state with server
   Future<void> syncSessionState() async {
     try {
-      final userId = _preferences.userId;
+      final userId = await resolveCurrentUserId();
       if (userId == null) return;
 
       final serverSession = await _dataSource.getActiveSession(userId);

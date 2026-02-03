@@ -186,8 +186,46 @@ export default function ExpensesPage() {
 
     useEffect(() => {
         fetchExpenses();
+
+        // Subscribe to real-time updates for live sync
+        const supabase = getSupabaseClient();
+        const channel = supabase
+            .channel('expense_claims_changes')
+            .on(
+                'postgres_changes',
+                {
+                    event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
+                    schema: 'public',
+                    table: 'expense_claims',
+                },
+                (payload) => {
+                    console.log('Real-time expense update:', payload);
+                    // Refresh the list when any change occurs
+                    fetchExpenses();
+                }
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'expense_claim_comments',
+                },
+                (payload) => {
+                    console.log('New comment received:', payload);
+                    // If expanded expense matches, refresh comments
+                    if (expandedId && payload.new && (payload.new as any).claim_id === expandedId) {
+                        fetchComments(expandedId);
+                    }
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [statusFilter]);
+    }, [statusFilter, expandedId]);
 
     const fetchExpenses = async () => {
         setIsLoading(true);

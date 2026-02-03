@@ -262,7 +262,7 @@ class SessionManager {
       }
 
       // Step 3: Get current user ID
-      final userId = await _preferences.getUserId();
+      final userId = await _sessionRepository.resolveCurrentUserId();
       if (userId == null) {
         _updateState(_state.copyWith(
           status: ManagerSessionStatus.error,
@@ -596,14 +596,14 @@ class SessionManager {
         address: address,
       );
 
-      // Optional: raise an alert only for prolonged stops (avoid noisy 5-min alerts)
-      if (duration.inMinutes >= 30) {
+      // Raise an alert for 5+ minute stops so admin is notified immediately
+      if (duration.inMinutes >= 5) {
         await _locationRepository.createAlert(
           employeeId: employeeId,
           sessionId: sessionId,
           alertType: 'stuck',
           message: 'Employee stationary for ${duration.inMinutes} minutes${address != null ? " at $address" : ""}',
-          severity: 'warn',
+          severity: duration.inMinutes >= 30 ? 'high' : 'warn',
           latitude: location.latitude,
           longitude: location.longitude,
         );

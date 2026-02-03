@@ -32,10 +32,31 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // Load session history
     context.read<SessionBloc>().add(const SessionLoadHistory());
+    // Request permissions immediately on app entry (before user taps anything)
+    _requestEssentialPermissions();
     // Check battery optimization on first load
     _checkBatteryOptimization();
     // Fetch initial location
     _fetchCurrentLocation();
+  }
+
+  /// Request location and notification permissions immediately on app entry
+  Future<void> _requestEssentialPermissions() async {
+    try {
+      // Request location permissions first
+      final locationResult = await _permissionService.requestLocationPermissions();
+      if (!locationResult.granted) {
+        debugPrint('Location permission not granted: ${locationResult.issue}');
+      }
+      
+      // Request notification permission (returns bool directly)
+      final notificationGranted = await _permissionService.requestNotificationPermission();
+      if (!notificationGranted) {
+        debugPrint('Notification permission not granted');
+      }
+    } catch (e) {
+      debugPrint('Error requesting permissions: $e');
+    }
   }
 
   Future<void> _fetchCurrentLocation() async {
