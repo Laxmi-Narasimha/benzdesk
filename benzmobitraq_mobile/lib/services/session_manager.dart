@@ -109,9 +109,16 @@ class SessionManager {
   Timer? _durationTimer;
   Timer? _syncTimer;
 
+  // Sync coordination (prevents overlapping uploads)
+  bool _syncInProgress = false;
+  bool _syncQueued = false;
+
+  // Guard: prevent uploading points before session exists on server
+  bool _backendSessionReady = false;
+
   // Stop Detection State
-  DateTime? _lastMovedAt;
-  bool _stopAlertTriggered = false;
+  DateTime? _stopStartedAt;
+  LocationUpdate? _lastStationaryLocation;
 
   // Configuration
   static const Duration _syncInterval = Duration(minutes: 3);
@@ -207,6 +214,8 @@ class SessionManager {
     ));
 
     try {
+      _backendSessionReady = false;
+
       // Step 0: Check for existing active session (PREVENT DUPLICATES)
       final existingSessionId = await _preferences.getActiveSessionId();
       if (existingSessionId != null) {
@@ -298,6 +307,8 @@ class SessionManager {
       if (!success) {
         // Rollback tracking if DB fails
         await TrackingService.stopTracking();
+        await _locationRepository.deleteLocalSessionPoints(sessionId);
+        await _preferences.setSessionDistanceMeters(0);
         await _preferences.clearActiveSession();
         
         _updateState(_state.copyWith(
@@ -306,6 +317,8 @@ class SessionManager {
         ));
         return false;
       }
+
+      _backendSessionReady = true;
 
       // Step 7: Start timers and clear any old persisted distance
       await _preferences.setSessionStartTime(session.startTime);
@@ -336,6 +349,11 @@ class SessionManager {
       _logger.e('Error starting session: $e');
       // Emergency rollback
       await TrackingService.stopTracking();
+      // Best-effort cleanup of any queued points for the generated session
+      final maybeSessionId = await _preferences.getActiveSessionId();
+      if (maybeSessionId != null) {
+        await _locationRepository.deleteLocalSessionPoints(maybeSessionId);
+      }
       await _preferences.clearActiveSession();
       
       _updateState(_state.copyWith(
@@ -369,6 +387,22 @@ class SessionManager {
       // Step 1: Stop tracking
       final totalDistanceM = await TrackingService.stopTracking();
       final totalDistanceKm = totalDistanceM / 1000;
+
+      // Flush any in-progress stop segment (e.g., user ends session while stationary)
+      if (_stopStartedAt != null && _lastStationaryLocation != null) {
+        final stopEnd = DateTime.now();
+        final stationaryDuration = stopEnd.difference(_stopStartedAt!);
+        if (stationaryDuration.inMinutes >= 5) {
+          await _handleStopDetected(
+            _lastStationaryLocation!,
+            stationaryDuration,
+            startTime: _stopStartedAt!,
+            endTime: stopEnd,
+          );
+        }
+      }
+      _stopStartedAt = null;
+      _lastStationaryLocation = null;
 
       // Step 2: Stop timers
       _durationTimer?.cancel();
@@ -407,6 +441,7 @@ class SessionManager {
 
       // Step 6: Clear local session
       await _preferences.clearActiveSession();
+      _backendSessionReady = false;
 
       // Step 7: Stop notification scheduler with summary
       if (_notificationScheduler != null) {
@@ -461,6 +496,9 @@ class SessionManager {
       // Attempt to restart tracking
       await TrackingService.resumeIfNeeded();
 
+      // Session exists on server (we fetched it), so uploads are safe
+      _backendSessionReady = true;
+
       _logger.i('Session resumed: ${session.id}, distance: ${distanceMeters / 1000} km');
     } catch (e) {
       _logger.e('Error resuming session: $e');
@@ -480,19 +518,31 @@ class SessionManager {
     // Persist distance for app restart recovery
     _preferences.setSessionDistanceMeters(update.totalDistance);
 
-    // Stop Detection Logic
+    // Stop Detection Logic (Google Timeline style)
+    // Track stop windows and emit a single stop event once movement resumes.
+    // This avoids duplicates and produces accurate stop durations.
     if (update.isMoving) {
-      _lastMovedAt = DateTime.now();
-      _stopAlertTriggered = false;
-    } else {
-      _lastMovedAt ??= DateTime.now();
-      final stationaryDuration = DateTime.now().difference(_lastMovedAt!);
-      
-      if (stationaryDuration.inMinutes >= 5 && !_stopAlertTriggered) {
-        _logger.i('Stop detected: Stationary for ${stationaryDuration.inMinutes} minutes');
-        _handleStopDetected(update, stationaryDuration);
-        _stopAlertTriggered = true;
+      if (_stopStartedAt != null && _lastStationaryLocation != null) {
+        final stopEnd = update.timestamp;
+        final stopStart = _stopStartedAt!;
+        final stationaryDuration = stopEnd.difference(stopStart);
+
+        if (stationaryDuration.inMinutes >= 5) {
+          _logger.i('Stop detected: Stationary for ${stationaryDuration.inMinutes} minutes');
+          _handleStopDetected(
+            _lastStationaryLocation!,
+            stationaryDuration,
+            startTime: stopStart,
+            endTime: stopEnd,
+          );
+        }
       }
+
+      _stopStartedAt = null;
+      _lastStationaryLocation = null;
+    } else {
+      _stopStartedAt ??= update.timestamp;
+      _lastStationaryLocation = update;
     }
 
     // Forward to notification scheduler for distance-based notifications
@@ -510,7 +560,12 @@ class SessionManager {
     ));
   }
 
-  Future<void> _handleStopDetected(LocationUpdate location, Duration duration) async {
+  Future<void> _handleStopDetected(
+    LocationUpdate location,
+    Duration duration, {
+    required DateTime startTime,
+    required DateTime endTime,
+  }) async {
     try {
       final sessionId = _state.session?.id;
       final employeeId = _state.session?.employeeId;
@@ -533,26 +588,28 @@ class SessionManager {
         employeeId: employeeId,
         sessionId: sessionId,
         eventType: 'stop',
-        startTime: _lastMovedAt!, // When stop started
-        endTime: DateTime.now(), // Current time (so far)
+        startTime: startTime,
+        endTime: endTime,
         durationSec: duration.inSeconds,
         latitude: location.latitude,
         longitude: location.longitude,
         address: address,
       );
 
-      // 2. Create Alert for Admins
-      await _locationRepository.createAlert(
-        employeeId: employeeId,
-        sessionId: sessionId,
-        alertType: 'stuck', // Using 'stuck' as extended stop alert
-        message: 'Employee stationary for ${duration.inMinutes} minutes at $address',
-        severity: 'info',
-        latitude: location.latitude,
-        longitude: location.longitude,
-      );
-      
-      _logger.i('Stop event and alert reported to server');
+      // Optional: raise an alert only for prolonged stops (avoid noisy 5-min alerts)
+      if (duration.inMinutes >= 30) {
+        await _locationRepository.createAlert(
+          employeeId: employeeId,
+          sessionId: sessionId,
+          alertType: 'stuck',
+          message: 'Employee stationary for ${duration.inMinutes} minutes${address != null ? " at $address" : ""}',
+          severity: 'warn',
+          latitude: location.latitude,
+          longitude: location.longitude,
+        );
+      }
+
+      _logger.i('Stop event reported to server');
     } catch (e) {
       _logger.e('Error handling stop detection: $e');
     }
@@ -614,6 +671,7 @@ class SessionManager {
         altitude: update.altitude,
         heading: update.heading,
         isMoving: update.isMoving,
+        recordedAt: update.timestamp,
       );
 
       await _locationRepository.queueLocation(point);
@@ -622,9 +680,9 @@ class SessionManager {
       final pendingCount = await _locationRepository.getPendingCount();
       _logger.d('Queued location point. Pending: $pendingCount');
       
-      if (pendingCount >= 5) {
+      if (_backendSessionReady && pendingCount >= 5) {
         _logger.i('Triggering immediate sync (5+ points pending)');
-        _syncPendingLocations();
+        unawaited(_syncPendingLocations());
       }
     } catch (e) {
       _logger.e('Error queueing location: $e');
@@ -632,6 +690,12 @@ class SessionManager {
   }
 
   Future<void> _syncPendingLocations() async {
+    if (_syncInProgress) {
+      _syncQueued = true;
+      return;
+    }
+
+    _syncInProgress = true;
     try {
       // Sync location points
       final uploadedCount = await _locationRepository.uploadPendingLocations();
@@ -653,6 +717,13 @@ class SessionManager {
       _logger.i('Full sync completed');
     } catch (e) {
       _logger.e('Error syncing locations: $e');
+    } finally {
+      _syncInProgress = false;
+      if (_syncQueued) {
+        _syncQueued = false;
+        // Run one more pass to catch any points queued during the previous sync
+        unawaited(_syncPendingLocations());
+      }
     }
   }
 

@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { createPortal } from 'react-dom';
 import { X, CheckCircle, AlertCircle, AlertTriangle, Info } from 'lucide-react';
@@ -128,7 +128,14 @@ function ToastContainer({
     toasts: Toast[];
     removeToast: (id: string) => void;
 }) {
-    if (typeof window === 'undefined') return null;
+    const [mounted, setMounted] = useState(false);
+
+    // Only render portal after component mounts on client to prevent hydration mismatch
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    if (!mounted) return null;
 
     return createPortal(
         <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-3 max-w-md w-full pointer-events-none">

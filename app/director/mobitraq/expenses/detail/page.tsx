@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { PageLoader, Card } from '@/components/ui';
@@ -51,13 +51,45 @@ function ExpenseDetailContent() {
     const [commentBody, setCommentBody] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    const loadData = useCallback(async () => {
+        if (!claimId) return;
+
+        setLoading(true);
+        const supabase = getSupabaseClient();
+
+        const { data: claimData } = await supabase
+            .from('expense_claims')
+            .select(`
+                *,
+                employee:employees!employee_id (
+                    name,
+                    phone
+                )
+            `)
+            .eq('id', claimId)
+            .single();
+
+        if (claimData) {
+            setClaim(claimData);
+        }
+
+        const { data: commentsData } = await supabase
+            .from('expense_claim_comments')
+            .select('*')
+            .eq('claim_id', claimId)
+            .order('created_at', { ascending: true });
+
+        setComments(commentsData || []);
+        setLoading(false);
+    }, [claimId]);
+
     useEffect(() => {
         if (claimId) {
-            loadData();
+            void loadData();
         } else {
             setLoading(false);
         }
-    }, [claimId]);
+    }, [claimId, loadData]);
 
     // Real-time comments subscription
     useEffect(() => {
@@ -87,36 +119,6 @@ function ExpenseDetailContent() {
             supabase.removeChannel(channel);
         };
     }, [claimId]);
-
-    async function loadData() {
-        setLoading(true);
-        const supabase = getSupabaseClient();
-
-        const { data: claimData } = await supabase
-            .from('expense_claims')
-            .select(`
-                *,
-                employee:employees!employee_id (
-                    name,
-                    phone
-                )
-            `)
-            .eq('id', claimId)
-            .single();
-
-        if (claimData) {
-            setClaim(claimData);
-        }
-
-        const { data: commentsData } = await supabase
-            .from('expense_claim_comments')
-            .select('*')
-            .eq('claim_id', claimId)
-            .order('created_at', { ascending: true });
-
-        setComments(commentsData || []);
-        setLoading(false);
-    }
 
     async function handleSendComment() {
         if (!commentBody.trim()) return;

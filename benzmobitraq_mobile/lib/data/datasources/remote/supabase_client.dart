@@ -235,6 +235,30 @@ class SupabaseDataSource {
           await _client.from('location_points').insert(data);
           _logger.i('SYNC: Successfully uploaded ${points.length} points via insert');
         } catch (insertError) {
+          // If insert fails due to schema drift (missing columns), retry with a sanitized payload.
+          final msg = insertError.toString().toLowerCase();
+          if (msg.contains('column') &&
+              (msg.contains('hash') || msg.contains('provider') || msg.contains('address'))) {
+            _logger.w('SYNC: Insert failed due to missing columns. Retrying with sanitized payload...');
+
+            final sanitized = data.map((row) {
+              final copy = Map<String, dynamic>.from(row);
+              copy.remove('hash');
+              copy.remove('provider');
+              copy.remove('address');
+              return copy;
+            }).toList();
+
+            try {
+              await _client.from('location_points').insert(sanitized);
+              _logger.i('SYNC: Successfully uploaded ${points.length} points via sanitized insert');
+              return;
+            } catch (sanitizedError) {
+              _logger.e('SYNC CRITICAL: Sanitized insert also failed: $sanitizedError');
+              rethrow;
+            }
+          }
+
           // If insert also fails, it's likely an RLS issue
           _logger.e('SYNC CRITICAL: Insert also failed: $insertError');
           _logger.e('SYNC: This is likely an RLS policy issue. Check employee_id matches auth.uid.');
@@ -484,17 +508,20 @@ class SupabaseDataSource {
     String? address,
   }) async {
     try {
+      final startUtc = startTime.toUtc();
+      final endUtc = endTime.toUtc();
       final data = {
         'employee_id': employeeId,
         'session_id': sessionId,
-        'day': startTime.toIso8601String().split('T')[0],
+        'day': startUtc.toIso8601String().split('T')[0],
         'event_type': eventType,
-        'start_time': startTime.toIso8601String(),
-        'end_time': endTime.toIso8601String(),
-        'duration_sec': durationSec ?? endTime.difference(startTime).inSeconds,
+        'start_time': startUtc.toIso8601String(),
+        'end_time': endUtc.toIso8601String(),
+        'duration_sec': durationSec ?? endUtc.difference(startUtc).inSeconds,
         'center_lat': latitude,
         'center_lng': longitude,
-        'created_at': DateTime.now().toIso8601String(),
+        'address': address,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
       };
 
       await _client.from('timeline_events').insert(data);
@@ -522,7 +549,7 @@ class SupabaseDataSource {
         'alert_type': alertType,
         'message': message,
         'severity': severity,
-        'start_time': DateTime.now().toIso8601String(),
+        'start_time': DateTime.now().toUtc().toIso8601String(),
         'lat': latitude,
         'lng': longitude,
         'is_open': true,

@@ -26,7 +26,7 @@ interface Alert {
     employee_id: string;
     session_id: string | null;
     alert_type: 'stuck' | 'no_signal' | 'mock_location' | 'clock_drift';
-    severity: 'info' | 'warning' | 'critical';
+    severity: 'info' | 'warn' | 'critical';
     message: string;
     is_open: boolean;
     created_at: string;
@@ -47,7 +47,7 @@ const alertTypeConfig = {
 
 const severityConfig = {
     info: { color: 'bg-blue-500', label: 'Info' },
-    warning: { color: 'bg-amber-500', label: 'Warning' },
+    warn: { color: 'bg-amber-500', label: 'Warning' },
     critical: { color: 'bg-red-500', label: 'Critical' },
 };
 
@@ -278,7 +278,7 @@ export default function AlertsPage() {
 
                 {filteredAlerts.map((alert) => {
                     const config = alertTypeConfig[alert.alert_type] || alertTypeConfig.stuck;
-                    const severity = severityConfig[alert.severity] || severityConfig.warning;
+                    const severity = severityConfig[alert.severity] || severityConfig.warn;
                     const Icon = config.icon;
 
                     return (

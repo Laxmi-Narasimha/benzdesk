@@ -33,6 +33,9 @@ export default function SessionsPage() {
     const [currentPage, setCurrentPage] = useState(1);
     const pageSize = 20;
 
+    const getIstDateString = (date: Date = new Date()) =>
+        date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
     useEffect(() => {
         fetchSessions();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,8 +64,8 @@ export default function SessionsPage() {
             // Apply date filter
             const now = new Date();
             if (dateFilter === 'today') {
-                const today = now.toISOString().split('T')[0];
-                query = query.gte('start_time', `${today}T00:00:00`);
+                const today = getIstDateString(now);
+                query = query.gte('start_time', `${today}T00:00:00+05:30`);
             } else if (dateFilter === 'week') {
                 const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
                 query = query.gte('start_time', weekAgo.toISOString());

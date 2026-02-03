@@ -122,10 +122,14 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
       }
 
       // Add item
-      final category = ExpenseCategory.values.firstWhere(
-        (c) => c.displayName.toLowerCase() == event.category.toLowerCase(),
-        orElse: () => ExpenseCategory.other,
-      );
+      // Prefer DB-safe category keys (e.g. "local_conveyance") and fall back to display name matching.
+      var category = ExpenseCategory.fromString(event.category);
+      if (category == ExpenseCategory.other && event.category.toLowerCase() != 'other') {
+        category = ExpenseCategory.values.firstWhere(
+          (c) => c.displayName.toLowerCase() == event.category.toLowerCase(),
+          orElse: () => ExpenseCategory.other,
+        );
+      }
 
       final item = await _expenseRepository.addItem(
         claimId: claim.id,
@@ -147,7 +151,7 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
       final expense = ExpenseModel(
         id: item.id,
         employeeId: employeeId,
-        category: event.category,
+        category: category.displayName,
         amount: event.amount,
         description: event.description,
         expenseDate: event.expenseDate,

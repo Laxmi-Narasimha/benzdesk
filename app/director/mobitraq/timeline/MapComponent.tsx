@@ -18,7 +18,7 @@ interface TimelineEvent {
     event_type: string;
     start_time: string;
     end_time: string | null;
-    duration_min: number | null;
+    duration_sec: number | null;
     center_lat: number | null;
     center_lng: number | null;
     address?: string | null;
@@ -120,7 +120,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
                         <Popup>
                             <strong>Stop</strong>
                             <br />
-                            Duration: {stop.duration_min ? Math.round(stop.duration_min) : 0} mins
+                            Duration: {stop.duration_sec ? Math.round(stop.duration_sec / 60) : 0} mins
                             <br />
                             {stop.address && <span className="text-xs text-gray-500">{stop.address}</span>}
                         </Popup>

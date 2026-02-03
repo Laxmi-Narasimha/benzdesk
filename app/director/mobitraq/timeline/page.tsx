@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { PageLoader, Card } from '@/components/ui';
 import dynamic from 'next/dynamic';
@@ -23,8 +23,17 @@ import {
     Target,
 } from 'lucide-react';
 
-// Map temporarily disabled to fix crash
-// const MapComponent = dynamic(() => import('./MapComponent'), { ssr: false });
+import ErrorBoundary from '@/components/ErrorBoundary';
+
+// Dynamic import for map to prevent SSR issues with Leaflet
+const MapComponent = dynamic(() => import('./MapComponent'), {
+    ssr: false,
+    loading: () => (
+        <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
+            <div className="animate-spin w-5 h-5 border-2 border-primary-500 border-t-transparent rounded-full" />
+        </div>
+    )
+});
 
 // Types
 interface Employee {
@@ -61,7 +70,7 @@ interface TimelineEvent {
     event_type: 'stop' | 'move';
     start_time: string;
     end_time: string | null;
-    duration_min: number | null;
+    duration_sec: number | null;
     distance_km: number | null;
     center_lat: number | null;
     center_lng: number | null;
@@ -79,12 +88,13 @@ interface DataError {
     message: string;
 }
 
+const getIstDateString = (date: Date = new Date()) =>
+    date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
 export default function TimelinePage() {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [selectedEmployee, setSelectedEmployee] = useState<string>('');
-    const [selectedDate, setSelectedDate] = useState<string>(
-        new Date().toISOString().split('T')[0]
-    );
+    const [selectedDate, setSelectedDate] = useState<string>('');
     const [loading, setLoading] = useState(true);
     const [dataLoading, setDataLoading] = useState(false);
 
@@ -97,6 +107,12 @@ export default function TimelinePage() {
 
     const [mapReady, setMapReady] = useState(false);
 
+    // Set date on client side only to prevent hydration mismatch
+    useEffect(() => {
+        const today = getIstDateString();
+        setSelectedDate(today);
+    }, []);
+
     // Load employees on mount
     useEffect(() => {
         loadEmployees();
@@ -107,7 +123,7 @@ export default function TimelinePage() {
     // Real-time tracking subscription
     useEffect(() => {
         // Only track if a specific employee is selected and we are viewing "today"
-        const today = new Date().toISOString().split('T')[0];
+        const today = getIstDateString();
         const isToday = selectedDate === today;
 
         if (!selectedEmployee || !isToday) return;
@@ -141,13 +157,6 @@ export default function TimelinePage() {
         };
     }, [selectedEmployee, selectedDate]);
 
-    // Load data when employee or date changes
-    useEffect(() => {
-        if (selectedEmployee && selectedDate) {
-            loadTimelineData();
-        }
-    }, [selectedEmployee, selectedDate]);
-
     async function loadEmployees() {
         const supabase = getSupabaseClient();
         const { data } = await supabase
@@ -164,16 +173,16 @@ export default function TimelinePage() {
         setLoading(false);
     }
 
-    async function loadTimelineData() {
+    const loadTimelineData = useCallback(async () => {
         setDataLoading(true);
 
         try {
             const supabase = getSupabaseClient();
 
             // Ensure date is valid
-            const validDate = selectedDate && selectedDate.length >= 10 ? selectedDate : new Date().toISOString().split('T')[0];
-            const startOfDay = `${validDate}T00:00:00`;
-            const endOfDay = `${validDate}T23:59:59`;
+            const validDate = selectedDate && selectedDate.length >= 10 ? selectedDate : getIstDateString();
+            const startOfDay = `${validDate}T00:00:00+05:30`;
+            const endOfDay = `${validDate}T23:59:59+05:30`;
 
             console.log('Loading timeline data for:', { employee: selectedEmployee, date: validDate });
 
@@ -244,7 +253,14 @@ export default function TimelinePage() {
         } finally {
             setDataLoading(false);
         }
-    }
+    }, [selectedEmployee, selectedDate]);
+
+    // Load data when employee or date changes
+    useEffect(() => {
+        if (selectedEmployee && selectedDate) {
+            void loadTimelineData();
+        }
+    }, [selectedEmployee, selectedDate, loadTimelineData]);
 
     // Calculate map bounds and center
     const mapConfig = useMemo(() => {
@@ -310,6 +326,7 @@ export default function TimelinePage() {
 
     // Format duration
     const formatDuration = (minutes: number) => {
+        if (minutes < 0 || !isFinite(minutes)) return 'Invalid';
         const hrs = Math.floor(minutes / 60);
         const mins = Math.round(minutes % 60);
         if (hrs > 0) return `${hrs}h ${mins}m`;
@@ -453,13 +470,34 @@ export default function TimelinePage() {
                         </ErrorBoundary>
                     )} 
                     */}
-                    <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
-                        <div className="text-center">
-                            <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            <p className="mb-1">Map Visualization Disabled</p>
-                            <p className="text-xs text-dark-500">View stats in the side panel</p>
+                    {mapReady && points.length > 0 ? (
+                        <ErrorBoundary fallback={
+                            <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
+                                <div className="text-center">
+                                    <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                    <p className="mb-1">Map Visualization Unavailable</p>
+                                    <p className="text-xs text-dark-500">The map service encountered an error</p>
+                                </div>
+                            </div>
+                        }>
+                            <MapComponent
+                                center={mapConfig.center}
+                                zoom={mapConfig.zoom}
+                                routePositions={routePositions}
+                                points={points}
+                                timelineEvents={timelineEvents}
+                                formatTime={formatTime}
+                            />
+                        </ErrorBoundary>
+                    ) : (
+                        <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
+                            <div className="text-center">
+                                <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                <p className="mb-1">{points.length === 0 ? 'No Location Data' : 'Loading Map...'}</p>
+                                <p className="text-xs text-dark-500">Select an employee with recorded location points</p>
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </div>
             </Card>
 
@@ -544,9 +582,9 @@ export default function TimelinePage() {
                                 </div>
                             </div>
                             <div className="text-right">
-                                {event.duration_min && (
+                                {event.duration_sec && (
                                     <div className="text-sm text-dark-300">
-                                        {formatDuration(event.duration_min)}
+                                        {formatDuration(event.duration_sec / 60)}
                                     </div>
                                 )}
                                 {event.distance_km && event.distance_km > 0 && (

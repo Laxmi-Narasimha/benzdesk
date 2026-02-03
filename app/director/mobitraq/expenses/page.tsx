@@ -15,14 +15,17 @@ import {
     FileText,
     ChevronDown,
     ChevronUp,
-    Download,
-    Eye,
     AlertTriangle,
-    User,
-    BadgeCheck,
     MessageCircle,
     Send
 } from 'lucide-react';
+import {
+    Card,
+    Button,
+    Input,
+    Select,
+    Badge
+} from '@/components/ui';
 
 interface ExpenseClaimComment {
     id: number;
@@ -145,7 +148,7 @@ export default function ExpensesPage() {
 
             if (error) throw error;
 
-            // Map the author array/object correctly similar to expenses
+            // Map the author array/object correctly
             const transformedComments = (data || []).map((c: any) => ({
                 ...c,
                 author: Array.isArray(c.author) ? c.author[0] : c.author
@@ -202,7 +205,7 @@ export default function ExpensesPage() {
                     reviewed_at,
                     created_at,
                     rejection_reason,
-                    employees (
+                    employees!employee_id (
                         name,
                         phone,
                         band
@@ -212,7 +215,6 @@ export default function ExpensesPage() {
                         category,
                         amount,
                         description,
-                        receipt_url,
                         exceeds_limit
                     )
                 `)
@@ -227,7 +229,7 @@ export default function ExpensesPage() {
 
             if (error) throw error;
 
-            // Transform data to handle Supabase relation format
+            // Transform data
             const transformedExpenses: ExpenseClaim[] = (data || []).map((e: any) => ({
                 ...e,
                 employees: Array.isArray(e.employees) ? e.employees[0] : e.employees,
@@ -242,7 +244,8 @@ export default function ExpensesPage() {
         }
     };
 
-    const handleApprove = async (id: string) => {
+    const handleApprove = async (id: string, e?: React.MouseEvent) => {
+        e?.stopPropagation();
         setProcessingId(id);
         try {
             const supabase = getSupabaseClient();
@@ -303,6 +306,11 @@ export default function ExpensesPage() {
         }
     };
 
+    const openRejectModal = (id: string, e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        setShowRejectModal(id);
+    };
+
     const formatDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString('en-IN', {
             day: '2-digit',
@@ -326,6 +334,21 @@ export default function ExpensesPage() {
     const getBandName = (band: string | null | undefined) => {
         if (!band) return 'Executive';
         return BAND_NAMES[band] || band;
+    };
+
+    const getStatusBadge = (status: string) => {
+        switch (status) {
+            case 'submitted':
+                return <Badge color="yellow" dot>Pending Review</Badge>;
+            case 'in_review':
+                return <Badge color="blue" dot>In Review</Badge>;
+            case 'approved':
+                return <Badge color="green" dot>Approved</Badge>;
+            case 'rejected':
+                return <Badge color="red" dot>Rejected</Badge>;
+            default:
+                return <Badge color="gray">{status}</Badge>;
+        }
     };
 
     // Filter by search term
@@ -368,251 +391,222 @@ export default function ExpensesPage() {
         <div className="space-y-6">
             {/* Header */}
             <div>
-                <h1 className="text-2xl font-bold text-gray-900">Field Expense Approval</h1>
-                <p className="text-gray-500">Review and approve expense claims from field employees</p>
+                <h1 className="text-2xl font-bold text-dark-50">Field Expense Approval</h1>
+                <p className="text-dark-400">Review and approve expense claims from field employees</p>
             </div>
 
             {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+                <Card className="border-l-4 border-yellow-500" padding="sm">
                     <div className="flex items-center gap-3">
-                        <Clock className="w-8 h-8 text-yellow-600" />
+                        <Clock className="w-8 h-8 text-yellow-500" />
                         <div>
-                            <p className="text-sm text-yellow-700">Pending Review</p>
-                            <p className="text-xl font-bold text-yellow-800">{stats.pending}</p>
-                            <p className="text-xs text-yellow-600">{formatCurrency(stats.pendingAmount)}</p>
+                            <p className="text-sm text-dark-400">Pending Review</p>
+                            <p className="text-xl font-bold text-dark-50">{stats.pending}</p>
+                            <p className="text-xs text-yellow-500">{formatCurrency(stats.pendingAmount)}</p>
                         </div>
                     </div>
-                </div>
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                </Card>
+                <Card className="border-l-4 border-green-500" padding="sm">
                     <div className="flex items-center gap-3">
-                        <Check className="w-8 h-8 text-green-600" />
+                        <Check className="w-8 h-8 text-green-500" />
                         <div>
-                            <p className="text-sm text-green-700">Approved</p>
-                            <p className="text-xl font-bold text-green-800">{stats.approved}</p>
-                            <p className="text-xs text-green-600">{formatCurrency(stats.approvedAmount)}</p>
+                            <p className="text-sm text-dark-400">Approved</p>
+                            <p className="text-xl font-bold text-dark-50">{stats.approved}</p>
+                            <p className="text-xs text-green-500">{formatCurrency(stats.approvedAmount)}</p>
                         </div>
                     </div>
-                </div>
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                </Card>
+                <Card className="border-l-4 border-red-500" padding="sm">
                     <div className="flex items-center gap-3">
-                        <X className="w-8 h-8 text-red-600" />
+                        <X className="w-8 h-8 text-red-500" />
                         <div>
-                            <p className="text-sm text-red-700">Rejected</p>
-                            <p className="text-xl font-bold text-red-800">{stats.rejected}</p>
+                            <p className="text-sm text-dark-400">Rejected</p>
+                            <p className="text-xl font-bold text-dark-50">{stats.rejected}</p>
                         </div>
                     </div>
-                </div>
+                </Card>
                 {stats.exceedsLimit > 0 && (
-                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                    <Card className="border-l-4 border-orange-500" padding="sm">
                         <div className="flex items-center gap-3">
-                            <AlertTriangle className="w-8 h-8 text-orange-600" />
+                            <AlertTriangle className="w-8 h-8 text-orange-500" />
                             <div>
-                                <p className="text-sm text-orange-700">Exceeds Limit</p>
-                                <p className="text-xl font-bold text-orange-800">{stats.exceedsLimit}</p>
-                                <p className="text-xs text-orange-600">Needs skip-level approval</p>
+                                <p className="text-sm text-dark-400">Exceeds Limit</p>
+                                <p className="text-xl font-bold text-dark-50">{stats.exceedsLimit}</p>
+                                <p className="text-xs text-orange-500">Needs skip-level approval</p>
                             </div>
                         </div>
-                    </div>
+                    </Card>
                 )}
             </div>
 
             {/* Filters */}
             <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-                <div className="relative w-full sm:w-72">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input
-                        type="text"
+                <div className="w-full sm:w-72">
+                    <Input
                         placeholder="Search by employee name..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        leftIcon={<Search className="w-4 h-4" />}
                     />
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-gray-400" />
-                    <select
+                    <Filter className="w-4 h-4 text-dark-400" />
+                    <Select
                         value={statusFilter}
                         onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-                        className="border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    >
-                        <option value="all">All Status</option>
-                        <option value="submitted">Pending Review</option>
-                        <option value="in_review">In Review</option>
-                        <option value="approved">Approved</option>
-                        <option value="rejected">Rejected</option>
-                    </select>
+                        options={[
+                            { value: 'all', label: 'All Status' },
+                            { value: 'submitted', label: 'Pending Review' },
+                            { value: 'in_review', label: 'In Review' },
+                            { value: 'approved', label: 'Approved' },
+                            { value: 'rejected', label: 'Rejected' },
+                        ]}
+                    />
                 </div>
             </div>
 
             {/* Expense Claims List */}
             <div className="space-y-4">
                 {paginatedExpenses.length === 0 ? (
-                    <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-500">
-                        <Receipt className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                    <Card className="p-8 text-center text-dark-400">
+                        <Receipt className="w-12 h-12 mx-auto text-dark-600 mb-3" />
                         <p>No expense claims found</p>
-                    </div>
+                    </Card>
                 ) : (
                     paginatedExpenses.map((expense) => {
                         const isExpanded = expandedId === expense.id;
                         const hasExceedsLimit = expense.expense_items?.some(i => i.exceeds_limit);
 
                         return (
-                            <div
+                            <Card
                                 key={expense.id}
-                                className={`bg-white rounded-xl border transition-all ${hasExceedsLimit
-                                    ? 'border-orange-300 bg-orange-50/30'
-                                    : 'border-gray-200'
-                                    }`}
+                                hover
+                                onClick={() => setExpandedId(isExpanded ? null : expense.id)}
+                                className={`transition-all ${hasExceedsLimit ? 'border-orange-500/50 bg-orange-500/10' : ''}`}
                             >
                                 {/* Main Row */}
-                                <div
-                                    className="p-4 cursor-pointer hover:bg-gray-50"
-                                    onClick={() => setExpandedId(isExpanded ? null : expense.id)}
-                                >
-                                    <div className="flex items-center gap-4">
-                                        {/* Employee Info */}
-                                        <div className="flex items-center gap-3 flex-1">
-                                            <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
-                                                <span className="text-primary-600 font-semibold">
-                                                    {expense.employees?.name?.charAt(0).toUpperCase() || '?'}
-                                                </span>
-                                            </div>
-                                            <div>
-                                                <div className="font-medium text-gray-900 flex items-center gap-2">
-                                                    {expense.employees?.name || 'Unknown'}
-                                                    <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">
-                                                        {getBandName(expense.employees?.band)}
-                                                    </span>
-                                                </div>
-                                                <div className="text-xs text-gray-500 flex items-center gap-2">
-                                                    <Calendar className="w-3 h-3" />
-                                                    {formatDate(expense.claim_date)}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Amount */}
-                                        <div className="text-right">
-                                            <div className="font-bold text-lg text-gray-900">
-                                                {formatCurrency(expense.total_amount)}
-                                            </div>
-                                            <div className="text-xs text-gray-500">
-                                                {expense.expense_items?.length || 0} items
-                                            </div>
-                                        </div>
-
-                                        {/* Status Badge */}
-                                        <div>
-                                            {expense.status === 'submitted' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
-                                                    <Clock className="w-3 h-3" />
-                                                    Pending
-                                                </span>
-                                            )}
-                                            {expense.status === 'in_review' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                                                    <Eye className="w-3 h-3" />
-                                                    In Review
-                                                </span>
-                                            )}
-                                            {expense.status === 'approved' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                                                    <Check className="w-3 h-3" />
-                                                    Approved
-                                                </span>
-                                            )}
-                                            {expense.status === 'rejected' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                                                    <X className="w-3 h-3" />
-                                                    Rejected
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        {/* Exceeds Limit Warning */}
-                                        {hasExceedsLimit && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-orange-100 text-orange-700">
-                                                <AlertTriangle className="w-3 h-3" />
-                                                Over Limit
+                                <div className="flex items-center gap-4">
+                                    {/* Employee Info */}
+                                    <div className="flex items-center gap-3 flex-1">
+                                        <div className="w-10 h-10 rounded-full bg-primary-500/10 flex items-center justify-center">
+                                            <span className="text-primary-400 font-semibold">
+                                                {expense.employees?.name?.charAt(0).toUpperCase() || '?'}
                                             </span>
-                                        )}
-
-                                        {/* Actions */}
-                                        {(expense.status === 'submitted' || expense.status === 'in_review') && (
-                                            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                                                <button
-                                                    onClick={() => handleApprove(expense.id)}
-                                                    disabled={processingId === expense.id}
-                                                    className="p-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 disabled:opacity-50"
-                                                    title="Approve"
-                                                >
-                                                    <Check className="w-5 h-5" />
-                                                </button>
-                                                <button
-                                                    onClick={() => setShowRejectModal(expense.id)}
-                                                    disabled={processingId === expense.id}
-                                                    className="p-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50"
-                                                    title="Reject"
-                                                >
-                                                    <X className="w-5 h-5" />
-                                                </button>
+                                        </div>
+                                        <div>
+                                            <div className="font-medium text-dark-50 flex items-center gap-2">
+                                                {expense.employees?.name || 'Unknown'}
+                                                <Badge variant="outline" size="sm">
+                                                    {getBandName(expense.employees?.band)}
+                                                </Badge>
                                             </div>
-                                        )}
+                                            <div className="text-xs text-dark-400 flex items-center gap-2">
+                                                <Calendar className="w-3 h-3" />
+                                                {formatDate(expense.claim_date)}
+                                            </div>
+                                        </div>
+                                    </div>
 
-                                        {/* Expand Button */}
-                                        <button className="p-2 text-gray-400 hover:text-gray-600">
-                                            {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                                        </button>
+                                    {/* Amount */}
+                                    <div className="text-right">
+                                        <div className="font-bold text-lg text-dark-50">
+                                            {formatCurrency(expense.total_amount)}
+                                        </div>
+                                        <div className="text-xs text-dark-400">
+                                            {expense.expense_items?.length || 0} items
+                                        </div>
+                                    </div>
+
+                                    {/* Status Badge */}
+                                    <div>
+                                        {getStatusBadge(expense.status)}
+                                    </div>
+
+                                    {/* Exceeds Limit Warning */}
+                                    {hasExceedsLimit && (
+                                        <Badge variant="subtle" color="orange" className="gap-1">
+                                            <AlertTriangle className="w-3 h-3" />
+                                            Over Limit
+                                        </Badge>
+                                    )}
+
+                                    {/* Actions */}
+                                    {(expense.status === 'submitted' || expense.status === 'in_review') && (
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="text-green-500 hover:text-green-400 border-green-500/30 hover:bg-green-500/10"
+                                                onClick={(e) => handleApprove(expense.id, e)}
+                                                disabled={processingId === expense.id}
+                                                title="Approve"
+                                            >
+                                                <Check className="w-4 h-4" />
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="text-red-500 hover:text-red-400 border-red-500/30 hover:bg-red-500/10"
+                                                onClick={(e) => openRejectModal(expense.id, e)}
+                                                disabled={processingId === expense.id}
+                                                title="Reject"
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </Button>
+                                        </div>
+                                    )}
+
+                                    {/* Expand Button */}
+                                    <div className="p-2 text-dark-400">
+                                        {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                                     </div>
                                 </div>
 
                                 {/* Expanded Details */}
                                 {isExpanded && (
-                                    <div className="border-t border-gray-200 p-4 bg-gray-50">
+                                    <div className="mt-4 pt-4 border-t border-dark-700/50" onClick={e => e.stopPropagation()}>
                                         {/* Notes */}
                                         {expense.notes && (
-                                            <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
-                                                <div className="text-xs text-gray-500 mb-1">Notes</div>
-                                                <div className="text-sm text-gray-700">{expense.notes}</div>
+                                            <div className="mb-4 p-3 bg-dark-900/50 rounded-lg border border-dark-700/50">
+                                                <div className="text-xs text-dark-400 mb-1">Notes</div>
+                                                <div className="text-sm text-dark-200">{expense.notes}</div>
                                             </div>
                                         )}
 
                                         {/* Rejection Reason */}
                                         {expense.rejection_reason && (
-                                            <div className="mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
-                                                <div className="text-xs text-red-600 mb-1">Rejection Reason</div>
-                                                <div className="text-sm text-red-800">{expense.rejection_reason}</div>
+                                            <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30">
+                                                <div className="text-xs text-red-400 mb-1">Rejection Reason</div>
+                                                <div className="text-sm text-red-300">{expense.rejection_reason}</div>
                                             </div>
                                         )}
 
                                         {/* Expense Items */}
-                                        <div className="text-xs text-gray-500 uppercase font-medium mb-2">Expense Items</div>
+                                        <div className="text-xs text-dark-400 uppercase font-medium mb-2">Expense Items</div>
                                         <div className="space-y-2">
                                             {expense.expense_items?.map((item) => {
                                                 const catInfo = getCategoryInfo(item.category);
                                                 return (
                                                     <div
                                                         key={item.id}
-                                                        className={`flex items-center gap-4 p-3 bg-white rounded-lg border ${item.exceeds_limit ? 'border-orange-300' : 'border-gray-200'
+                                                        className={`flex items-center gap-4 p-3 bg-dark-900/50 rounded-lg border ${item.exceeds_limit ? 'border-orange-500/50' : 'border-dark-700/50'
                                                             }`}
                                                     >
                                                         <span className="text-xl">{catInfo.icon}</span>
                                                         <div className="flex-1">
-                                                            <div className="font-medium text-gray-900 flex items-center gap-2">
+                                                            <div className="font-medium text-dark-200 flex items-center gap-2">
                                                                 {catInfo.label}
                                                                 {item.exceeds_limit && (
-                                                                    <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">
-                                                                        Exceeds Limit
-                                                                    </span>
+                                                                    <Badge variant="subtle" color="orange" size="sm">Exceeds Limit</Badge>
                                                                 )}
                                                             </div>
                                                             {item.description && (
-                                                                <div className="text-xs text-gray-500">{item.description}</div>
+                                                                <div className="text-xs text-dark-400">{item.description}</div>
                                                             )}
                                                         </div>
-                                                        <div className="font-semibold text-gray-900">
+                                                        <div className="font-semibold text-dark-200">
                                                             {formatCurrency(item.amount)}
                                                         </div>
                                                         {item.receipt_url && (
@@ -620,8 +614,7 @@ export default function ExpensesPage() {
                                                                 href={item.receipt_url}
                                                                 target="_blank"
                                                                 rel="noopener noreferrer"
-                                                                className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg"
-                                                                onClick={e => e.stopPropagation()}
+                                                                className="p-2 text-primary-400 hover:bg-primary-500/10 rounded-lg transition-colors"
                                                             >
                                                                 <FileText className="w-4 h-4" />
                                                             </a>
@@ -632,33 +625,33 @@ export default function ExpensesPage() {
                                         </div>
 
                                         {/* Discussion / Chat Section */}
-                                        <div className="mt-6 border-t border-gray-200 pt-4">
-                                            <h4 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                                        <div className="mt-6 border-t border-dark-700/50 pt-4">
+                                            <h4 className="text-sm font-semibold text-dark-200 mb-4 flex items-center gap-2">
                                                 <MessageCircle className="w-4 h-4" />
                                                 Discussion
                                             </h4>
 
                                             <div className="space-y-4 mb-4">
                                                 {(comments[expense.id] || []).length === 0 ? (
-                                                    <p className="text-xs text-gray-400 italic">No comments yet.</p>
+                                                    <p className="text-xs text-dark-500 italic">No comments yet.</p>
                                                 ) : (
                                                     (comments[expense.id] || []).map((comment) => (
                                                         <div key={comment.id} className={`flex gap-3 ${comment.author_id === currentUserId ? 'flex-row-reverse' : ''}`}>
                                                             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${comment.author_id === currentUserId
-                                                                ? 'bg-primary-100 text-primary-700'
-                                                                : 'bg-gray-200 text-gray-600'
+                                                                ? 'bg-primary-500/20 text-primary-400'
+                                                                : 'bg-dark-700 text-dark-300'
                                                                 }`}>
                                                                 {comment.author?.name?.charAt(0).toUpperCase() || '?'}
                                                             </div>
                                                             <div className={`max-w-[80%] rounded-lg p-3 text-sm ${comment.author_id === currentUserId
-                                                                ? 'bg-primary-50 text-gray-900 rounded-tr-none'
-                                                                : 'bg-white border border-gray-200 rounded-tl-none'
+                                                                ? 'bg-primary-500/10 text-dark-100 rounded-tr-none border border-primary-500/20'
+                                                                : 'bg-dark-800 border border-dark-700 rounded-tl-none text-dark-300'
                                                                 }`}>
                                                                 <div className="flex items-center gap-2 mb-1">
                                                                     <span className="font-semibold text-xs">
                                                                         {comment.author?.name || 'Unknown'}
                                                                     </span>
-                                                                    <span className="text-gray-400 text-[10px]">
+                                                                    <span className="text-dark-500 text-[10px]">
                                                                         {new Date(comment.created_at).toLocaleString()}
                                                                     </span>
                                                                 </div>
@@ -670,12 +663,11 @@ export default function ExpensesPage() {
                                             </div>
 
                                             <div className="flex gap-2">
-                                                <input
+                                                <Input
                                                     type="text"
                                                     value={newComment}
                                                     onChange={(e) => setNewComment(e.target.value)}
                                                     placeholder="Write a comment..."
-                                                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                                                     onKeyDown={(e) => {
                                                         if (e.key === 'Enter' && !e.shiftKey) {
                                                             e.preventDefault();
@@ -683,92 +675,94 @@ export default function ExpensesPage() {
                                                         }
                                                     }}
                                                 />
-                                                <button
+                                                <Button
                                                     onClick={() => handlePostComment(expense.id)}
                                                     disabled={!newComment.trim()}
-                                                    className="p-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 >
                                                     <Send className="w-4 h-4" />
-                                                </button>
+                                                </Button>
                                             </div>
                                         </div>
                                     </div>
-                                )
-                                }
-                            </div>
+                                )}
+                            </Card>
                         );
                     })
                 )}
             </div>
 
-            {/* Pagination */}
+            {/* Pagination controls would go here (simplified for refactor) */}
             {
                 totalPages > 1 && (
                     <div className="flex items-center justify-between">
-                        <p className="text-sm text-gray-500">
+                        <p className="text-sm text-dark-500">
                             Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredExpenses.length)} of {filteredExpenses.length}
                         </p>
                         <div className="flex items-center gap-2">
-                            <button
+                            <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                 disabled={currentPage === 1}
-                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                             >
                                 <ChevronLeft className="w-4 h-4" />
-                            </button>
-                            <span className="text-sm text-gray-600">
+                            </Button>
+                            <span className="text-sm text-dark-400">
                                 Page {currentPage} of {totalPages}
                             </span>
-                            <button
+                            <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                                 disabled={currentPage === totalPages}
-                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                             >
                                 <ChevronRight className="w-4 h-4" />
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 )
             }
 
             {/* Rejection Modal */}
-            {
-                showRejectModal && (
-                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                        <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
-                            <h3 className="text-lg font-bold text-gray-900 mb-4">Reject Expense Claim</h3>
-                            <p className="text-sm text-gray-600 mb-4">
+            {showRejectModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+                    <Card className="w-full max-w-md mx-4">
+                        <div className="p-6">
+                            <h3 className="text-lg font-bold text-dark-50 mb-4">Reject Expense Claim</h3>
+                            <p className="text-sm text-dark-400 mb-4">
                                 Please provide a reason for rejecting this expense claim.
                             </p>
                             <textarea
                                 value={rejectionReason}
                                 onChange={(e) => setRejectionReason(e.target.value)}
                                 placeholder="Enter rejection reason..."
-                                className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                                className="w-full p-3 bg-dark-900 border border-dark-700 rounded-lg text-dark-50 focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition-all"
                                 rows={3}
                             />
                             <div className="flex gap-3 mt-4">
-                                <button
+                                <Button
+                                    variant="outline"
                                     onClick={() => {
                                         setShowRejectModal(null);
                                         setRejectionReason('');
                                     }}
-                                    className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50"
+                                    className="flex-1"
                                 >
                                     Cancel
-                                </button>
-                                <button
+                                </Button>
+                                <Button
+                                    variant="primary" // Assuming primary assumes danger context if red styled or just primary
                                     onClick={() => handleReject(showRejectModal)}
                                     disabled={!rejectionReason.trim() || processingId === showRejectModal}
-                                    className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                                    className="flex-1 bg-red-600 hover:bg-red-700 text-white"
                                 >
                                     Reject
-                                </button>
+                                </Button>
                             </div>
                         </div>
-                    </div>
-                )
-            }
-        </div >
+                    </Card>
+                </div>
+            )}
+        </div>
     );
 }

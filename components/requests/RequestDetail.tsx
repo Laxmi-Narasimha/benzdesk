@@ -137,7 +137,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
         }
 
         fetchData();
-    }, [requestId]);
+    }, [requestId, showError]);
 
     // ============================================================================
     // Update Status (Admin only)
@@ -378,7 +378,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
             <Card className="text-center py-12">
                 <AlertCircle className="w-12 h-12 mx-auto text-red-500 mb-4" />
                 <h2 className="text-lg font-semibold text-gray-900">Request Not Found</h2>
-                <p className="text-gray-500 mt-2">This request may have been deleted or you don't have access.</p>
+                <p className="text-gray-500 mt-2">This request may have been deleted or you don&apos;t have access.</p>
                 <Button variant="secondary" onClick={() => router.back()} className="mt-4">
                     Go Back
                 </Button>

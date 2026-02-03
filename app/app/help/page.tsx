@@ -62,10 +62,10 @@ export default function UserHelpPage() {
                             Click on <span className="font-semibold text-gray-900">New Request</span> in the sidebar menu.
                         </li>
                         <li>
-                            <strong>Select the Category:</strong> Choose the option that best fits your need (e.g., "Expense Reimbursement", "Travel Allowance").
+                            <strong>Select the Category:</strong> Choose the option that best fits your need (e.g., &quot;Expense Reimbursement&quot;, &quot;Travel Allowance&quot;).
                         </li>
                         <li>
-                            <strong>Give it a Title:</strong> Keep it short but clear (e.g., "Train tickets for Delhi Visit").
+                            <strong>Give it a Title:</strong> Keep it short but clear (e.g., &quot;Train tickets for Delhi Visit&quot;).
                         </li>
                         <li>
                             <strong>Describe Details:</strong> Explain <em>why</em> you need this and any important details.
@@ -151,7 +151,7 @@ export default function UserHelpPage() {
                     </p>
                     <ul className="list-disc list-inside space-y-2 text-gray-700 ml-2">
                         <li>
-                            <strong>Comments:</strong> Use the "Comments" tab inside a request to chat with the Accounts team. This keeps all conversation in one place.
+                            <strong>Comments:</strong> Use the &quot;Comments&quot; tab inside a request to chat with the Accounts team. This keeps all conversation in one place.
                         </li>
                         <li>
                             <strong>Notifications:</strong> Check the 🔔 icon in the sidebar (or top right on mobile) for updates on your requests.

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
@@ -48,6 +48,9 @@ interface EmployeeStats {
     isActive: boolean;
 }
 
+const getIstDateString = (date: Date = new Date()) =>
+    date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
 export default function MobitraqDashboard() {
     const searchParams = useSearchParams();
     const dateParam = searchParams.get('date');
@@ -56,7 +59,7 @@ export default function MobitraqDashboard() {
     const [expenses, setExpenses] = useState<ExpenseClaim[]>([]);
     const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [selectedDate, setSelectedDate] = useState(dateParam || new Date().toISOString().split('T')[0]);
+    const [selectedDate, setSelectedDate] = useState<string>('');
     const [todayStats, setTodayStats] = useState({
         activeSessions: 0,
         totalEmployees: 0,
@@ -66,21 +69,23 @@ export default function MobitraqDashboard() {
         expenseCount: 0,
     });
 
+    // Set date on client side only to prevent hydration mismatch
     useEffect(() => {
-        fetchData(selectedDate);
-    }, [selectedDate]);
+        const today = getIstDateString();
+        setSelectedDate(dateParam || today);
+    }, [dateParam]);
 
-    const fetchData = async (date: string) => {
+    const fetchData = useCallback(async (date: string) => {
         setIsLoading(true);
         try {
             const supabase = getSupabaseClient();
 
             // Ensure date is valid, fallback to today if empty
-            const validDate = date && date.length >= 10 ? date : new Date().toISOString().split('T')[0];
+            const validDate = date && date.length >= 10 ? date : getIstDateString();
 
             // Start and end of selected date
-            const startOfDay = `${validDate}T00:00:00`;
-            const endOfDay = `${validDate}T23:59:59`;
+            const startOfDay = `${validDate}T00:00:00+05:30`;
+            const endOfDay = `${validDate}T23:59:59+05:30`;
 
             const { data: sessionsData, error: sessionsError } = await supabase
                 .from('shift_sessions')
@@ -156,8 +161,8 @@ export default function MobitraqDashboard() {
             setTodayStats({
                 activeSessions,
                 totalEmployees: uniqueEmployees,
-                totalKmToday: totalKm,
-                totalHoursToday: Math.round(totalMinutes / 60 * 10) / 10,
+                totalKmToday: Math.max(0, totalKm),
+                totalHoursToday: Math.max(0, Math.round(totalMinutes / 60 * 10) / 10),
                 totalExpenses: totalExpenseAmount,
                 expenseCount: expenseCount,
             });
@@ -197,9 +202,16 @@ export default function MobitraqDashboard() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        if (selectedDate) {
+            void fetchData(selectedDate);
+        }
+    }, [selectedDate, fetchData]);
 
     const formatDuration = (minutes: number) => {
+        if (minutes < 0 || !isFinite(minutes)) return 'Invalid';
         const hours = Math.floor(minutes / 60);
         const mins = Math.round(minutes % 60);
         return `${hours}h ${mins}m`;
@@ -370,6 +382,7 @@ export default function MobitraqDashboard() {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -389,6 +402,14 @@ export default function MobitraqDashboard() {
                                         </td>
                                         <td className="px-6 py-4 font-semibold text-gray-900">
                                             ₹{exp.total_amount.toLocaleString()}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <Link
+                                                href="/director/mobitraq/expenses"
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-md hover:bg-primary-100 transition-colors"
+                                            >
+                                                {(exp.status === 'submitted' || exp.status === 'in_review') ? 'Review' : 'View'}
+                                            </Link>
                                         </td>
                                     </tr>
                                 ))}

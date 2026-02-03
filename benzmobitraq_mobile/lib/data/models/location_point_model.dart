@@ -156,8 +156,8 @@ class LocationPointModel extends Equatable {
       address: json['address'] as String?,
       provider: json['provider'] as String?,
       hash: json['hash'] as String?,
-      recordedAt: DateTime.fromMillisecondsSinceEpoch(json['recorded_at'] as int),
-      createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+      recordedAt: DateTime.fromMillisecondsSinceEpoch(json['recorded_at'] as int, isUtc: true),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int, isUtc: true),
     );
   }
 
@@ -175,8 +175,11 @@ class LocationPointModel extends Equatable {
     bool isMoving = true,
     String? address,
     String? provider,
+    DateTime? recordedAt,
   }) {
-    final now = DateTime.now();
+    // Use UTC to avoid timezone ambiguity when writing to TIMESTAMPTZ columns.
+    // If a timestamp is provided by the tracker, prefer it for consistency/idempotency.
+    final now = (recordedAt ?? DateTime.now()).toUtc();
     final pointHash = computeHash(
       employeeId: employeeId,
       sessionId: sessionId,

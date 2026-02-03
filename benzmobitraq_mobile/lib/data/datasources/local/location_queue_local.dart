@@ -9,7 +9,7 @@ class LocationQueueLocal {
 
   static const String _tableName = 'location_queue';
   static const String _dbName = 'benzmobitraq_locations.db';
-  static const int _dbVersion = 1;
+  static const int _dbVersion = 3;
 
   /// Initialize the database
   Future<void> init() async {
@@ -48,6 +48,9 @@ class LocationQueueLocal {
         altitude REAL,
         heading REAL,
         is_moving INTEGER DEFAULT 1,
+        address TEXT,
+        provider TEXT,
+        hash TEXT,
         recorded_at INTEGER NOT NULL,
         created_at INTEGER NOT NULL,
         uploaded INTEGER DEFAULT 0,
@@ -68,7 +71,22 @@ class LocationQueueLocal {
 
   /// Handle database upgrades
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Handle future schema migrations here
+    // v2: add address column (required by LocationPointModel.toLocalJson)
+    if (oldVersion < 2) {
+      try {
+        await db.execute('ALTER TABLE $_tableName ADD COLUMN address TEXT;');
+      } catch (_) {/* ignore if already exists */}
+    }
+
+    // v3: add provider + hash columns (idempotency + provenance)
+    if (oldVersion < 3) {
+      try {
+        await db.execute('ALTER TABLE $_tableName ADD COLUMN provider TEXT;');
+      } catch (_) {/* ignore if already exists */}
+      try {
+        await db.execute('ALTER TABLE $_tableName ADD COLUMN hash TEXT;');
+      } catch (_) {/* ignore if already exists */}
+    }
   }
 
   // ============================================================

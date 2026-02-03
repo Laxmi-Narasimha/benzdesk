@@ -323,4 +323,16 @@ class LocationRepository {
       _logger.e('Error clearing local queue: $e');
     }
   }
+
+  /// Delete all local queued points for a given session.
+  ///
+  /// Used for rollback when a session fails to start on the server.
+  Future<void> deleteLocalSessionPoints(String sessionId) async {
+    try {
+      await _localQueue.deleteBySession(sessionId);
+      _logger.i('Cleared local queued points for session: $sessionId');
+    } catch (e) {
+      _logger.e('Error clearing local session points: $e');
+    }
+  }
 }

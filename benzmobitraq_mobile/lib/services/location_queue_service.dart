@@ -108,6 +108,7 @@ class LocationQueueService {
         altitude: altitude,
         heading: heading,
         isMoving: isMoving,
+        recordedAt: DateTime.now(),
       );
 
       // Add to local queue
