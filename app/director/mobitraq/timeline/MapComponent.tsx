@@ -4,12 +4,6 @@ import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Polyline, CircleMarker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// Fix for default marker icon in Leaflet
-import L from 'leaflet';
-import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-
 interface LocationPoint {
     id: string;
     latitude: number;
@@ -47,17 +41,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
     timelineEvents,
     formatTime,
 }) => {
-    useEffect(() => {
-        // Fix for default marker icon in Leaflet
-        // @ts-ignore
-        delete L.Icon.Default.prototype._getIconUrl;
-
-        L.Icon.Default.mergeOptions({
-            iconRetinaUrl: markerIcon2x.src,
-            iconUrl: markerIcon.src,
-            shadowUrl: markerShadow.src,
-        });
-    }, []);
+    // Icon fix removed temporarily to debug crash
 
     return (
         <MapContainer

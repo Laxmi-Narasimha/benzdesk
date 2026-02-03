@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import {
     MapPin,
@@ -48,11 +49,14 @@ interface EmployeeStats {
 }
 
 export default function MobitraqDashboard() {
+    const searchParams = useSearchParams();
+    const dateParam = searchParams.get('date');
+
     const [sessions, setSessions] = useState<Session[]>([]);
     const [expenses, setExpenses] = useState<ExpenseClaim[]>([]);
     const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+    const [selectedDate, setSelectedDate] = useState(dateParam || new Date().toISOString().split('T')[0]);
     const [todayStats, setTodayStats] = useState({
         activeSessions: 0,
         totalEmployees: 0,
