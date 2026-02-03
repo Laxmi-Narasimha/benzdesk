@@ -527,7 +527,7 @@ class SessionManager {
         final stopStart = _stopStartedAt!;
         final stationaryDuration = stopEnd.difference(stopStart);
 
-        if (stationaryDuration.inMinutes >= 5) {
+        if (stationaryDuration.inMinutes >= 1) {
           _logger.i('Stop detected: Stationary for ${stationaryDuration.inMinutes} minutes');
           _handleStopDetected(
             _lastStationaryLocation!,
@@ -596,8 +596,8 @@ class SessionManager {
         address: address,
       );
 
-      // Raise an alert for 5+ minute stops so admin is notified immediately
-      if (duration.inMinutes >= 5) {
+      // Raise an alert for 1+ minute stops so admin is notified immediately (testing with 1 min)
+      if (duration.inMinutes >= 1) {
         await _locationRepository.createAlert(
           employeeId: employeeId,
           sessionId: sessionId,
