@@ -19,8 +19,23 @@ import {
     Eye,
     AlertTriangle,
     User,
-    BadgeCheck
+    BadgeCheck,
+    MessageCircle,
+    Send
 } from 'lucide-react';
+
+interface ExpenseClaimComment {
+    id: number;
+    claim_id: string;
+    author_id: string;
+    body: string;
+    is_internal: boolean;
+    created_at: string;
+    author: {
+        name: string;
+        role: string;
+    } | null;
+}
 
 interface ExpenseItem {
     id: string;
@@ -93,7 +108,78 @@ export default function ExpensesPage() {
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [rejectionReason, setRejectionReason] = useState('');
     const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
+    const [comments, setComments] = useState<Record<string, ExpenseClaimComment[]>>({});
+    const [newComment, setNewComment] = useState('');
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const pageSize = 15;
+
+    useEffect(() => {
+        const getCurrentUser = async () => {
+            const supabase = getSupabaseClient();
+            const { data: { user } } = await supabase.auth.getUser();
+            setCurrentUserId(user?.id || null);
+        };
+        getCurrentUser();
+    }, []);
+
+    useEffect(() => {
+        if (expandedId) {
+            fetchComments(expandedId);
+        }
+    }, [expandedId]);
+
+    const fetchComments = async (claimId: string) => {
+        try {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+                .from('expense_claim_comments')
+                .select(`
+                    *,
+                    author:employees!author_id (
+                        name,
+                        role
+                    )
+                `)
+                .eq('claim_id', claimId)
+                .order('created_at', { ascending: true });
+
+            if (error) throw error;
+
+            // Map the author array/object correctly similar to expenses
+            const transformedComments = (data || []).map((c: any) => ({
+                ...c,
+                author: Array.isArray(c.author) ? c.author[0] : c.author
+            }));
+
+            setComments(prev => ({ ...prev, [claimId]: transformedComments }));
+        } catch (error) {
+            console.error('Error fetching comments:', error);
+        }
+    };
+
+    const handlePostComment = async (claimId: string) => {
+        if (!newComment.trim() || !currentUserId) return;
+
+        try {
+            const supabase = getSupabaseClient();
+            const { error } = await supabase
+                .from('expense_claim_comments')
+                .insert({
+                    claim_id: claimId,
+                    author_id: currentUserId,
+                    body: newComment.trim(),
+                    is_internal: false
+                });
+
+            if (error) throw error;
+
+            setNewComment('');
+            fetchComments(claimId); // Refresh comments
+        } catch (error) {
+            console.error('Error posting comment:', error);
+            alert('Failed to post comment');
+        }
+    };
 
     useEffect(() => {
         fetchExpenses();
@@ -544,8 +630,71 @@ export default function ExpensesPage() {
                                                 );
                                             })}
                                         </div>
+
+                                        {/* Discussion / Chat Section */}
+                                        <div className="mt-6 border-t border-gray-200 pt-4">
+                                            <h4 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                                                <MessageCircle className="w-4 h-4" />
+                                                Discussion
+                                            </h4>
+
+                                            <div className="space-y-4 mb-4">
+                                                {(comments[expense.id] || []).length === 0 ? (
+                                                    <p className="text-xs text-gray-400 italic">No comments yet.</p>
+                                                ) : (
+                                                    (comments[expense.id] || []).map((comment) => (
+                                                        <div key={comment.id} className={`flex gap-3 ${comment.author_id === currentUserId ? 'flex-row-reverse' : ''}`}>
+                                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${comment.author_id === currentUserId
+                                                                ? 'bg-primary-100 text-primary-700'
+                                                                : 'bg-gray-200 text-gray-600'
+                                                                }`}>
+                                                                {comment.author?.name?.charAt(0).toUpperCase() || '?'}
+                                                            </div>
+                                                            <div className={`max-w-[80%] rounded-lg p-3 text-sm ${comment.author_id === currentUserId
+                                                                ? 'bg-primary-50 text-gray-900 rounded-tr-none'
+                                                                : 'bg-white border border-gray-200 rounded-tl-none'
+                                                                }`}>
+                                                                <div className="flex items-center gap-2 mb-1">
+                                                                    <span className="font-semibold text-xs">
+                                                                        {comment.author?.name || 'Unknown'}
+                                                                    </span>
+                                                                    <span className="text-gray-400 text-[10px]">
+                                                                        {new Date(comment.created_at).toLocaleString()}
+                                                                    </span>
+                                                                </div>
+                                                                <p>{comment.body}</p>
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={newComment}
+                                                    onChange={(e) => setNewComment(e.target.value)}
+                                                    placeholder="Write a comment..."
+                                                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                                            e.preventDefault();
+                                                            handlePostComment(expense.id);
+                                                        }
+                                                    }}
+                                                />
+                                                <button
+                                                    onClick={() => handlePostComment(expense.id)}
+                                                    disabled={!newComment.trim()}
+                                                    className="p-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    <Send className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
-                                )}
+                                )
+                                }
                             </div>
                         );
                     })
@@ -553,69 +702,73 @@ export default function ExpensesPage() {
             </div>
 
             {/* Pagination */}
-            {totalPages > 1 && (
-                <div className="flex items-center justify-between">
-                    <p className="text-sm text-gray-500">
-                        Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredExpenses.length)} of {filteredExpenses.length}
-                    </p>
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                            disabled={currentPage === 1}
-                            className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                        >
-                            <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <span className="text-sm text-gray-600">
-                            Page {currentPage} of {totalPages}
-                        </span>
-                        <button
-                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                            disabled={currentPage === totalPages}
-                            className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                        >
-                            <ChevronRight className="w-4 h-4" />
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Rejection Modal */}
-            {showRejectModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
-                        <h3 className="text-lg font-bold text-gray-900 mb-4">Reject Expense Claim</h3>
-                        <p className="text-sm text-gray-600 mb-4">
-                            Please provide a reason for rejecting this expense claim.
+            {
+                totalPages > 1 && (
+                    <div className="flex items-center justify-between">
+                        <p className="text-sm text-gray-500">
+                            Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredExpenses.length)} of {filteredExpenses.length}
                         </p>
-                        <textarea
-                            value={rejectionReason}
-                            onChange={(e) => setRejectionReason(e.target.value)}
-                            placeholder="Enter rejection reason..."
-                            className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                            rows={3}
-                        />
-                        <div className="flex gap-3 mt-4">
+                        <div className="flex items-center gap-2">
                             <button
-                                onClick={() => {
-                                    setShowRejectModal(null);
-                                    setRejectionReason('');
-                                }}
-                                className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50"
+                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                disabled={currentPage === 1}
+                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                             >
-                                Cancel
+                                <ChevronLeft className="w-4 h-4" />
                             </button>
+                            <span className="text-sm text-gray-600">
+                                Page {currentPage} of {totalPages}
+                            </span>
                             <button
-                                onClick={() => handleReject(showRejectModal)}
-                                disabled={!rejectionReason.trim() || processingId === showRejectModal}
-                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                disabled={currentPage === totalPages}
+                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                             >
-                                Reject
+                                <ChevronRight className="w-4 h-4" />
                             </button>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+
+            {/* Rejection Modal */}
+            {
+                showRejectModal && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
+                            <h3 className="text-lg font-bold text-gray-900 mb-4">Reject Expense Claim</h3>
+                            <p className="text-sm text-gray-600 mb-4">
+                                Please provide a reason for rejecting this expense claim.
+                            </p>
+                            <textarea
+                                value={rejectionReason}
+                                onChange={(e) => setRejectionReason(e.target.value)}
+                                placeholder="Enter rejection reason..."
+                                className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                                rows={3}
+                            />
+                            <div className="flex gap-3 mt-4">
+                                <button
+                                    onClick={() => {
+                                        setShowRejectModal(null);
+                                        setRejectionReason('');
+                                    }}
+                                    className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => handleReject(showRejectModal)}
+                                    disabled={!rejectionReason.trim() || processingId === showRejectModal}
+                                    className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                                >
+                                    Reject
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 }

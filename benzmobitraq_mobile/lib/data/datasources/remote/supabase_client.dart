@@ -451,23 +451,89 @@ class SupabaseDataSource {
   }
 
   /// Get expense claims for employee
-  Future<List<ExpenseClaimModel>> getEmployeeExpenses({
+  Future<List<Map<String, dynamic>>> getEmployeeExpenses({
     required String employeeId,
     int limit = 20,
     int offset = 0,
   }) async {
-    final response = await _client
-        .from('expense_claims')
-        .select('*, expense_items(*)')
-        .eq('employee_id', employeeId)
-        .order('claim_date', ascending: false)
-        .range(offset, offset + limit - 1);
-
-    return (response as List)
-        .map((e) => ExpenseClaimModel.fromJson(e))
-        .toList();
+    try {
+      final response = await _client
+          .from('expense_claims')
+          .select('*, employees(name, phone), expense_items(*)')
+          .eq('employee_id', employeeId)
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+      
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      _logger.e('Error fetching employee expenses: $e');
+      rethrow;
+    }
   }
 
+  /// Create a timeline event (e.g. stop)
+  Future<void> createTimelineEvent({
+    required String employeeId,
+    required String sessionId,
+    required String eventType, // 'stop', 'move'
+    required DateTime startTime,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      final data = {
+        'employee_id': employeeId,
+        'session_id': sessionId,
+        'day': startTime.toIso8601String().split('T')[0],
+        'event_type': eventType,
+        'start_time': startTime.toIso8601String(),
+        'end_time': endTime.toIso8601String(),
+        'duration_sec': durationSec ?? endTime.difference(startTime).inSeconds,
+        'center_lat': latitude,
+        'center_lng': longitude,
+        'created_at': DateTime.now().toIso8601String(),
+      };
+
+      await _client.from('timeline_events').insert(data);
+      _logger.i('Created timeline event: $eventType');
+    } catch (e) {
+      _logger.e('Error creating timeline event: $e');
+      // Don't rethrow to avoid disrupting tracking flow
+    }
+  }
+
+  /// Create an alert
+  Future<void> createAlert({
+    required String employeeId,
+    String? sessionId,
+    required String alertType,
+    required String message,
+    required String severity,
+    double? latitude,
+    double? longitude,
+  }) async {
+    try {
+      final data = {
+        'employee_id': employeeId,
+        'session_id': sessionId,
+        'alert_type': alertType,
+        'message': message,
+        'severity': severity,
+        'start_time': DateTime.now().toIso8601String(),
+        'lat': latitude,
+        'lng': longitude,
+        'is_open': true,
+      };
+
+      await _client.from('mobitraq_alerts').insert(data);
+      _logger.i('Created alert: $alertType');
+    } catch (e) {
+      _logger.e('Error creating alert: $e');
+    }
+  }
   /// Add expense item
   Future<ExpenseItemModel> addExpenseItem(ExpenseItemModel item) async {
     final response = await _client

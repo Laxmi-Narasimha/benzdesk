@@ -241,6 +241,64 @@ class LocationRepository {
   }
 
   // ============================================================
+  // EVENTS & ALERTS
+  // ============================================================
+
+  /// Create a timeline event (e.g. stop)
+  Future<void> createTimelineEvent({
+    required String employeeId,
+    required String sessionId,
+    required String eventType, // 'stop', 'move'
+    required DateTime startTime,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      await _dataSource.createTimelineEvent(
+        employeeId: employeeId,
+        sessionId: sessionId,
+        eventType: eventType,
+        startTime: startTime,
+        endTime: endTime,
+        durationSec: durationSec,
+        latitude: latitude,
+        longitude: longitude,
+        address: address,
+      );
+    } catch (e) {
+      _logger.e('Error creating timeline event: $e');
+    }
+  }
+
+  /// Create an alert
+  Future<void> createAlert({
+    required String employeeId,
+    String? sessionId,
+    required String alertType,
+    required String message,
+    required String severity,
+    double? latitude,
+    double? longitude,
+  }) async {
+    try {
+      await _dataSource.createAlert(
+        employeeId: employeeId,
+        sessionId: sessionId,
+        alertType: alertType,
+        message: message,
+        severity: severity,
+        latitude: latitude,
+        longitude: longitude,
+      );
+    } catch (e) {
+      _logger.e('Error creating alert: $e');
+    }
+  }
+
+  // ============================================================
   // CLEANUP
   // ============================================================
 

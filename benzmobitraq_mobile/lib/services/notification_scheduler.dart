@@ -49,8 +49,8 @@ class NotificationScheduler {
         'time=${settings.timeMinutes}min, '
         'distance=${settings.distanceKm}km');
     
-    // Show persistent tracking notification
-    _showOngoingNotification(0, Duration.zero);
+    // Show persistent tracking notification - DONE by Background Service now
+    // _showOngoingNotification(0, Duration.zero);
     
     // Start periodic timer (check every 30 seconds for both time and distance)
     _periodicTimer = Timer.periodic(
@@ -73,8 +73,9 @@ class NotificationScheduler {
       _lastDistanceNotifiedKm = totalDistanceKm;
     }
     
-    // Always update the ongoing notification with current stats
-    _showOngoingNotification(totalDistanceKm, elapsed);
+    // Do NOT update ongoing notification here - it is handled by the Background Service
+    // to avoid ID conflicts and "zeroed out" issues.
+    // _showOngoingNotification(totalDistanceKm, elapsed);
   }
   
   /// Check if time-based notification should trigger
@@ -118,15 +119,7 @@ class NotificationScheduler {
     _logger.i('Time notification triggered: ${elapsed.inMinutes}min');
   }
   
-  /// Update the persistent ongoing notification
-  void _showOngoingNotification(double totalKm, Duration elapsed) {
-    final hours = elapsed.inHours;
-    final minutes = elapsed.inMinutes % 60;
-    
-    _notificationService.updateTrackingNotification(
-      body: '${totalKm.toStringAsFixed(2)} km • ${hours}h ${minutes}m elapsed',
-    );
-  }
+  // Removed _showOngoingNotification to prevent conflict with TrackingService
   
   /// Stop monitoring and show session summary
   /// 

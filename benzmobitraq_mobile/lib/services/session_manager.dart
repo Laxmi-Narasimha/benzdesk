@@ -109,6 +109,10 @@ class SessionManager {
   Timer? _durationTimer;
   Timer? _syncTimer;
 
+  // Stop Detection State
+  DateTime? _lastMovedAt;
+  bool _stopAlertTriggered = false;
+
   // Configuration
   static const Duration _syncInterval = Duration(minutes: 3);
 
@@ -476,6 +480,21 @@ class SessionManager {
     // Persist distance for app restart recovery
     _preferences.setSessionDistanceMeters(update.totalDistance);
 
+    // Stop Detection Logic
+    if (update.isMoving) {
+      _lastMovedAt = DateTime.now();
+      _stopAlertTriggered = false;
+    } else {
+      _lastMovedAt ??= DateTime.now();
+      final stationaryDuration = DateTime.now().difference(_lastMovedAt!);
+      
+      if (stationaryDuration.inMinutes >= 5 && !_stopAlertTriggered) {
+        _logger.i('Stop detected: Stationary for ${stationaryDuration.inMinutes} minutes');
+        _handleStopDetected(update, stationaryDuration);
+        _stopAlertTriggered = true;
+      }
+    }
+
     // Forward to notification scheduler for distance-based notifications
     if (_notificationScheduler != null) {
       _notificationScheduler!.onLocationUpdate(
@@ -489,6 +508,54 @@ class SessionManager {
       currentDistanceMeters: update.totalDistance,
       lastLocation: update,
     ));
+  }
+
+  Future<void> _handleStopDetected(LocationUpdate location, Duration duration) async {
+    try {
+      final sessionId = _state.session?.id;
+      final employeeId = _state.session?.employeeId;
+      
+      if (sessionId == null || employeeId == null) return;
+
+      // Get address for the stop
+      String? address;
+      try {
+        address = await GeocodingService.getAddressFromCoordinates(
+          location.latitude,
+          location.longitude,
+        );
+      } catch (e) {
+        _logger.w('Failed to get address for stop: $e');
+      }
+
+      // 1. Create Timeline Event (Stop)
+      await _locationRepository.createTimelineEvent(
+        employeeId: employeeId,
+        sessionId: sessionId,
+        eventType: 'stop',
+        startTime: _lastMovedAt!, // When stop started
+        endTime: DateTime.now(), // Current time (so far)
+        durationSec: duration.inSeconds,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        address: address,
+      );
+
+      // 2. Create Alert for Admins
+      await _locationRepository.createAlert(
+        employeeId: employeeId,
+        sessionId: sessionId,
+        alertType: 'stuck', // Using 'stuck' as extended stop alert
+        message: 'Employee stationary for ${duration.inMinutes} minutes at $address',
+        severity: 'info',
+        latitude: location.latitude,
+        longitude: location.longitude,
+      );
+      
+      _logger.i('Stop event and alert reported to server');
+    } catch (e) {
+      _logger.e('Error handling stop detection: $e');
+    }
   }
 
   void _onTrackingError(String error) {

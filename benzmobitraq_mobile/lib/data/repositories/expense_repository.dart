@@ -74,11 +74,15 @@ class ExpenseRepository {
   }) async {
     try {
       // 1. Get remote expenses
-      final remoteClaims = await _dataSource.getEmployeeExpenses(
+      final remoteData = await _dataSource.getEmployeeExpenses(
         employeeId: employeeId,
         limit: limit,
         offset: offset,
       );
+      
+      final remoteClaims = remoteData
+          .map((e) => ExpenseClaimModel.fromJson(e))
+          .toList();
 
       // 2. Get local pending expenses (only on first page/offset 0)
       List<ExpenseClaimModel> localClaims = [];
