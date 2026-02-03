@@ -9,6 +9,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { PageLoader, Card } from '@/components/ui';
 import dynamic from 'next/dynamic';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import {
     MapPin,
     Calendar,
@@ -444,15 +445,24 @@ export default function TimelinePage() {
                         </div>
                     )}
                     {mapReady && (
-                        <MapComponent
-                            key={`${mapConfig.center[0]}-${mapConfig.center[1]}-${mapConfig.zoom}`}
-                            center={mapConfig.center}
-                            zoom={mapConfig.zoom}
-                            routePositions={routePositions}
-                            points={points}
-                            timelineEvents={timelineEvents}
-                            formatTime={formatTime}
-                        />
+                        <ErrorBoundary fallback={
+                            <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
+                                <div className="text-center">
+                                    <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                    <p className="mb-1">Map Visualization Unavailable</p>
+                                    <p className="text-xs text-dark-500">The map service encountered an error</p>
+                                </div>
+                            </div>
+                        }>
+                            <MapComponent
+                                center={mapConfig.center}
+                                zoom={mapConfig.zoom}
+                                routePositions={routePositions}
+                                points={points}
+                                timelineEvents={timelineEvents}
+                                formatTime={formatTime}
+                            />
+                        </ErrorBoundary>
                     )}
                 </div>
             </Card>
