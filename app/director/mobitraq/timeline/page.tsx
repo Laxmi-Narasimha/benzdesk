@@ -444,6 +444,7 @@ export default function TimelinePage() {
                             </div>
                         </div>
                     )}
+                    {/* Map temporarily disabled to allow stats display
                     {mapReady && (
                         <ErrorBoundary fallback={
                             <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
@@ -463,7 +464,15 @@ export default function TimelinePage() {
                                 formatTime={formatTime}
                             />
                         </ErrorBoundary>
-                    )}
+                    )} 
+                    */}
+                    <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
+                        <div className="text-center">
+                            <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                            <p className="mb-1">Map Visualization Disabled</p>
+                            <p className="text-xs text-dark-500">View stats in the side panel</p>
+                        </div>
+                    </div>
                 </div>
             </Card>
 
