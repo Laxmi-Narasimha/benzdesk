@@ -63,12 +63,13 @@ class SessionModel extends Equatable {
   }
 
   /// Convert to JSON map for Supabase
+  /// IMPORTANT: Always convert to UTC to avoid timezone interpretation issues
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'employee_id': employeeId,
-      'start_time': startTime.toIso8601String(),
-      'end_time': endTime?.toIso8601String(),
+      'start_time': startTime.toUtc().toIso8601String(),
+      'end_time': endTime?.toUtc().toIso8601String(),
       'start_latitude': startLatitude,
       'start_longitude': startLongitude,
       'start_address': startAddress,
@@ -77,8 +78,8 @@ class SessionModel extends Equatable {
       'end_address': endAddress,
       'total_km': totalKm,
       'status': status.value,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 

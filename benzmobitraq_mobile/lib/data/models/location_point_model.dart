@@ -107,8 +107,8 @@ class LocationPointModel extends Equatable {
         latitude: latitude,
         longitude: longitude,
       ),
-      'recorded_at': recordedAt.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
+      'recorded_at': recordedAt.toUtc().toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
     };
   }
 
@@ -272,4 +272,3 @@ class LocationPointModel extends Equatable {
         serverReceivedAt,
       ];
 }
-

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../data/models/session_model.dart';
 import '../data/models/location_point_model.dart';
@@ -14,6 +15,7 @@ import 'tracking_service.dart';
 import 'permission_service.dart';
 import 'geocoding_service.dart';
 import 'notification_scheduler.dart';
+import 'timeline_recorder.dart';
 
 /// Session status for UI feedback
 enum ManagerSessionStatus {
@@ -116,12 +118,11 @@ class SessionManager {
   // Guard: prevent uploading points before session exists on server
   bool _backendSessionReady = false;
 
-  // Stop Detection State
-  DateTime? _stopStartedAt;
-  LocationUpdate? _lastStationaryLocation;
+  // Timeline Recorder
+  late final TimelineRecorder _timelineRecorder;
 
   // Configuration
-  static const Duration _syncInterval = Duration(minutes: 3);
+  static const Duration _syncInterval = Duration(minutes: 1);
 
   SessionManager({
     required SessionRepository sessionRepository,
@@ -135,7 +136,9 @@ class SessionManager {
         _expenseRepository = expenseRepository,
         _preferences = preferences,
         _permissionService = permissionService ?? PermissionService(),
-        _notificationScheduler = notificationScheduler;
+        _notificationScheduler = notificationScheduler {
+    _timelineRecorder = TimelineRecorder(locationRepository: _locationRepository);
+  }
 
   /// Stream of session state updates
   Stream<ManagerSessionState> get stateStream => _stateController.stream;
@@ -320,6 +323,15 @@ class SessionManager {
 
       _backendSessionReady = true;
 
+      // Timeline marker: start point
+      await _timelineRecorder.recordSessionStart(
+        sessionId: session.id,
+        employeeId: session.employeeId,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        timestamp: session.startTime,
+      );
+
       // Step 7: Start timers and clear any old persisted distance
       await _preferences.setSessionStartTime(session.startTime);
       await _preferences.setSessionDistanceMeters(0); // Clear for new session
@@ -388,22 +400,6 @@ class SessionManager {
       final totalDistanceM = await TrackingService.stopTracking();
       final totalDistanceKm = totalDistanceM / 1000;
 
-      // Flush any in-progress stop segment (e.g., user ends session while stationary)
-      if (_stopStartedAt != null && _lastStationaryLocation != null) {
-        final stopEnd = DateTime.now();
-        final stationaryDuration = stopEnd.difference(_stopStartedAt!);
-        if (stationaryDuration.inMinutes >= 5) {
-          await _handleStopDetected(
-            _lastStationaryLocation!,
-            stationaryDuration,
-            startTime: _stopStartedAt!,
-            endTime: stopEnd,
-          );
-        }
-      }
-      _stopStartedAt = null;
-      _lastStationaryLocation = null;
-
       // Step 2: Stop timers
       _durationTimer?.cancel();
       _syncTimer?.cancel();
@@ -434,6 +430,19 @@ class SessionManager {
         totalDistanceKm,
         address: address,
       );
+
+      // Timeline marker: end point
+      final endMarkerTime = endedSession?.endTime ?? DateTime.now();
+      final endLat = position?.latitude ?? _state.lastLocation?.latitude;
+      final endLng = position?.longitude ?? _state.lastLocation?.longitude;
+      if (endLat != null && endLng != null) {
+        await _timelineRecorder.recordSessionEnd(
+          latitude: endLat,
+          longitude: endLng,
+          timestamp: endMarkerTime,
+          totalDistanceKm: totalDistanceKm,
+        );
+      }
 
       // Calculate final duration from start time to ensure accuracy
       final startTime = _preferences.getSessionStartTime() ?? _state.session?.startTime ?? DateTime.now();
@@ -518,32 +527,13 @@ class SessionManager {
     // Persist distance for app restart recovery
     _preferences.setSessionDistanceMeters(update.totalDistance);
 
-    // Stop Detection Logic (Google Timeline style)
-    // Track stop windows and emit a single stop event once movement resumes.
-    // This avoids duplicates and produces accurate stop durations.
-    if (update.isMoving) {
-      if (_stopStartedAt != null && _lastStationaryLocation != null) {
-        final stopEnd = update.timestamp;
-        final stopStart = _stopStartedAt!;
-        final stationaryDuration = stopEnd.difference(stopStart);
-
-        if (stationaryDuration.inMinutes >= 1) {
-          _logger.i('Stop detected: Stationary for ${stationaryDuration.inMinutes} minutes');
-          _handleStopDetected(
-            _lastStationaryLocation!,
-            stationaryDuration,
-            startTime: stopStart,
-            endTime: stopEnd,
-          );
-        }
-      }
-
-      _stopStartedAt = null;
-      _lastStationaryLocation = null;
-    } else {
-      _stopStartedAt ??= update.timestamp;
-      _lastStationaryLocation = update;
-    }
+    // Stop Detection via TimelineRecorder
+    unawaited(_timelineRecorder.processLocation(
+      latitude: update.latitude,
+      longitude: update.longitude,
+      timestamp: update.timestamp,
+      isMoving: update.isMoving,
+    ));
 
     // Forward to notification scheduler for distance-based notifications
     if (_notificationScheduler != null) {
@@ -558,61 +548,6 @@ class SessionManager {
       currentDistanceMeters: update.totalDistance,
       lastLocation: update,
     ));
-  }
-
-  Future<void> _handleStopDetected(
-    LocationUpdate location,
-    Duration duration, {
-    required DateTime startTime,
-    required DateTime endTime,
-  }) async {
-    try {
-      final sessionId = _state.session?.id;
-      final employeeId = _state.session?.employeeId;
-      
-      if (sessionId == null || employeeId == null) return;
-
-      // Get address for the stop
-      String? address;
-      try {
-        address = await GeocodingService.getAddressFromCoordinates(
-          location.latitude,
-          location.longitude,
-        );
-      } catch (e) {
-        _logger.w('Failed to get address for stop: $e');
-      }
-
-      // 1. Create Timeline Event (Stop)
-      await _locationRepository.createTimelineEvent(
-        employeeId: employeeId,
-        sessionId: sessionId,
-        eventType: 'stop',
-        startTime: startTime,
-        endTime: endTime,
-        durationSec: duration.inSeconds,
-        latitude: location.latitude,
-        longitude: location.longitude,
-        address: address,
-      );
-
-      // Raise an alert for 1+ minute stops so admin is notified immediately (testing with 1 min)
-      if (duration.inMinutes >= 1) {
-        await _locationRepository.createAlert(
-          employeeId: employeeId,
-          sessionId: sessionId,
-          alertType: 'stuck',
-          message: 'Employee stationary for ${duration.inMinutes} minutes${address != null ? " at $address" : ""}',
-          severity: duration.inMinutes >= 30 ? 'high' : 'warn',
-          latitude: location.latitude,
-          longitude: location.longitude,
-        );
-      }
-
-      _logger.i('Stop event reported to server');
-    } catch (e) {
-      _logger.e('Error handling stop detection: $e');
-    }
   }
 
   void _onTrackingError(String error) {
@@ -675,13 +610,14 @@ class SessionManager {
       );
 
       await _locationRepository.queueLocation(point);
+      _logger.i('DIAGNOSTIC: Point queued: ${point.id}');
       
       // CRITICAL FIX: Sync more aggressively - every 5 points instead of waiting for timer
       final pendingCount = await _locationRepository.getPendingCount();
       _logger.d('Queued location point. Pending: $pendingCount');
       
-      if (_backendSessionReady && pendingCount >= 5) {
-        _logger.i('Triggering immediate sync (5+ points pending)');
+      if (_backendSessionReady && pendingCount >= 3) {
+        _logger.i('Triggering immediate sync (3+ points pending)');
         unawaited(_syncPendingLocations());
       }
     } catch (e) {
@@ -765,6 +701,7 @@ class SessionManager {
   void dispose() {
     _durationTimer?.cancel();
     _syncTimer?.cancel();
+    _timelineRecorder.dispose();
     _stateController.close();
   }
 }

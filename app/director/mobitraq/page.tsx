@@ -195,7 +195,13 @@ export default function MobitraqDashboard() {
                 statsRecord[session.employee_id] = existing;
             });
 
-            setEmployeeStats(Object.values(statsRecord));
+            // Sort: active employees first, then by name
+            const sortedStats = Object.values(statsRecord).sort((a, b) => {
+                if (a.isActive && !b.isActive) return -1;
+                if (!a.isActive && b.isActive) return 1;
+                return a.name.localeCompare(b.name);
+            });
+            setEmployeeStats(sortedStats);
 
         } catch (error) {
             console.error('Error fetching mobitraq data:', error);
@@ -235,7 +241,7 @@ export default function MobitraqDashboard() {
                 </div>
                 <div className="flex items-center gap-4">
                     <Link
-                        href="/director/mobitraq/timeline"
+                        href={`/director/mobitraq/timeline?date=${selectedDate}`}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
                     >
                         <Map className="w-4 h-4" />
@@ -349,7 +355,7 @@ export default function MobitraqDashboard() {
                                         <td className="px-6 py-4 text-gray-900">{formatDuration(emp.totalDuration)}</td>
                                         <td className="px-6 py-4">
                                             <Link
-                                                href={`/director/mobitraq/timeline?employee=${emp.id}&date=${selectedDate}`}
+                                                href={`/director/mobitraq/timeline?employeeId=${emp.id}&date=${selectedDate}`}
                                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-md hover:bg-primary-100 transition-colors"
                                             >
                                                 <Map className="w-3.5 h-3.5" />

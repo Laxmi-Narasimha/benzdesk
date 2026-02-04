@@ -53,8 +53,11 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
       final employees = await _sessionRepo.getActiveEmployees();
       setState(() {
         _employees = employees;
-        if (_selectedEmployeeId == null && employees.isNotEmpty) {
-          _selectedEmployeeId = employees.first['id'];
+        // Only set default if NO selection and NO initial ID passed
+        if (_selectedEmployeeId == null) {
+            if (employees.isNotEmpty) {
+               _selectedEmployeeId = employees.first['id'];
+            }
         }
       });
       if (_selectedEmployeeId != null) {
@@ -75,17 +78,19 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
 
     try {
       // Get location points for selected date
-      final startOfDay = DateTime(
+      // Use IST day boundaries but query in UTC (TIMESTAMPTZ-safe)
+      const istOffset = Duration(hours: 5, minutes: 30);
+      final startOfDayUtc = DateTime.utc(
         _selectedDate.year,
         _selectedDate.month,
         _selectedDate.day,
-      );
-      final endOfDay = startOfDay.add(const Duration(days: 1));
+      ).subtract(istOffset);
+      final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
 
       final points = await _locationRepo.getPointsByEmployeeAndDateRange(
         employeeId: _selectedEmployeeId!,
-        startDate: startOfDay,
-        endDate: endOfDay,
+        startDate: startOfDayUtc,
+        endDate: endOfDayUtc,
       );
 
       // Sort by recorded time
@@ -293,8 +298,34 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
   }
 
   Widget _buildTimelineEventCard(TimelineEvent event, int index) {
+    final isStart = event.type == TimelineEventType.start;
+    final isEnd = event.type == TimelineEventType.end;
     final isStop = event.type == TimelineEventType.stop;
-    final color = isStop ? Colors.orange : Colors.blue;
+    final isMove = event.type == TimelineEventType.move;
+
+    final color = isStart
+        ? Colors.green
+        : isEnd
+            ? Colors.red
+            : isStop
+                ? Colors.orange
+                : Colors.blue;
+
+    final label = isStart
+        ? 'START'
+        : isEnd
+            ? 'END'
+            : isStop
+                ? 'STOP'
+                : 'MOVE';
+
+    final icon = isStart
+        ? Icons.play_arrow
+        : isEnd
+            ? Icons.flag
+            : isStop
+                ? Icons.pause
+                : Icons.directions_car;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -313,7 +344,7 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
                   border: Border.all(color: color, width: 2),
                 ),
                 child: Icon(
-                  isStop ? Icons.pause : Icons.directions_car,
+                  icon,
                   color: color,
                   size: 20,
                 ),
@@ -340,7 +371,7 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          isStop ? 'STOP' : 'MOVE',
+                          label,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: color,
@@ -367,7 +398,7 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
                         ),
                       ],
                     ),
-                    if (!isStop && event.distanceKm != null) ...[
+                    if (isMove && event.distanceKm != null) ...[
                       const SizedBox(height: 4),
                       Row(
                         children: [
@@ -380,7 +411,7 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
                         ],
                       ),
                     ],
-                    if (isStop) ...[
+                    if ((isStart || isEnd || isStop) && event.centerLat != null && event.centerLng != null) ...[
                       const SizedBox(height: 4),
                       Row(
                         children: [

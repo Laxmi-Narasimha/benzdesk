@@ -42,16 +42,18 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
 
     try {
       // Get location points for the selected date
-      final startOfDay = DateTime(
+      // Use IST day boundaries but query in UTC (TIMESTAMPTZ-safe)
+      const istOffset = Duration(hours: 5, minutes: 30);
+      final startOfDayUtc = DateTime.utc(
         _selectedDate.year,
         _selectedDate.month,
         _selectedDate.day,
-      );
-      final endOfDay = startOfDay.add(const Duration(days: 1));
+      ).subtract(istOffset);
+      final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
 
       final points = await _locationRepo.getLocationPointsForDateRange(
-        startOfDay,
-        endOfDay,
+        startOfDayUtc,
+        endOfDayUtc,
       );
 
       if (points.isEmpty) {
@@ -295,8 +297,34 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
   }
 
   Widget _buildTimelineItem(TimelineEvent event, int index) {
+    final isStart = event.type == TimelineEventType.start;
+    final isEnd = event.type == TimelineEventType.end;
     final isStop = event.type == TimelineEventType.stop;
-    final color = isStop ? Colors.orange : Colors.blue;
+    final isMove = event.type == TimelineEventType.move;
+
+    final color = isStart
+        ? Colors.green
+        : isEnd
+            ? Colors.red
+            : isStop
+                ? Colors.orange
+                : Colors.blue;
+
+    final title = isStart
+        ? 'Start'
+        : isEnd
+            ? 'End'
+            : isStop
+                ? 'Stop'
+                : 'Moving';
+
+    final icon = isStart
+        ? Icons.play_arrow
+        : isEnd
+            ? Icons.flag
+            : isStop
+                ? Icons.location_on
+                : Icons.directions_car;
     final timeFormat = DateFormat('h:mm a');
     
     return Card(
@@ -311,7 +339,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: isStop && event.centerLat != null && event.centerLng != null
+        onTap: (isStart || isEnd || isStop) && event.centerLat != null && event.centerLng != null
             ? () => _openInMaps(event.centerLat!, event.centerLng!)
             : null,
         child: Padding(
@@ -327,7 +355,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  isStop ? Icons.location_on : Icons.directions_car,
+                  icon,
                   color: color,
                   size: 24,
                 ),
@@ -342,7 +370,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                     Row(
                       children: [
                         Text(
-                          isStop ? 'Stop' : 'Moving',
+                          title,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
@@ -365,7 +393,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                         color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
                       ),
                     ),
-                    if (!isStop && event.distanceKm != null) ...[
+                    if (isMove && event.distanceKm != null) ...[
                       const SizedBox(height: 4),
                       Text(
                         '${event.distanceKm!.toStringAsFixed(1)} km traveled',
@@ -375,7 +403,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                         ),
                       ),
                     ],
-                    if (isStop) ...[
+                    if (isStart || isEnd || isStop) ...[
                       const SizedBox(height: 4),
                       Row(
                         children: [

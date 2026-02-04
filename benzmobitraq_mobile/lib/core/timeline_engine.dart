@@ -6,19 +6,36 @@ import 'distance_engine.dart';
 /// Per industry-grade specification Section 9.2
 class TimelineEngine {
   // Configuration constants (should match mobitraq_config in database)
-  static const double stopRadiusM = 120.0;
-  static const int stopMinDurationSec = 300; // 5 minutes (was 10)
+  static const double stopRadiusM = 200.0;
+  static const int stopMinDurationSec = 300; // 5 minutes
 
   /// Detect stops and moves from a chronologically sorted list of points
-  /// Returns a list of TimelineEvent objects representing stops and moves
+  /// Returns a list of TimelineEvent objects representing start/stop/move/end
   static List<TimelineEvent> generateTimeline(List<LocationPointModel> points) {
-    if (points.length < 2) return [];
+    if (points.isEmpty) return [];
 
     final events = <TimelineEvent>[];
     
     // Ensure points are sorted by recorded_at
     final sortedPoints = List<LocationPointModel>.from(points)
       ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+
+    // Always include explicit start marker
+    events.add(TimelineEvent.start(
+      time: sortedPoints.first.recordedAt,
+      lat: sortedPoints.first.latitude,
+      lng: sortedPoints.first.longitude,
+    ));
+
+    if (sortedPoints.length == 1) {
+      // Single-point day: still show end marker (same as start)
+      events.add(TimelineEvent.end(
+        time: sortedPoints.first.recordedAt,
+        lat: sortedPoints.first.latitude,
+        lng: sortedPoints.first.longitude,
+      ));
+      return events;
+    }
 
     int i = 0;
     while (i < sortedPoints.length) {
@@ -55,6 +72,13 @@ class TimelineEngine {
       i += max(1, clusterResult.pointCount);
     }
 
+    // Always include explicit end marker
+    events.add(TimelineEvent.end(
+      time: sortedPoints.last.recordedAt,
+      lat: sortedPoints.last.latitude,
+      lng: sortedPoints.last.longitude,
+    ));
+
     return events;
   }
 
@@ -74,9 +98,11 @@ class TimelineEngine {
     int j = startIdx + 1;
     while (j < points.length) {
       final point = points[j];
+      final centerLat = sumLat / clusterPoints.length;
+      final centerLng = sumLng / clusterPoints.length;
       final distanceM = DistanceEngine.haversineDistanceMeters(
-        lat1: anchor.latitude,
-        lng1: anchor.longitude,
+        lat1: centerLat,
+        lng1: centerLng,
         lat2: point.latitude,
         lng2: point.longitude,
       );
@@ -232,6 +258,22 @@ class TimelineEvent {
     required this.pointCount,
   });
 
+  factory TimelineEvent.start({
+    required DateTime time,
+    required double lat,
+    required double lng,
+  }) {
+    return TimelineEvent._(
+      type: TimelineEventType.start,
+      startTime: time,
+      endTime: time,
+      durationSec: 0,
+      centerLat: lat,
+      centerLng: lng,
+      pointCount: 1,
+    );
+  }
+
   factory TimelineEvent.stop({
     required DateTime startTime,
     required DateTime endTime,
@@ -274,6 +316,22 @@ class TimelineEvent {
     );
   }
 
+  factory TimelineEvent.end({
+    required DateTime time,
+    required double lat,
+    required double lng,
+  }) {
+    return TimelineEvent._(
+      type: TimelineEventType.end,
+      startTime: time,
+      endTime: time,
+      durationSec: 0,
+      centerLat: lat,
+      centerLng: lng,
+      pointCount: 1,
+    );
+  }
+
   String get durationFormatted {
     final minutes = durationSec ~/ 60;
     if (minutes < 60) return '${minutes}m';
@@ -308,9 +366,13 @@ class TimelineEvent {
   }
 
   factory TimelineEvent.fromJson(Map<String, dynamic> json) {
-    final type = json['event_type'] == 'stop' 
-        ? TimelineEventType.stop 
-        : TimelineEventType.move;
+    final eventType = (json['event_type'] as String?) ?? 'move';
+    final type = switch (eventType) {
+      'start' => TimelineEventType.start,
+      'end' => TimelineEventType.end,
+      'stop' => TimelineEventType.stop,
+      _ => TimelineEventType.move,
+    };
     
     return TimelineEvent._(
       type: type,
@@ -330,6 +392,8 @@ class TimelineEvent {
 }
 
 enum TimelineEventType {
+  start,
   stop,
   move,
+  end,
 }

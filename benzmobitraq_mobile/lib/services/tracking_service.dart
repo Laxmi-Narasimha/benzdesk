@@ -80,12 +80,16 @@ class LocationUpdate {
 /// This is the most reliable way to track location in background.
 class TrackingService {
   static final Logger _logger = Logger();
-  static final FlutterBackgroundService _service = FlutterBackgroundService();
+  // LAZY INSTANTIATION: Prevents usage in background isolate
+  static FlutterBackgroundService get _service => FlutterBackgroundService();
 
   // Callbacks for the main isolate
   static Function(LocationUpdate)? onLocationUpdate;
   static Function(String)? onError;
   static Function(bool)? onTrackingStateChanged;
+  
+  // HANDSHAKE: Wait for background service to be ready
+  static Completer<void>? _serviceReadyCompleter;
 
   // Storage keys for persisting state across restarts
   static const String _keySessionId = 'tracking_session_id';
@@ -152,6 +156,13 @@ class TrackingService {
     _service.on('trackingStateChanged').listen((event) {
       onTrackingStateChanged?.call(event?['isTracking'] ?? false);
     });
+
+    _service.on('serviceReady').listen((event) {
+      _logger.i('Handshake: Background service is ready');
+      if (_serviceReadyCompleter != null && !_serviceReadyCompleter!.isCompleted) {
+        _serviceReadyCompleter!.complete();
+      }
+    });
   }
 
   // ============================================================
@@ -186,17 +197,51 @@ class TrackingService {
       await prefs.setString(_keySessionId, sessionId);
       await prefs.setBool(_keyIsTracking, true);
 
-      // Start the background service
-      final isRunning = await _service.isRunning();
-      if (!isRunning) {
+      // Start the background service if not running
+      if (!await _service.isRunning()) {
         await _service.startService();
       }
 
-      // Send session ID to the service
-      _service.invoke('startSession', {
-        'sessionId': sessionId,
-        'isResume': isResume,
+      // RETRY LOGIC: Send startSession command and wait for ACK
+      // This handles race conditions where service is starting or restarting
+      bool ackReceived = false;
+      int attempts = 0;
+      
+      // Setup temporary listener for ACK
+      final ackCompleter = Completer<void>();
+      final sub = _service.on('sessionStarted').listen((event) {
+        if (event?['sessionId'] == sessionId) {
+          if (!ackCompleter.isCompleted) ackCompleter.complete();
+        }
       });
+
+      try {
+        while (!ackReceived && attempts < 5) {
+          attempts++;
+          _logger.i('Sending startSession command (Attempt $attempts)...');
+          
+          _service.invoke('startSession', {
+            'sessionId': sessionId,
+            'isResume': isResume,
+          });
+
+          try {
+            await ackCompleter.future.timeout(const Duration(milliseconds: 2000));
+            ackReceived = true;
+            _logger.i('ACK received: Session started successfully in background');
+          } catch (e) {
+            _logger.w('No ACK received within 2s, retrying...');
+          }
+        }
+      } finally {
+        await sub.cancel();
+      }
+
+      if (!ackReceived) {
+        _logger.e('Failed to start session in background after 5 attempts');
+        // We still return true because local session is valid, but logging error
+        onError?.call('Background tracking failed to acknowledge start');
+      }
 
       _logger.i('Tracking started for session: $sessionId');
       return true;
@@ -314,10 +359,12 @@ void _onServiceStart(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
 
   final Logger logger = Logger();
+  logger.i('DIAGNOSTIC: _onServiceStart EXECUTION STARTED. Service: ${service.hashCode}');
   
   // State
   String? currentSessionId;
   StreamSubscription<Position>? positionSubscription;
+  Timer? stationaryHeartbeatTimer;
   Position? lastPosition;
   DateTime? lastPositionTime;
   double totalDistance = 0;
@@ -341,7 +388,7 @@ void _onServiceStart(ServiceInstance service) async {
   // LOCATION TRACKING
   // ============================================================
 
-  void _onPositionReceived(Position position) async {
+  void _onPositionReceived(Position position, {bool forceRecord = false}) async {
     final now = DateTime.now();
 
     // ============================================================
@@ -433,11 +480,14 @@ void _onServiceStart(ServiceInstance service) async {
     await prefs.setDouble(TrackingService._keyLastLon, position.longitude);
     await prefs.setDouble(TrackingService._keyTotalDistance, totalDistance);
 
-    if (!shouldRecord) return;
+    if (!shouldRecord && !forceRecord) return;
 
     // ============================================================
     // SEND UPDATE TO MAIN ISOLATE
     // ============================================================
+
+    // RAW LOGGING FOR DEBUGGING
+    logger.i('RAW LOC: ${position.latitude}, ${position.longitude} | Acc: ${position.accuracy}');
 
     final update = LocationUpdate(
       latitude: position.latitude,
@@ -452,7 +502,11 @@ void _onServiceStart(ServiceInstance service) async {
       isMoving: isMoving,
     );
 
-    service.invoke('locationUpdate', update.toMap());
+    try {
+      service.invoke('locationUpdate', update.toMap());
+    } catch (e) {
+      logger.e('FAILED TO INVOKE locationUpdate: $e');
+    }
 
     // Update notification
     if (service is AndroidServiceInstance) {
@@ -467,16 +521,22 @@ void _onServiceStart(ServiceInstance service) async {
       
       final timeStr = '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
       
-      (service as AndroidServiceInstance).setForegroundNotificationInfo(
-        title: 'Tracking Active - $status',
-        content: '$timeStr elapsed • $distanceKm km',
-      );
+      try {
+        (service as AndroidServiceInstance).setForegroundNotificationInfo(
+          title: 'Tracking Active - $status',
+          content: '$timeStr elapsed • $distanceKm km',
+        );
+      } catch (e) {
+        logger.e('Failed to update notification: $e');
+      }
     }
 
     // logger.d('Location: ${position.latitude.toStringAsFixed(6)}, '
     //     '${position.longitude.toStringAsFixed(6)} | '
     //     'Δ${distanceDelta.toStringAsFixed(1)}m | '
     //     'Total: ${totalDistance.toStringAsFixed(0)}m');
+    
+    logger.i('DIAGNOSTIC: Location generated: ${position.latitude}, ${position.longitude}. Acc: ${position.accuracy}');
   }
 
   Future<void> _startLocationUpdates() async {
@@ -491,10 +551,10 @@ void _onServiceStart(ServiceInstance service) async {
     positionSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high, // Balanced accuracy (battery friendly)
-        distanceFilter: 30, // Update every 30 meters
+        distanceFilter: 10, // Smaller filter improves stationary detection
       ),
     ).listen(
-      _onPositionReceived,
+      (p) => _onPositionReceived(p, forceRecord: false),
       onError: (error) {
         logger.e('Location stream error: $error');
         service.invoke('error', {'message': 'Location error: $error'});
@@ -502,18 +562,46 @@ void _onServiceStart(ServiceInstance service) async {
       cancelOnError: false,
     );
 
-    service.invoke('trackingStateChanged', {'isTracking': true});
+    // Stationary heartbeat: force a point even when the device doesn't move.
+    // This is required for strict "5 minutes within radius" stop detection.
+    stationaryHeartbeatTimer?.cancel();
+    stationaryHeartbeatTimer = Timer.periodic(
+      Duration(seconds: AppConstants.stationaryCheckInterval),
+      (_) async {
+        if (currentSessionId == null) return;
+        try {
+          final p = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high,
+          );
+          _onPositionReceived(p, forceRecord: true);
+        } catch (e) {
+          logger.w('Stationary heartbeat location failed: $e');
+        }
+      },
+    );
+
+    try {
+      service.invoke('trackingStateChanged', {'isTracking': true});
+    } catch (e) {
+      logger.e('Failed to invoke trackingStateChanged: $e');
+    }
     logger.i('Location updates started (30m filter, high accuracy)');
   }
 
   Future<void> _stopLocationUpdates() async {
     positionSubscription?.cancel();
     positionSubscription = null;
+    stationaryHeartbeatTimer?.cancel();
+    stationaryHeartbeatTimer = null;
     
     // Persist state
     await prefs.setDouble(TrackingService._keyTotalDistance, totalDistance);
     
-    service.invoke('trackingStateChanged', {'isTracking': false});
+    try {
+      service.invoke('trackingStateChanged', {'isTracking': false});
+    } catch (e) {
+      logger.e('Failed to invoke trackingStateChanged: $e');
+    }
     logger.i('Location updates stopped');
   }
 
@@ -544,6 +632,9 @@ void _onServiceStart(ServiceInstance service) async {
     }
     
     await _startLocationUpdates();
+    
+    // Send ACK to main isolate
+    service.invoke('sessionStarted', {'sessionId': currentSessionId});
   });
 
   service.on('stopSession').listen((event) async {
@@ -564,7 +655,10 @@ void _onServiceStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-
+  // SIGNAL READY TO MAIN ISOLATE
+  // This prevents the race condition where Main sends startSession before we are listening
+  service.invoke('serviceReady');
+  logger.i('DIAGNOSTIC: Background Service Ready & Listening');
 }
 
 /// iOS background mode handler

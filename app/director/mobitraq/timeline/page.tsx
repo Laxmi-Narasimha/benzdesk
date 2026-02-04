@@ -6,6 +6,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { PageLoader, Card } from '@/components/ui';
 import dynamic from 'next/dynamic';
@@ -21,6 +22,8 @@ import {
     Activity,
     Route,
     Target,
+    Play,
+    Square,
 } from 'lucide-react';
 
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -67,7 +70,7 @@ interface SessionRollup {
 
 interface TimelineEvent {
     id: string;
-    event_type: 'stop' | 'move';
+    event_type: 'start' | 'end' | 'stop' | 'move';
     start_time: string;
     end_time: string | null;
     duration_sec: number | null;
@@ -91,7 +94,20 @@ interface DataError {
 const getIstDateString = (date: Date = new Date()) =>
     date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
+const isValidDateString = (value: string | null | undefined) =>
+    !!value && /^\d{4}-\d{2}-\d{2}$/.test(value);
+
+const STORAGE_KEYS = {
+    employeeId: 'mobitraq.timeline.employeeId',
+    date: 'mobitraq.timeline.date',
+} as const;
+
 export default function TimelinePage() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const empIdParam = searchParams?.get('employeeId') ?? searchParams?.get('employee');
+    const dateParam = searchParams?.get('date');
+
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [selectedEmployee, setSelectedEmployee] = useState<string>('');
     const [selectedDate, setSelectedDate] = useState<string>('');
@@ -106,11 +122,17 @@ export default function TimelinePage() {
     const [dailyRollup, setDailyRollup] = useState<DailyRollup | null>(null);
 
     const [mapReady, setMapReady] = useState(false);
+    const [expandedSession, setExpandedSession] = useState<string | null>(null);
 
     // Set date on client side only to prevent hydration mismatch
     useEffect(() => {
-        const today = getIstDateString();
-        setSelectedDate(today);
+        const stored = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.date) : null;
+        const initial = isValidDateString(dateParam)
+            ? dateParam!
+            : isValidDateString(stored)
+                ? stored!
+                : getIstDateString();
+        setSelectedDate(initial);
     }, []);
 
     // Load employees on mount
@@ -166,12 +188,58 @@ export default function TimelinePage() {
 
         if (data) {
             setEmployees(data);
-            if (data.length > 0) {
-                setSelectedEmployee(data[0].id);
+
+            // Logic to handle URL param or default to first
+            const storedEmployeeId =
+                typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.employeeId) : null;
+            const candidate = empIdParam ?? storedEmployeeId ?? selectedEmployee;
+
+            if (candidate && data.find((e) => e.id === candidate)) {
+                setSelectedEmployee(candidate);
+            } else if (data.length > 0) {
+                // Only default if nothing selected yet
+                if (!selectedEmployee) {
+                    setSelectedEmployee(data[0].id);
+                }
             }
         }
         setLoading(false);
     }
+
+    // Handle selection change and update URL
+    const handleEmployeeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const newId = e.target.value;
+        setSelectedEmployee(newId);
+
+        // Update URL to persist selection
+        const params = new URLSearchParams(searchParams?.toString());
+        params.set('employeeId', newId);
+        params.delete('employee');
+        if (isValidDateString(selectedDate)) params.set('date', selectedDate);
+        router.replace(`?${params.toString()}`);
+    };
+
+    const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const nextDate = e.target.value;
+        setSelectedDate(nextDate);
+
+        const params = new URLSearchParams(searchParams?.toString());
+        if (selectedEmployee) params.set('employeeId', selectedEmployee);
+        params.delete('employee');
+        if (isValidDateString(nextDate)) params.set('date', nextDate);
+        router.replace(`?${params.toString()}`);
+    };
+
+    // Persist selections for better navigation UX
+    useEffect(() => {
+        if (!selectedEmployee || typeof window === 'undefined') return;
+        localStorage.setItem(STORAGE_KEYS.employeeId, selectedEmployee);
+    }, [selectedEmployee]);
+
+    useEffect(() => {
+        if (!isValidDateString(selectedDate) || typeof window === 'undefined') return;
+        localStorage.setItem(STORAGE_KEYS.date, selectedDate);
+    }, [selectedDate]);
 
     const loadTimelineData = useCallback(async () => {
         setDataLoading(true);
@@ -357,7 +425,7 @@ export default function TimelinePage() {
                         <User className="w-4 h-4 text-dark-400" />
                         <select
                             value={selectedEmployee}
-                            onChange={(e) => setSelectedEmployee(e.target.value)}
+                            onChange={handleEmployeeChange}
                             className="bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 focus:outline-none focus:border-primary-500"
                         >
                             {employees.map((emp) => (
@@ -374,7 +442,7 @@ export default function TimelinePage() {
                         <input
                             type="date"
                             value={selectedDate}
-                            onChange={(e) => setSelectedDate(e.target.value)}
+                            onChange={handleDateChange}
                             className="bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 text-dark-100 focus:outline-none focus:border-primary-500"
                         />
                     </div>
@@ -448,28 +516,6 @@ export default function TimelinePage() {
                             </div>
                         </div>
                     )}
-                    {/* Map temporarily disabled to allow stats display
-                    {mapReady && (
-                        <ErrorBoundary fallback={
-                            <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
-                                <div className="text-center">
-                                    <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                    <p className="mb-1">Map Visualization Unavailable</p>
-                                    <p className="text-xs text-dark-500">The map service encountered an error</p>
-                                </div>
-                            </div>
-                        }>
-                            <MapComponent
-                                center={mapConfig.center}
-                                zoom={mapConfig.zoom}
-                                routePositions={routePositions}
-                                points={points}
-                                timelineEvents={timelineEvents}
-                                formatTime={formatTime}
-                            />
-                        </ErrorBoundary>
-                    )} 
-                    */}
                     {mapReady && points.length > 0 ? (
                         <ErrorBoundary fallback={
                             <div className="h-full w-full flex items-center justify-center bg-dark-900 text-dark-400">
@@ -506,33 +552,123 @@ export default function TimelinePage() {
                 <Card className="p-4">
                     <h3 className="text-lg font-semibold text-dark-100 mb-4 flex items-center gap-2">
                         <Navigation className="w-5 h-5 text-primary-500" />
-                        Sessions
+                        Sessions ({sessions.length})
                     </h3>
                     <div className="space-y-3">
-                        {sessions.map((session) => {
+                        {sessions.map((session, idx) => {
                             const rollup = rollups.find((r) => r.session_id === session.id);
+                            const isExpanded = expandedSession === session.id;
+                            const sessionEvents = timelineEvents.filter(e => {
+                                const eventTime = new Date(e.start_time).getTime();
+                                const sessionStart = new Date(session.start_time).getTime();
+                                const sessionEnd = session.end_time ? new Date(session.end_time).getTime() : Date.now();
+                                return eventTime >= sessionStart && eventTime <= sessionEnd;
+                            });
+                            // Calculate session duration
+                            const startTime = new Date(session.start_time);
+                            const endTime = session.end_time ? new Date(session.end_time) : new Date();
+                            const durationMin = (endTime.getTime() - startTime.getTime()) / 60000;
+                            // Session number (1-indexed)
+                            const sessionNum = idx + 1;
                             return (
-                                <div
-                                    key={session.id}
-                                    className="p-3 bg-dark-900 rounded-lg flex items-center justify-between"
-                                >
-                                    <div>
-                                        <div className="font-medium text-dark-100">
-                                            {session.session_name || 'Unnamed Session'}
+                                <div key={session.id} className="rounded-lg overflow-hidden border border-dark-700">
+                                    <button
+                                        onClick={() => setExpandedSession(isExpanded ? null : session.id)}
+                                        className="w-full p-3 bg-dark-900 flex items-center justify-between hover:bg-dark-800 transition-colors"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-400 font-bold text-sm">
+                                                #{sessionNum}
+                                            </div>
+                                            <div className="text-left">
+                                                <div className="font-medium text-dark-100">
+                                                    {session.session_name || `Session #${sessionNum}`}
+                                                </div>
+                                                <div className="text-sm text-dark-400">
+                                                    {formatTime(session.start_time)}
+                                                    {session.end_time ? ` - ${formatTime(session.end_time)}` : ' (Active)'}
+                                                    <span className="ml-2 text-dark-500">({formatDuration(durationMin)})</span>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="text-sm text-dark-400">
-                                            {formatTime(session.start_time)}
-                                            {session.end_time && ` - ${formatTime(session.end_time)}`}
+                                        <div className="flex items-center gap-4">
+                                            <div className="text-right">
+                                                <div className="font-bold text-primary-400">
+                                                    {rollup?.distance_km?.toFixed(1) || '0.0'} km
+                                                </div>
+                                                <div className="text-xs text-dark-500">
+                                                    {sessionEvents.filter(e => e.event_type === 'stop').length} stops
+                                                </div>
+                                            </div>
+                                            <ChevronDown className={`w-5 h-5 text-dark-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                                         </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="font-bold text-primary-400">
-                                            {rollup?.distance_km?.toFixed(1) || '0.0'} km
+                                    </button>
+                                    {isExpanded && (
+                                        <div className="p-3 bg-dark-950 border-t border-dark-700 space-y-2">
+                                            {sessionEvents.length === 0 ? (
+                                                <div className="text-center text-dark-500 text-sm py-4">
+                                                    No timeline events for this session
+                                                </div>
+                                            ) : (
+                                                sessionEvents.map((event) => (
+                                                    <div
+                                                        key={event.id}
+                                                        className={`flex items-start gap-3 p-2 rounded-lg ${event.event_type === 'stop'
+                                                                ? 'bg-amber-500/10'
+                                                                : event.event_type === 'start'
+                                                                    ? 'bg-green-500/10'
+                                                                    : event.event_type === 'end'
+                                                                        ? 'bg-red-500/10'
+                                                                        : 'bg-blue-500/10'
+                                                            }`}
+                                                    >
+                                                        <div className={`p-1.5 rounded-full ${event.event_type === 'stop'
+                                                                ? 'bg-amber-500/20'
+                                                                : event.event_type === 'start'
+                                                                    ? 'bg-green-500/20'
+                                                                    : event.event_type === 'end'
+                                                                        ? 'bg-red-500/20'
+                                                                        : 'bg-blue-500/20'
+                                                            }`}>
+                                                            {event.event_type === 'stop' ? (
+                                                                <MapPin className="w-3 h-3 text-amber-400" />
+                                                            ) : event.event_type === 'start' ? (
+                                                                <Play className="w-3 h-3 text-green-400" />
+                                                            ) : event.event_type === 'end' ? (
+                                                                <Square className="w-3 h-3 text-red-400" />
+                                                            ) : (
+                                                                <Navigation className="w-3 h-3 text-blue-400" />
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-sm font-medium text-dark-200">
+                                                                    {event.event_type === 'start' ? 'Started'
+                                                                        : event.event_type === 'end' ? 'Ended'
+                                                                            : event.event_type === 'stop' ? 'Stop'
+                                                                                : 'Moving'}
+                                                                </span>
+                                                                <span className="text-xs text-dark-400">
+                                                                    {formatTime(event.start_time)}
+                                                                    {event.event_type === 'stop' && event.end_time && ` - ${formatTime(event.end_time)}`}
+                                                                </span>
+                                                            </div>
+                                                            {event.address && (
+                                                                <div className="text-xs text-dark-500 mt-0.5 truncate">
+                                                                    📍 {event.address}
+                                                                </div>
+                                                            )}
+                                                            {event.event_type === 'stop' && event.duration_sec && event.duration_sec > 0 && (
+                                                                <div className="text-xs text-amber-400 mt-0.5">
+                                                                    ⏱ {formatDuration(event.duration_sec / 60)} stopped
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
                                         </div>
-                                        <div className="text-xs text-dark-500">
-                                            {rollup?.point_count || 0} points
-                                        </div>
-                                    </div>
+                                    )}
                                 </div>
                             );
                         })}
@@ -557,37 +693,61 @@ export default function TimelinePage() {
                             key={event.id}
                             className={`flex items-center gap-4 p-3 rounded-lg ${event.event_type === 'stop'
                                 ? 'bg-amber-500/10 border-l-4 border-amber-500'
-                                : 'bg-blue-500/10 border-l-4 border-blue-500'
+                                : event.event_type === 'start'
+                                    ? 'bg-green-500/10 border-l-4 border-green-500'
+                                    : event.event_type === 'end'
+                                        ? 'bg-red-500/10 border-l-4 border-red-500'
+                                        : 'bg-blue-500/10 border-l-4 border-blue-500'
                                 }`}
                         >
                             <div
                                 className={`p-2 rounded-full ${event.event_type === 'stop'
                                     ? 'bg-amber-500/20'
-                                    : 'bg-blue-500/20'
+                                    : event.event_type === 'start'
+                                        ? 'bg-green-500/20'
+                                        : event.event_type === 'end'
+                                            ? 'bg-red-500/20'
+                                            : 'bg-blue-500/20'
                                     }`}
                             >
                                 {event.event_type === 'stop' ? (
                                     <MapPin className="w-4 h-4 text-amber-400" />
+                                ) : event.event_type === 'start' ? (
+                                    <Play className="w-4 h-4 text-green-400" />
+                                ) : event.event_type === 'end' ? (
+                                    <Square className="w-4 h-4 text-red-400" />
                                 ) : (
                                     <Navigation className="w-4 h-4 text-blue-400" />
                                 )}
                             </div>
                             <div className="flex-1">
                                 <div className="font-medium text-dark-100">
-                                    {event.event_type === 'stop' ? 'Stop' : 'Moving'}
+                                    {event.event_type === 'stop'
+                                        ? 'Stop'
+                                        : event.event_type === 'start'
+                                            ? 'Session Started'
+                                            : event.event_type === 'end'
+                                                ? 'Session Ended'
+                                                : 'Moving'}
                                 </div>
                                 <div className="text-sm text-dark-400">
                                     {formatTime(event.start_time)}
-                                    {event.end_time && ` - ${formatTime(event.end_time)}`}
+                                    {event.end_time && event.event_type === 'stop' && ` - ${formatTime(event.end_time)}`}
                                 </div>
+                                {event.address && (
+                                    <div className="text-xs text-dark-500 mt-1 flex items-center gap-1">
+                                        <MapPin className="w-3 h-3" />
+                                        {event.address}
+                                    </div>
+                                )}
                             </div>
                             <div className="text-right">
-                                {event.duration_sec && (
+                                {!!event.duration_sec && event.duration_sec > 0 && (
                                     <div className="text-sm text-dark-300">
                                         {formatDuration(event.duration_sec / 60)}
                                     </div>
                                 )}
-                                {event.distance_km && event.distance_km > 0 && (
+                                {!!event.distance_km && event.distance_km > 0 && (
                                     <div className="text-sm font-medium text-primary-400">
                                         {event.distance_km.toFixed(1)} km
                                     </div>

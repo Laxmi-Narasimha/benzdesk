@@ -222,7 +222,7 @@ class AuthRepository {
 
     try {
       final updates = <String, dynamic>{
-        'updated_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
       if (name != null) updates['name'] = name;
@@ -252,7 +252,7 @@ class AuthRepository {
           .from('employees')
           .update({
             'device_token': token,
-            'updated_at': DateTime.now().toIso8601String(),
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
           })
           .eq('id', userId);
 

@@ -245,10 +245,10 @@ class LocationRepository {
   // ============================================================
 
   /// Create a timeline event (e.g. stop)
-  Future<void> createTimelineEvent({
+  Future<String?> createTimelineEvent({
     required String employeeId,
     required String sessionId,
-    required String eventType, // 'stop', 'move'
+    required String eventType, // 'start', 'stop', 'move', 'end'
     required DateTime startTime,
     required DateTime endTime,
     int? durationSec,
@@ -257,7 +257,7 @@ class LocationRepository {
     String? address,
   }) async {
     try {
-      await _dataSource.createTimelineEvent(
+      return await _dataSource.createTimelineEvent(
         employeeId: employeeId,
         sessionId: sessionId,
         eventType: eventType,
@@ -270,6 +270,30 @@ class LocationRepository {
       );
     } catch (e) {
       _logger.e('Error creating timeline event: $e');
+      return null;
+    }
+  }
+
+  /// Update an existing timeline event (used to extend an in-progress stop)
+  Future<void> updateTimelineEvent({
+    required String id,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      await _dataSource.updateTimelineEvent(
+        id: id,
+        endTime: endTime,
+        durationSec: durationSec,
+        latitude: latitude,
+        longitude: longitude,
+        address: address,
+      );
+    } catch (e) {
+      _logger.e('Error updating timeline event: $e');
     }
   }
 

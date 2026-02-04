@@ -50,7 +50,7 @@ class SupabaseDataSource {
         .from('employees')
         .update({
           'device_token': token,
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', employeeId);
   }
@@ -119,13 +119,13 @@ class SupabaseDataSource {
     final response = await _client
         .from('shift_sessions')
         .update({
-          'end_time': DateTime.now().toIso8601String(),
+          'end_time': DateTime.now().toUtc().toIso8601String(),
           'end_latitude': endLatitude,
           'end_longitude': endLongitude,
           'end_address': endAddress,
           'total_km': totalKm,
           'status': 'completed',
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', sessionId)
         .select()
@@ -140,7 +140,7 @@ class SupabaseDataSource {
         .from('shift_sessions')
         .update({
           'total_km': totalKm,
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', sessionId);
   }
@@ -173,8 +173,8 @@ class SupabaseDataSource {
         .from('shift_sessions')
         .select()
         .eq('employee_id', employeeId)
-        .gte('start_time', startOfDay.toIso8601String())
-        .lt('start_time', endOfDay.toIso8601String())
+        .gte('start_time', startOfDay.toUtc().toIso8601String())
+        .lt('start_time', endOfDay.toUtc().toIso8601String())
         .order('start_time', ascending: false);
 
     return (response as List)
@@ -192,8 +192,8 @@ class SupabaseDataSource {
         .from('shift_sessions')
         .select()
         .eq('employee_id', employeeId)
-        .gte('start_time', startOfMonth.toIso8601String())
-        .lt('start_time', endOfMonth.toIso8601String());
+        .gte('start_time', startOfMonth.toUtc().toIso8601String())
+        .lt('start_time', endOfMonth.toUtc().toIso8601String());
 
     return (response as List)
         .map((e) => SessionModel.fromJson(e))
@@ -212,7 +212,7 @@ class SupabaseDataSource {
       final data = points.map((p) => p.toJson()).toList();
       
       // Enhanced diagnostic logging
-      _logger.i('SYNC: Uploading ${points.length} location points...');
+      _logger.i('SYNC DIAGNOSTIC: Attempting upload of ${points.length} points...');
       _logger.d('SYNC: Session: ${points.first.sessionId}');
       _logger.d('SYNC: Employee: ${points.first.employeeId}');
       _logger.d('SYNC: Auth UID: $currentUserId');
@@ -296,8 +296,8 @@ class SupabaseDataSource {
         .from('location_points')
         .select()
         .eq('employee_id', employeeId)
-        .gte('recorded_at', startDate.toIso8601String())
-        .lt('recorded_at', endDate.toIso8601String())
+        .gte('recorded_at', startDate.toUtc().toIso8601String())
+        .lt('recorded_at', endDate.toUtc().toIso8601String())
         .order('recorded_at');
 
     return (response as List)
@@ -358,7 +358,7 @@ class SupabaseDataSource {
       'anchor_latitude': null,
       'anchor_longitude': null,
       'anchor_time': null,
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     });
   }
 
@@ -483,7 +483,7 @@ class SupabaseDataSource {
     try {
       final response = await _client
           .from('expense_claims')
-          .select('*, employees(name, phone), expense_items(*)')
+          .select('*, employees!expense_claims_employee_id_fkey(name, phone), expense_items(*)')
           .eq('employee_id', employeeId)
           .order('created_at', ascending: false)
           .range(offset, offset + limit - 1);
@@ -495,11 +495,13 @@ class SupabaseDataSource {
     }
   }
 
-  /// Create a timeline event (e.g. stop)
-  Future<void> createTimelineEvent({
+  /// Create a timeline event (start/stop/move/end)
+  ///
+  /// Returns the inserted event id when available.
+  Future<String?> createTimelineEvent({
     required String employeeId,
     required String sessionId,
-    required String eventType, // 'stop', 'move'
+    required String eventType, // 'start', 'stop', 'move', 'end'
     required DateTime startTime,
     required DateTime endTime,
     int? durationSec,
@@ -513,22 +515,57 @@ class SupabaseDataSource {
       final data = {
         'employee_id': employeeId,
         'session_id': sessionId,
+        // day/duration are enforced in DB trigger, but keep for compatibility
         'day': startUtc.toIso8601String().split('T')[0],
         'event_type': eventType,
         'start_time': startUtc.toIso8601String(),
         'end_time': endUtc.toIso8601String(),
         'duration_sec': durationSec ?? endUtc.difference(startUtc).inSeconds,
+        // Markers/stops use center; move segments may use start/end lat/lng (optional)
         'center_lat': latitude,
         'center_lng': longitude,
         'address': address,
         'created_at': DateTime.now().toUtc().toIso8601String(),
       };
 
-      await _client.from('timeline_events').insert(data);
+      final response = await _client
+          .from('timeline_events')
+          .insert(data)
+          .select('id')
+          .maybeSingle();
+      final id = response?['id'] as String?;
       _logger.i('Created timeline event: $eventType');
+      return id;
     } catch (e) {
       _logger.e('Error creating timeline event: $e');
       // Don't rethrow to avoid disrupting tracking flow
+      return null;
+    }
+  }
+
+  /// Update an existing timeline event (used to extend an in-progress stop)
+  Future<void> updateTimelineEvent({
+    required String id,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      final endUtc = endTime.toUtc();
+      final data = {
+        'end_time': endUtc.toIso8601String(),
+        'duration_sec': durationSec,
+        'center_lat': latitude,
+        'center_lng': longitude,
+        'address': address,
+      }..removeWhere((_, v) => v == null);
+
+      await _client.from('timeline_events').update(data).eq('id', id);
+      _logger.d('Updated timeline event: $id');
+    } catch (e) {
+      _logger.e('Error updating timeline event: $e');
     }
   }
 
@@ -589,7 +626,7 @@ class SupabaseDataSource {
         .from('expense_claims')
         .update({
           'total_amount': total,
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', claimId);
   }
@@ -600,8 +637,8 @@ class SupabaseDataSource {
         .from('expense_claims')
         .update({
           'status': 'submitted',
-          'submitted_at': DateTime.now().toIso8601String(),
-          'updated_at': DateTime.now().toIso8601String(),
+          'submitted_at': DateTime.now().toUtc().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', claimId)
         .select()

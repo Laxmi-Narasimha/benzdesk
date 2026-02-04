@@ -103,9 +103,9 @@ class _AdminAlertsScreenState extends State<AdminAlertsScreen> {
     try {
       await _supabase.from('mobitraq_alerts').update({
         'is_open': false,
-        'end_time': DateTime.now().toIso8601String(),
+        'end_time': DateTime.now().toUtc().toIso8601String(),
         'acknowledged_by': _supabase.auth.currentUser?.id,
-        'acknowledged_at': DateTime.now().toIso8601String(),
+        'acknowledged_at': DateTime.now().toUtc().toIso8601String(),
       }).eq('id', alert.id!);
 
       _loadAlerts();
