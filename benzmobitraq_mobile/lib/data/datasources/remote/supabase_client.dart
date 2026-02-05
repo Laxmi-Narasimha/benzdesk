@@ -115,11 +115,13 @@ class SupabaseDataSource {
     double? endLatitude,
     double? endLongitude,
     String? endAddress,
+    DateTime? endTime,
   }) async {
+    final effectiveEndTime = (endTime ?? DateTime.now()).toUtc();
     final response = await _client
         .from('shift_sessions')
         .update({
-          'end_time': DateTime.now().toUtc().toIso8601String(),
+          'end_time': effectiveEndTime.toIso8601String(),
           'end_latitude': endLatitude,
           'end_longitude': endLongitude,
           'end_address': endAddress,
@@ -176,6 +178,26 @@ class SupabaseDataSource {
         .gte('start_time', startOfDay.toUtc().toIso8601String())
         .lt('start_time', endOfDay.toUtc().toIso8601String())
         .order('start_time', ascending: false);
+
+    return (response as List)
+        .map((e) => SessionModel.fromJson(e))
+        .toList();
+  }
+
+  /// Get sessions for a specific date for employee
+  Future<List<SessionModel>> getSessionsForDate(String employeeId, DateTime date) async {
+    // Use IST day boundaries but query in UTC (TIMESTAMPTZ-safe)
+    const istOffset = Duration(hours: 5, minutes: 30);
+    final startOfDayUtc = DateTime.utc(date.year, date.month, date.day).subtract(istOffset);
+    final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
+
+    final response = await _client
+        .from('shift_sessions')
+        .select()
+        .eq('employee_id', employeeId)
+        .gte('start_time', startOfDayUtc.toIso8601String())
+        .lt('start_time', endOfDayUtc.toIso8601String())
+        .order('start_time', ascending: true);
 
     return (response as List)
         .map((e) => SessionModel.fromJson(e))

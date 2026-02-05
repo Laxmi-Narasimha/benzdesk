@@ -51,6 +51,14 @@ interface EmployeeStats {
 const getIstDateString = (date: Date = new Date()) =>
     date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
+const formatTimeIST = (dateStr: string) => {
+    return new Date(dateStr).toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+};
+
 export default function MobitraqDashboard() {
     const searchParams = useSearchParams();
     const dateParam = searchParams.get('date');

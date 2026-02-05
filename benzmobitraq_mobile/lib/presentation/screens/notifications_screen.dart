@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/utils/date_utils.dart';
 import '../../data/models/notification_model.dart';
 import '../blocs/notification/notification_bloc.dart';
 import '../blocs/auth/auth_bloc.dart';
@@ -217,7 +218,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              _formatTime(notification.createdAt),
+              DateTimeUtils.getRelativeTime(notification.createdAt),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                 fontSize: 11,
@@ -246,20 +247,5 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  String _formatTime(DateTime time) {
-    final now = DateTime.now();
-    final diff = now.difference(time);
-    
-    if (diff.inMinutes < 1) {
-      return 'Just now';
-    } else if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}m ago';
-    } else if (diff.inHours < 24) {
-      return '${diff.inHours}h ago';
-    } else if (diff.inDays < 7) {
-      return '${diff.inDays}d ago';
-    } else {
-      return DateFormat('MMM d').format(time);
-    }
-  }
+  // _formatTime removed in favor of DateTimeUtils.getRelativeTime
 }

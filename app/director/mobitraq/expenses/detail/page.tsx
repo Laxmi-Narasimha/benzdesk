@@ -238,7 +238,7 @@ function ExpenseDetailContent() {
                     </div>
                     <div>
                         <p className="text-dark-500 text-sm">Submitted</p>
-                        <p className="text-dark-200">{new Date(claim.submitted_at).toLocaleDateString()}</p>
+                        <p className="text-dark-200">{new Date(claim.submitted_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
                     </div>
                     <div>
                         <p className="text-dark-500 text-sm">Employee</p>
@@ -264,7 +264,7 @@ function ExpenseDetailContent() {
                                 <User className="w-4 h-4 text-dark-500" />
                                 <span className="text-sm text-dark-400">{comment.author_id}</span>
                                 <span className="text-xs text-dark-600">
-                                    {new Date(comment.created_at).toLocaleString()}
+                                    {new Date(comment.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                                 </span>
                             </div>
                             <p className="text-dark-200">{comment.body}</p>

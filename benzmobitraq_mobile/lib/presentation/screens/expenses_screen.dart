@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/router/app_router.dart';
+import '../../core/utils/date_utils.dart';
 import '../../data/models/simple_expense_model.dart';
 import '../blocs/expense/expense_bloc.dart';
 import '../widgets/app_bottom_nav_bar.dart';
@@ -418,7 +419,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        DateFormat('MMM d, yyyy').format(expense.expenseDate),
+                        DateTimeUtils.formatDate(expense.expenseDate),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                         ),

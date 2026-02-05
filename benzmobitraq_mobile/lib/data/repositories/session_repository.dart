@@ -143,6 +143,7 @@ class SessionRepository {
     double? longitude,
     double totalKm, {
     String? address,
+    DateTime? endTime,
   }) async {
     try {
       final userId = await resolveCurrentUserId();
@@ -159,6 +160,7 @@ class SessionRepository {
         endLatitude: latitude,
         endLongitude: longitude,
         endAddress: address,
+        endTime: endTime,
       );
 
       // Clear local session

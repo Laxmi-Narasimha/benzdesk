@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:logger/logger.dart';
+import 'dart:convert';
 
 import '../datasources/local/preferences_local.dart';
 import '../models/employee_model.dart';
@@ -51,7 +52,9 @@ class AuthRepository {
       // Store auth data locally
       await _preferences.setLoggedIn(true);
       await _preferences.setUserId(response.user!.id);
+      await _preferences.setUserId(response.user!.id);
       await _preferences.setUserRole(employee.role);
+      await _preferences.setCachedEmployeeProfileJson(jsonEncode(employee.toJson())); // Cache for offline
 
       _logger.i('Sign in successful for: ${response.user!.email}');
       return AuthResult.success(employee);
@@ -182,12 +185,28 @@ class AuthRepository {
       // Update local preferences
       await _preferences.setLoggedIn(true);
       await _preferences.setUserId(employee.id);
+      await _preferences.setUserId(employee.id);
       await _preferences.setUserRole(employee.role);
+      await _preferences.setCachedEmployeeProfileJson(jsonEncode(employee.toJson())); // Cache for offline
 
       _logger.i('Auth status check: User authenticated as ${employee.name}');
       return employee;
     } catch (e) {
       _logger.e('Error checking auth status: $e');
+      _logger.e('Error checking auth status: $e');
+      
+      // OFFLINE FALLBACK
+      final cachedJson = _preferences.cachedEmployeeProfileJson;
+      if (cachedJson != null) {
+        try {
+          final cachedEmployee = EmployeeModel.fromJson(jsonDecode(cachedJson));
+          _logger.w('OFFLINE MODE: Using cached employee profile');
+          return cachedEmployee;
+        } catch (parseError) {
+          _logger.e('Error parsing cached profile: $parseError');
+        }
+      }
+      
       return null;
     }
   }

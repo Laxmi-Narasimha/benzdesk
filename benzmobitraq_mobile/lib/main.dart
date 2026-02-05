@@ -79,13 +79,28 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
     try {
       // Step 1: Orientation (10%)
       setState(() { _statusMessage = 'Locking Orientation...'; _progress = 0.1; });
-      await SystemChrome.setPreferredOrientations([
+      
+      // CRITICAL FIX: Fire-and-forget with timeout. Do not await infinitely.
+      // Native channel might be busy with Geolocator.
+      SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
         DeviceOrientation.portraitDown,
-      ]);
+      ]).timeout(
+        const Duration(seconds: 2), 
+        onTimeout: () {
+          debugPrint('⚠️ Orientation lock timed out');
+          return;
+        }
+      ).catchError((e) {
+        debugPrint('⚠️ Orientation lock failed: $e');
+        return;
+      });
+      
+      debugPrint('STEP 1: Orientation lock requested');
 
       // Step 2: Supabase (30%) - This is the ONLY critical service
       setState(() { _statusMessage = 'Connecting to Server...'; _progress = 0.3; });
+      debugPrint('STEP 2: Initializing Supabase...');
       try {
         await Supabase.initialize(
           url: AppConstants.supabaseUrl,
@@ -96,6 +111,7 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
         // This is critical - if Supabase fails, show error
         throw 'Could not connect to server. Please check your internet connection.';
       }
+      debugPrint('STEP 2: Supabase initialized');
 
       // Step 3: Tracking Service (50%) - Optional, don't block on failure
       setState(() { _statusMessage = 'Initializing GPS...'; _progress = 0.5; });
@@ -109,14 +125,19 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
       }
 
       // Step 4: DI (70%)
+
+      // Step 4: DI (70%)
       setState(() { _statusMessage = 'Loading Services...'; _progress = 0.7; });
+      debugPrint('STEP 4: Configuring Dependencies...');
       await configureDependencies();
+      debugPrint('STEP 4: Dependencies configured');
 
       // Step 5: Resume Tracking (85%) - Optional
       setState(() { _statusMessage = 'Checking Status...'; _progress = 0.85; });
       try {
         await TrackingService.resumeIfNeeded();
       } catch (e) { /* ignore */ }
+      debugPrint('STEP 5: Resume check complete');
       
       // Note: Firebase/Notifications will be initialized lazily when needed
       // This keeps startup fast and prevents crashes if Firebase isn't configured

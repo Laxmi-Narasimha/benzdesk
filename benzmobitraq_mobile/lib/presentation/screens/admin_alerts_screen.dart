@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/alerts_engine.dart';
+import '../../core/utils/date_utils.dart';
 
 /// Admin Alerts Screen - View and manage employee alerts
 /// Per industry-grade specification Section 10
@@ -298,7 +299,7 @@ class _AdminAlertsScreenState extends State<AdminAlertsScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        DateFormat('MMM dd, HH:mm').format(alert.startTime),
+                        DateFormat('MMM dd, HH:mm').format(DateTimeUtils.toIST(alert.startTime)),
                         style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                       ),
                     ],

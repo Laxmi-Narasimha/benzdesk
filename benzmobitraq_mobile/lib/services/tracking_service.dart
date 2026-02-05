@@ -109,7 +109,15 @@ class TrackingService {
   static Future<void> initialize() async {
     try {
       // Check if already running to avoid crash on re-configure
-      if (await _service.isRunning()) {
+      final isRunning = await _service.isRunning().timeout(
+        const Duration(seconds: 2), 
+        onTimeout: () {
+          _logger.w('Timeout checking if service is running');
+          return false;
+        },
+      );
+      
+      if (isRunning) {
         _logger.i('Tracking service already running, skipping configuration');
         // Re-attach listeners even if running
         _attachListeners();

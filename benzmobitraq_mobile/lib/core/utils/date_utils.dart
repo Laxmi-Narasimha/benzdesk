@@ -5,60 +5,80 @@ class DateTimeUtils {
   DateTimeUtils._();
 
   // ============================================================
+  // TIMEZONE CONFIG
+  // ============================================================
+  
+  /// Convert any DateTime to IST (UTC+5:30)
+  static DateTime toIST(DateTime date) {
+    if (date.isUtc) {
+      return date.add(const Duration(hours: 5, minutes: 30));
+    }
+    // If it's already local, we assume the device might be anywhere.
+    // Ideally we should work with UTC dates from the backend.
+    // If we want to force IST representation even if device is elsewhere:
+    return date.toUtc().add(const Duration(hours: 5, minutes: 30));
+  }
+
+  // ============================================================
   // FORMATTERS
   // ============================================================
   
   static final DateFormat _dateFormat = DateFormat('dd MMM yyyy');
-  static final DateFormat _timeFormat = DateFormat('HH:mm');
-  static final DateFormat _timeWithSecondsFormat = DateFormat('HH:mm:ss');
-  static final DateFormat _dateTimeFormat = DateFormat('dd MMM yyyy, HH:mm');
-  static final DateFormat _shortDateFormat = DateFormat('dd/MM/yyyy');
-  static final DateFormat _isoFormat = DateFormat('yyyy-MM-dd');
-  static final DateFormat _monthYearFormat = DateFormat('MMMM yyyy');
-  static final DateFormat _dayOfWeekFormat = DateFormat('EEEE');
+  static final DateFormat _timeFormat = DateFormat('h:mm a'); // Changed to AM/PM as per generic preference, or stick to HH:mm if enforced. Keeping HH:mm for consistency with existing or switching? grep showed h:mm a in many places. Let's make it consistent.
+  // Actually, let's keep the defined formatters but ensure they are applied to IST converted dates.
+  
+  // existing formatters
+  static final DateFormat _fmtDate = DateFormat('dd MMM yyyy');
+  static final DateFormat _fmtTime = DateFormat('HH:mm');
+  static final DateFormat _fmtTimeSec = DateFormat('HH:mm:ss');
+  static final DateFormat _fmtDateTime = DateFormat('dd MMM yyyy, HH:mm');
+  static final DateFormat _fmtShortDate = DateFormat('dd/MM/yyyy');
+  static final DateFormat _fmtIso = DateFormat('yyyy-MM-dd');
+  static final DateFormat _fmtMonthYear = DateFormat('MMMM yyyy');
+  static final DateFormat _fmtDayWeek = DateFormat('EEEE');
 
   // ============================================================
   // FORMAT METHODS
   // ============================================================
 
-  /// Format date as "28 Jan 2026"
+  /// Format date as "28 Jan 2026" (IST)
   static String formatDate(DateTime date) {
-    return _dateFormat.format(date);
+    return _fmtDate.format(toIST(date));
   }
 
-  /// Format time as "14:30"
+  /// Format time as "14:30" (IST)
   static String formatTime(DateTime date) {
-    return _timeFormat.format(date);
+    return _fmtTime.format(toIST(date));
   }
 
-  /// Format time as "14:30:45"
+  /// Format time as "14:30:45" (IST)
   static String formatTimeWithSeconds(DateTime date) {
-    return _timeWithSecondsFormat.format(date);
+    return _fmtTimeSec.format(toIST(date));
   }
 
-  /// Format as "28 Jan 2026, 14:30"
+  /// Format as "28 Jan 2026, 14:30" (IST)
   static String formatDateTime(DateTime date) {
-    return _dateTimeFormat.format(date);
+    return _fmtDateTime.format(toIST(date));
   }
 
-  /// Format as "28/01/2026"
+  /// Format as "28/01/2026" (IST)
   static String formatShortDate(DateTime date) {
-    return _shortDateFormat.format(date);
+    return _fmtShortDate.format(toIST(date));
   }
 
-  /// Format as "2026-01-28" (ISO format)
+  /// Format as "2026-01-28" (IST)
   static String formatIsoDate(DateTime date) {
-    return _isoFormat.format(date);
+    return _fmtIso.format(toIST(date));
   }
 
-  /// Format as "January 2026"
+  /// Format as "January 2026" (IST)
   static String formatMonthYear(DateTime date) {
-    return _monthYearFormat.format(date);
+    return _fmtMonthYear.format(toIST(date));
   }
 
-  /// Format as "Wednesday"
+  /// Format as "Wednesday" (IST)
   static String formatDayOfWeek(DateTime date) {
-    return _dayOfWeekFormat.format(date);
+    return _fmtDayWeek.format(toIST(date));
   }
 
   // ============================================================
@@ -67,8 +87,9 @@ class DateTimeUtils {
 
   /// Get relative time string like "2 hours ago", "Just now", etc.
   static String getRelativeTime(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date);
+    final now = toIST(DateTime.now().toUtc());
+    final dateIst = toIST(date); // Ensure comparison is in same zone (effectively offset doesn't matter for diff, but consistency)
+    final difference = now.difference(dateIst);
 
     if (difference.isNegative) {
       return 'In the future';
@@ -110,8 +131,9 @@ class DateTimeUtils {
 
   /// Get short relative time like "2h", "5m", "3d"
   static String getShortRelativeTime(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date);
+    final now = toIST(DateTime.now().toUtc());
+    final dateIst = toIST(date);
+    final difference = now.difference(dateIst);
 
     if (difference.isNegative) {
       return 'Future';
@@ -176,43 +198,51 @@ class DateTimeUtils {
   // DATE HELPERS
   // ============================================================
 
-  /// Check if two dates are the same day
+  /// Check if two dates are the same day (in IST)
   static bool isSameDay(DateTime date1, DateTime date2) {
-    return date1.year == date2.year &&
-        date1.month == date2.month &&
-        date1.day == date2.day;
+    final d1 = toIST(date1);
+    final d2 = toIST(date2);
+    return d1.year == d2.year &&
+        d1.month == d2.month &&
+        d1.day == d2.day;
   }
 
-  /// Check if date is today
+  /// Check if date is today (in IST)
   static bool isToday(DateTime date) {
-    return isSameDay(date, DateTime.now());
+    return isSameDay(date, DateTime.now().toUtc());
   }
 
-  /// Check if date is yesterday
+  /// Check if date is yesterday (in IST)
   static bool isYesterday(DateTime date) {
-    final yesterday = DateTime.now().subtract(const Duration(days: 1));
-    return isSameDay(date, yesterday);
+    final nowIst = toIST(DateTime.now().toUtc());
+    final yesterdayIst = nowIst.subtract(const Duration(days: 1));
+    return isSameDay(date, yesterdayIst); // isSameDay handles conversion
   }
 
-  /// Get start of day (midnight)
+  /// Get start of day (midnight) in IST
   static DateTime startOfDay(DateTime date) {
-    return DateTime(date.year, date.month, date.day);
+    final d = toIST(date);
+    return DateTime(d.year, d.month, d.day);
   }
 
-  /// Get end of day (23:59:59.999)
+  /// Get end of day (23:59:59.999) in IST
   static DateTime endOfDay(DateTime date) {
-    return DateTime(date.year, date.month, date.day, 23, 59, 59, 999);
+    final d = toIST(date);
+    return DateTime(d.year, d.month, d.day, 23, 59, 59, 999);
   }
 
-  /// Get start of week (Monday)
+  /// Get start of week (Monday) in IST
   static DateTime startOfWeek(DateTime date) {
-    final daysFromMonday = date.weekday - 1;
-    return startOfDay(date.subtract(Duration(days: daysFromMonday)));
+    final d = toIST(date);
+    final daysFromMonday = d.weekday - 1;
+    final monday = d.subtract(Duration(days: daysFromMonday));
+    return DateTime(monday.year, monday.month, monday.day);
   }
 
-  /// Get start of month
+  /// Get start of month in IST
   static DateTime startOfMonth(DateTime date) {
-    return DateTime(date.year, date.month, 1);
+    final d = toIST(date);
+    return DateTime(d.year, d.month, 1);
   }
 
   // ============================================================
@@ -233,7 +263,7 @@ class DateTimeUtils {
   static DateTime? parseShortDate(String? dateString) {
     if (dateString == null || dateString.isEmpty) return null;
     try {
-      return _shortDateFormat.parse(dateString);
+      return _fmtShortDate.parse(dateString);
     } catch (e) {
       return null;
     }

@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/utils/date_utils.dart';
 import '../../data/models/travel_allowance_model.dart';
 import '../../data/repositories/expense_repository.dart';
 import '../../data/datasources/local/preferences_local.dart';
@@ -717,7 +718,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               children: [
                 Icon(Icons.calendar_today, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 12),
-                Text(DateFormat('EEEE, MMMM d, yyyy').format(_selectedDate)),
+                // Ensure textual display uses IST
+                Text(DateFormat('EEEE, MMMM d, yyyy').format(DateTimeUtils.toIST(_selectedDate))),
               ],
             ),
           ),

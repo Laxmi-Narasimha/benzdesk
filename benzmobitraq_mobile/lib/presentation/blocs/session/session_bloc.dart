@@ -111,6 +111,11 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
     SessionStopRequested event,
     Emitter<SessionState> emit,
   ) async {
+    // Prevent double-submission
+    if (state.status == SessionBlocStatus.stopping) {
+      return;
+    }
+
     emit(state.copyWith(status: SessionBlocStatus.stopping));
 
     try {

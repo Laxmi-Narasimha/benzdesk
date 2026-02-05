@@ -21,7 +21,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final PermissionService _permissionService = PermissionService();
   bool _batteryDialogShown = false;
   String? _currentAddress;
@@ -30,6 +30,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    // Register lifecycle observer to detect app resume
+    WidgetsBinding.instance.addObserver(this);
     // Load session history
     context.read<SessionBloc>().add(const SessionLoadHistory());
     // Request permissions immediately on app entry (before user taps anything)
@@ -38,6 +40,24 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkBatteryOptimization();
     // Fetch initial location
     _fetchCurrentLocation();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Re-sync with SessionManager when app resumes from background
+      // This ensures UI matches the background tracking state shown in notification
+      context.read<SessionBloc>().add(const SessionInitialize());
+      // Also refresh location
+      _fetchCurrentLocation();
+    }
   }
 
   /// Request location and notification permissions immediately on app entry

@@ -109,6 +109,11 @@ export function RequestList({
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
     const [showFilterPanel, setShowFilterPanel] = useState(false);
 
+    // Sync status filter when defaultStatus changes
+    useEffect(() => {
+        setStatusFilter(defaultStatus);
+    }, [defaultStatus]);
+
     // ============================================================================
     // Fetch Requests
     // ============================================================================

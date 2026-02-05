@@ -3,11 +3,13 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'dart:async';
 
 import '../../data/models/expense_claim_comment_model.dart';
 import '../../data/models/expense_claim_event_model.dart';
 import '../../data/models/expense_claim_attachment_model.dart';
 import '../../data/repositories/expense_repository.dart';
+import '../../core/utils/date_utils.dart';
 import '../blocs/auth/auth_bloc.dart';
 
 /// Detail screen for viewing an expense claim with chat, timeline, and attachments
@@ -248,7 +250,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen>
               Text(comment.body),
               const SizedBox(height: 4),
               Text(
-                DateFormat('MMM d, h:mm a').format(comment.createdAt),
+                DateFormat('MMM d, h:mm a').format(DateTimeUtils.toIST(comment.createdAt)),
                 style: TextStyle(
                   fontSize: 10,
                   color: Colors.grey[600],
@@ -353,7 +355,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${event.actorName ?? 'Unknown'} • ${DateFormat('MMM d, h:mm a').format(event.createdAt)}',
+                  '${event.actorName ?? 'Unknown'} • ${DateFormat('MMM d, h:mm a').format(DateTimeUtils.toIST(event.createdAt))}',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
                 if (event.note != null) ...[
@@ -408,7 +410,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen>
         ),
         title: Text(attachment.originalFilename),
         subtitle: Text(
-          '${attachment.fileSizeFormatted} • ${DateFormat('MMM d, yyyy').format(attachment.uploadedAt)}',
+          '${attachment.fileSizeFormatted} • ${DateTimeUtils.formatDate(attachment.uploadedAt)}',
         ),
         trailing: PopupMenuButton(
           itemBuilder: (context) => [

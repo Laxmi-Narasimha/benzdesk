@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
@@ -170,17 +171,55 @@ class SessionManager {
         _logger.i('Found active session: $activeSessionId');
         
         // Try to resume
-        final session = await _sessionRepository.getSession(activeSessionId);
+        SessionModel? session;
+        try {
+          // Attempt 1: Fetch from remote (or repository logic)
+          session = await _sessionRepository.getSession(activeSessionId);
+        } catch (e) {
+          _logger.w('Failed to fetch session from repository: $e');
+        }
+
+        // Attempt 2: Offline Fallback
+        if (session == null) {
+          final cachedJson = _preferences.cachedSessionJson;
+          if (cachedJson != null) {
+             try {
+               final raw = jsonDecode(cachedJson);
+               // Verify it matches the ID we expect
+               if (raw['id'] == activeSessionId) {
+                 session = SessionModel.fromJson(raw);
+                 _logger.i('OFFLINE: Recovered session from local cache');
+               }
+             } catch (e) {
+               _logger.e('Failed to parse cached session: $e');
+             }
+          }
+        }
+
         if (session != null && session.isActive) {
           await _resumeSession(session);
         } else {
           // Session ended or invalid, clean up
+          // Only clear if we are SURE it's gone (e.g. online check failed and no cache)
+          // For now, if we can't recover it, we have to clear it to unblock the user
+          _logger.w('Could not recover session $activeSessionId. Clearing local state.');
           await _preferences.clearActiveSession();
+          await _preferences.clearCachedSession();
         }
       }
 
       // Resume tracking if it was running
       await TrackingService.resumeIfNeeded();
+
+      // CHECK FOR PENDING UPLOADS (Offline data recovery)
+      // Even if we are not in an active session, we might have pending data to sync
+      final pendingStop = _preferences.getPendingSessionEnd();
+      final pendingLocCount = await _locationRepository.getPendingCount();
+      
+      if (pendingStop != null || pendingLocCount > 0) {
+        _logger.i('Found pending offline data (Stop: ${pendingStop != null}, Locs: $pendingLocCount). Starting sync timer.');
+        _startSyncTimer();
+      }
 
       _logger.i('Session manager initialized');
     } catch (e) {
@@ -220,7 +259,8 @@ class SessionManager {
       _backendSessionReady = false;
 
       // Step 0: Check for existing active session (PREVENT DUPLICATES)
-      final existingSessionId = await _preferences.getActiveSessionId();
+      // A. Check local persistence first
+      var existingSessionId = await _preferences.getActiveSessionId();
       if (existingSessionId != null) {
         _logger.w('Cannot start new session: Already have active session $existingSessionId');
         _updateState(_state.copyWith(
@@ -228,6 +268,29 @@ class SessionManager {
           errorMessage: 'You already have an active session running. Please end it first.',
         ));
         return false;
+      }
+
+      // B. Check server (Strict Mode)
+      // This safeguards against cases where local data was cleared but server has a running session
+      try {
+        final serverSession = await _sessionRepository.getActiveSession();
+        if (serverSession != null) {
+           _logger.w('Found existing session on server: ${serverSession.id}');
+           
+           // Auto-recover this session instead of erroring?
+           // The user experience is better if we just "find" it.
+           // However, startSession() expects to START a NEW one. 
+           // Let's return false with a specific message.
+           
+           _updateState(_state.copyWith(
+             status: ManagerSessionStatus.error,
+             errorMessage: 'Found an active session on the server. Please restart the app to sync.',
+           ));
+           return false;
+        }
+      } catch (e) {
+        _logger.w('Failed to check server for active session (offline?): $e');
+        // If offline, we proceed based on local check (which passed)
       }
 
       // Step 1: Check permissions
@@ -300,6 +363,9 @@ class SessionManager {
         longitude: position.longitude,
         address: address,
       );
+
+      // Cache session immediately for offline recovery
+      await _preferences.setCachedSessionJson(jsonEncode(session.toJson()));
 
       final success = await _sessionRepository.startSession(
         session,
@@ -402,7 +468,9 @@ class SessionManager {
 
       // Step 2: Stop timers
       _durationTimer?.cancel();
-      _syncTimer?.cancel();
+      // NOTE: We do NOT cancel the sync timer here anymore, because we might need it
+      // to sync the final stop event if we are offline.
+      // _syncTimer?.cancel(); 
 
       // Step 3: Get final location
       final position = await TrackingService.getCurrentLocation();
@@ -422,17 +490,48 @@ class SessionManager {
       // Step 4: Sync any remaining points
       await _syncPendingLocations();
 
+      final endTime = DateTime.now(); // Capture exact end time
+
       // Step 5: End session in backend
-      final endedSession = await _sessionRepository.stopSession(
-        _state.session!.id,
-        position?.latitude,
-        position?.longitude,
-        totalDistanceKm,
-        address: address,
-      );
+      SessionModel? endedSession;
+      try {
+        endedSession = await _sessionRepository.stopSession(
+          _state.session!.id,
+          position?.latitude,
+          position?.longitude,
+          totalDistanceKm,
+          address: address,
+          endTime: endTime,
+        );
+      } catch (e) {
+        _logger.w('Failed to stop session online: $e');
+      }
+
+      // Step 5b: Offline Fallback
+      if (endedSession == null) {
+        _logger.i('OFFLINE: Queueing session stop locally');
+        await _preferences.setPendingSessionEnd(
+          sessionId: _state.session!.id,
+          endTime: endTime,
+          latitude: position?.latitude ?? _state.lastLocation?.latitude,
+          longitude: position?.longitude ?? _state.lastLocation?.longitude,
+          address: address,
+          totalKm: totalDistanceKm,
+        );
+        
+        // Ensure sync timer is running to retry this later
+        _startSyncTimer();
+        
+        // Create artificial ended session for UI
+        endedSession = _state.session!.copyWith(
+          endTime: endTime,
+          totalKm: totalDistanceKm,
+          status: SessionStatus.completed,
+        );
+      }
 
       // Timeline marker: end point
-      final endMarkerTime = endedSession?.endTime ?? DateTime.now();
+      final endMarkerTime = endTime;
       final endLat = position?.latitude ?? _state.lastLocation?.latitude;
       final endLng = position?.longitude ?? _state.lastLocation?.longitude;
       if (endLat != null && endLng != null) {
@@ -446,10 +545,11 @@ class SessionManager {
 
       // Calculate final duration from start time to ensure accuracy
       final startTime = _preferences.getSessionStartTime() ?? _state.session?.startTime ?? DateTime.now();
-      final finalDuration = DateTime.now().difference(startTime);
+      final finalDuration = endTime.difference(startTime);
 
       // Step 6: Clear local session
       await _preferences.clearActiveSession();
+      await _preferences.clearCachedSession(); // Clear offline cache
       _backendSessionReady = false;
 
       // Step 7: Stop notification scheduler with summary
@@ -663,6 +763,33 @@ class SessionManager {
     }
   }
 
+  Future<void> _syncPendingSessionStop() async {
+    final pending = _preferences.getPendingSessionEnd();
+    if (pending == null) return;
+    
+    // Only sync if we have "internet" (aka backend access)
+    // We can infer this if `_backendSessionReady` OR if we can fetch user id
+    if (await _sessionRepository.resolveCurrentUserId() == null) return;
+
+    try {
+      _logger.i('Syncing pending session stop for ${pending['sessionId']}');
+      
+      await _sessionRepository.stopSession(
+        pending['sessionId'],
+        pending['latitude'],
+        pending['longitude'],
+        pending['totalKm'],
+        address: pending['address'],
+        endTime: DateTime.parse(pending['endTime']),
+      );
+      
+      await _preferences.clearPendingSessionEnd();
+      _logger.i('Pending session stop synced successfully');
+    } catch (e) {
+      _logger.e('Failed to sync pending session stop: $e');
+    }
+  }
+
   // ============================================================
   // TIMERS
   // ============================================================
@@ -680,8 +807,21 @@ class SessionManager {
 
   void _startSyncTimer() {
     _syncTimer?.cancel();
-    _syncTimer = Timer.periodic(_syncInterval, (_) {
-      _syncPendingLocations();
+    _syncTimer = Timer.periodic(_syncInterval, (_) async {
+      await _syncPendingSessionStop(); // Sync pending Stop commands
+      await _syncPendingLocations();   // Sync location points
+      
+      // Self-cancellation: If no active session AND no pending data, stop the timer
+      if (_state.status != ManagerSessionStatus.active) {
+        final pendingStop = _preferences.getPendingSessionEnd();
+        final pendingLocCount = await _locationRepository.getPendingCount();
+        
+        if (pendingStop == null && pendingLocCount == 0) {
+          _logger.i('Sync timer auto-cancelled (No session, no pending data)');
+          _syncTimer?.cancel();
+          _syncTimer = null;
+        }
+      }
     });
   }
 

@@ -4,11 +4,13 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/timeline_engine.dart';
-import '../../data/models/location_point_model.dart';
+import '../../core/utils/date_utils.dart';
+import '../../data/models/session_model.dart';
 import '../../data/repositories/location_repository.dart';
+import '../../data/repositories/session_repository.dart';
 
 /// My Timeline Screen - Employee's personal timeline view
-/// Shows stops (5+ min), moves, and daily stats
+/// Shows sessions with expandable details containing stops, moves, and stats
 class MyTimelineScreen extends StatefulWidget {
   const MyTimelineScreen({super.key});
 
@@ -16,16 +18,33 @@ class MyTimelineScreen extends StatefulWidget {
   State<MyTimelineScreen> createState() => _MyTimelineScreenState();
 }
 
+/// Session with its timeline events grouped together
+class SessionTimelineGroup {
+  final SessionModel session;
+  final List<TimelineEvent> events;
+  final double totalDistanceKm;
+  final int stopsCount;
+
+  SessionTimelineGroup({
+    required this.session,
+    required this.events,
+    required this.totalDistanceKm,
+    required this.stopsCount,
+  });
+}
+
 class _MyTimelineScreenState extends State<MyTimelineScreen> {
   final LocationRepository _locationRepo = GetIt.I<LocationRepository>();
+  final SessionRepository _sessionRepo = GetIt.I<SessionRepository>();
   
   DateTime _selectedDate = DateTime.now();
   bool _isLoading = true;
   String? _error;
   
-  List<TimelineEvent> _events = [];
+  List<SessionTimelineGroup> _sessionGroups = [];
+  Set<String> _expandedSessions = {};
   double _totalDistanceKm = 0;
-  int _stopsCount = 0;
+  int _totalStopsCount = 0;
   Duration _totalDuration = Duration.zero;
 
   @override
@@ -41,57 +60,82 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
     });
 
     try {
-      // Get location points for the selected date
-      // Use IST day boundaries but query in UTC (TIMESTAMPTZ-safe)
-      const istOffset = Duration(hours: 5, minutes: 30);
-      final startOfDayUtc = DateTime.utc(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-      ).subtract(istOffset);
-      final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
+      // Get sessions for the selected date
+      final isToday = DateTimeUtils.isToday(_selectedDate);
+      final sessions = isToday
+          ? await _sessionRepo.getTodaySessions()
+          : await _sessionRepo.getSessionHistory(limit: 50);
+      
+      // Filter sessions for selected date (for non-today)
+      final filteredSessions = sessions.where((s) {
+        return DateTimeUtils.isSameDay(s.startTime, _selectedDate);
+      }).toList();
 
-      final points = await _locationRepo.getLocationPointsForDateRange(
-        startOfDayUtc,
-        endOfDayUtc,
-      );
+      // Sort by start time (earliest first)
+      filteredSessions.sort((a, b) => a.startTime.compareTo(b.startTime));
 
-      if (points.isEmpty) {
+      if (filteredSessions.isEmpty) {
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
-          _events = [];
+          _sessionGroups = [];
           _totalDistanceKm = 0;
-          _stopsCount = 0;
+          _totalStopsCount = 0;
           _totalDuration = Duration.zero;
         });
         return;
       }
 
-      // Generate timeline events using the engine
-      final events = TimelineEngine.generateTimeline(points);
+      // Load timeline events for each session
+      final groups = <SessionTimelineGroup>[];
+      double dayTotalDistance = 0;
+      int dayTotalStops = 0;
+      Duration dayTotalDuration = Duration.zero;
 
-      // Calculate stats
-      double totalDistance = 0;
-      int stops = 0;
-      int totalSeconds = 0;
-
-      for (final event in events) {
-        totalSeconds += event.durationSec;
-        if (event.type == TimelineEventType.stop) {
-          stops++;
-        } else {
-          totalDistance += event.distanceKm ?? 0;
+      for (final session in filteredSessions) {
+        // Get location points for this session
+        final points = await _locationRepo.getSessionLocations(session.id);
+        
+        // Generate timeline events
+        final events = points.isEmpty ? <TimelineEvent>[] : TimelineEngine.generateTimeline(points);
+        
+        // Calculate session stats
+        double sessionDistance = 0;
+        int sessionStops = 0;
+        
+        for (final event in events) {
+          if (event.type == TimelineEventType.stop) {
+            sessionStops++;
+          } else if (event.type == TimelineEventType.move) {
+            sessionDistance += event.distanceKm ?? 0;
+          }
         }
+
+        // Use session's stored totalKm if available (calculated by database trigger)
+        final actualDistance = session.totalKm > 0 ? session.totalKm : sessionDistance;
+
+        groups.add(SessionTimelineGroup(
+          session: session,
+          events: events,
+          totalDistanceKm: actualDistance,
+          stopsCount: sessionStops,
+        ));
+
+        dayTotalDistance += actualDistance;
+        dayTotalStops += sessionStops;
+        dayTotalDuration += session.duration;
       }
 
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _events = events;
-        _totalDistanceKm = totalDistance;
-        _stopsCount = stops;
-        _totalDuration = Duration(seconds: totalSeconds);
+        _sessionGroups = groups;
+        _totalDistanceKm = dayTotalDistance;
+        _totalStopsCount = dayTotalStops;
+        _totalDuration = dayTotalDuration;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _error = 'Failed to load timeline: $e';
@@ -111,6 +155,16 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
       setState(() => _selectedDate = picked);
       _loadTimelineData();
     }
+  }
+
+  void _toggleSession(String sessionId) {
+    setState(() {
+      if (_expandedSessions.contains(sessionId)) {
+        _expandedSessions.remove(sessionId);
+      } else {
+        _expandedSessions.add(sessionId);
+      }
+    });
   }
 
   void _openInMaps(double lat, double lng) async {
@@ -150,9 +204,9 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                   ? const Center(child: CircularProgressIndicator())
                   : _error != null
                       ? _buildErrorView()
-                      : _events.isEmpty
+                      : _sessionGroups.isEmpty
                           ? _buildEmptyView()
-                          : _buildTimelineList(),
+                          : _buildSessionList(),
             ),
           ],
         ),
@@ -161,8 +215,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
   }
 
   Widget _buildDateSelector() {
-    final dateFormat = DateFormat('EEEE, MMMM d, yyyy');
-    final isToday = DateUtils.isSameDay(_selectedDate, DateTime.now());
+    final isToday = DateTimeUtils.isToday(_selectedDate);
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -184,7 +237,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
               child: Column(
                 children: [
                   Text(
-                    isToday ? 'Today' : dateFormat.format(_selectedDate),
+                    isToday ? 'Today' : DateFormat('EEEE, MMMM d, yyyy').format(DateTimeUtils.toIST(_selectedDate)),
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -202,7 +255,7 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right),
-            onPressed: DateUtils.isSameDay(_selectedDate, DateTime.now())
+            onPressed: DateTimeUtils.isToday(_selectedDate)
                 ? null
                 : () {
                     setState(() {
@@ -232,17 +285,17 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: _buildStatCard(
-              icon: Icons.location_on,
-              value: '$_stopsCount',
-              label: 'Stops',
-              color: Colors.orange,
+              icon: Icons.work_history,
+              value: '${_sessionGroups.length}',
+              label: 'Sessions',
+              color: Colors.purple,
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: _buildStatCard(
               icon: Icons.timer,
-              value: _formatDuration(_totalDuration),
+              value: DateTimeUtils.formatDuration(_totalDuration),
               label: 'Duration',
               color: Colors.green,
             ),
@@ -288,15 +341,192 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
     );
   }
 
-  Widget _buildTimelineList() {
+  Widget _buildSessionList() {
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      itemCount: _events.length,
-      itemBuilder: (context, index) => _buildTimelineItem(_events[index], index),
+      itemCount: _sessionGroups.length,
+      itemBuilder: (context, index) => _buildSessionCard(_sessionGroups[index], index + 1),
     );
   }
 
-  Widget _buildTimelineItem(TimelineEvent event, int index) {
+  Widget _buildSessionCard(SessionTimelineGroup group, int sessionNumber) {
+    final isExpanded = _expandedSessions.contains(group.session.id);
+    final startTimeStr = DateTimeUtils.formatTime(session.startTime);
+    final endTimeStr = session.endTime != null 
+        ? DateTimeUtils.formatTime(session.endTime!) 
+        : 'Active';
+    final isActive = session.status == SessionStatus.active;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: isActive ? Colors.green.withOpacity(0.5) : Colors.grey.withOpacity(0.2),
+          width: isActive ? 2 : 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          // Session header (always visible, clickable to expand)
+          InkWell(
+            onTap: () => _toggleSession(session.id),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // Session number badge
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: isActive 
+                            ? [Colors.green, Colors.green.shade700]
+                            : [Theme.of(context).colorScheme.primary, Theme.of(context).colorScheme.secondary],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '#$sessionNumber',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  
+                  // Session info
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Session #$sessionNumber',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            if (isActive) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'ACTIVE',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '$startTimeStr - $endTimeStr',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(Icons.route, size: 14, color: Colors.blue.shade700),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${group.totalDistanceKm.toStringAsFixed(1)} km',
+                              style: TextStyle(
+                                color: Colors.blue.shade700,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Icon(Icons.timer, size: 14, color: Colors.green.shade700),
+                            const SizedBox(width: 4),
+                            Text(
+                              DateTimeUtils.formatDuration(session.duration),
+                              style: TextStyle(
+                                color: Colors.green.shade700,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            if (group.stopsCount > 0) ...[
+                              const SizedBox(width: 16),
+                              Icon(Icons.location_on, size: 14, color: Colors.orange.shade700),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${group.stopsCount} stops',
+                                style: TextStyle(
+                                  color: Colors.orange.shade700,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  // Expand/collapse indicator
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
+          // Expanded content - timeline events
+          if (isExpanded) ...[
+            const Divider(height: 1),
+            if (group.events.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'No detailed location data available for this session',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              )
+            else
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                itemCount: group.events.length,
+                itemBuilder: (context, index) => _buildTimelineEventItem(group.events[index]),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimelineEventItem(TimelineEvent event) {
     final isStart = event.type == TimelineEventType.start;
     final isEnd = event.type == TimelineEventType.end;
     final isStop = event.type == TimelineEventType.stop;
@@ -325,44 +555,35 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
             : isStop
                 ? Icons.location_on
                 : Icons.directions_car;
-    final timeFormat = DateFormat('h:mm a');
+
+    // Time format removed, using DateTimeUtils
     
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: color.withOpacity(0.3),
-          width: 2,
-        ),
-      ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(8),
         onTap: (isStart || isEnd || isStop) && event.centerLat != null && event.centerLng != null
             ? () => _openInMaps(event.centerLat!, event.centerLng!)
             : null,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withOpacity(0.2)),
+          ),
           child: Row(
             children: [
-              // Icon
               Container(
-                width: 48,
-                height: 48,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(
-                  icon,
-                  color: color,
-                  size: 24,
-                ),
+                child: Icon(icon, color: color, size: 20),
               ),
-              const SizedBox(width: 16),
-              
-              // Content
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -372,51 +593,54 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                         Text(
                           title,
                           style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
                             color: color,
                           ),
                         ),
                         const Spacer(),
                         Text(
                           event.durationFormatted,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
-                      '${timeFormat.format(event.startTime)} - ${timeFormat.format(event.endTime)}',
+                      '${DateTimeUtils.formatTime(event.startTime)} - ${DateTimeUtils.formatTime(event.endTime)}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                        fontSize: 12,
                       ),
                     ),
-                    if (isMove && event.distanceKm != null) ...[
-                      const SizedBox(height: 4),
+                    if (isMove && event.distanceKm != null && event.distanceKm! > 0) ...[
+                      const SizedBox(height: 2),
                       Text(
-                        '${event.distanceKm!.toStringAsFixed(1)} km traveled',
+                        '${event.distanceKm!.toStringAsFixed(2)} km traveled',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.blue,
                           fontWeight: FontWeight.w500,
+                          fontSize: 12,
                         ),
                       ),
                     ],
-                    if (isStart || isEnd || isStop) ...[
-                      const SizedBox(height: 4),
+                    if ((isStart || isEnd || isStop) && event.centerLat != null) ...[
+                      const SizedBox(height: 2),
                       Row(
                         children: [
                           Icon(
                             Icons.open_in_new,
-                            size: 14,
+                            size: 12,
                             color: Theme.of(context).colorScheme.primary,
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            'Tap to view on map',
+                            'View on map',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Theme.of(context).colorScheme.primary,
+                              fontSize: 11,
                             ),
                           ),
                         ],
@@ -446,14 +670,14 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'No Activity',
+              'No Sessions',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'No location data recorded for this day',
+              'No work sessions recorded for this day',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
               ),
@@ -501,12 +725,5 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
     );
   }
 
-  String _formatDuration(Duration duration) {
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes % 60;
-    if (hours > 0) {
-      return '${hours}h ${minutes}m';
-    }
-    return '${minutes}m';
-  }
+  // _formatDuration removed in favor of DateTimeUtils.formatDuration
 }

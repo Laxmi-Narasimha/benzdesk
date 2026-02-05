@@ -162,14 +162,14 @@ export function CardFooter({ className, ...props }: CardFooterProps) {
 // Metric Card
 // ============================================================================
 
-export interface MetricCardProps {
+export interface MetricCardProps extends React.HTMLAttributes<HTMLDivElement> {
     title: string;
     value: string | number;
     change?: number;
     changeLabel?: string;
     icon?: React.ReactNode;
     trend?: 'up' | 'down' | 'neutral';
-    className?: string;
+    hover?: boolean;
 }
 
 export function MetricCard({
@@ -180,9 +180,10 @@ export function MetricCard({
     icon,
     trend = 'neutral',
     className,
+    ...props
 }: MetricCardProps) {
     return (
-        <Card className={clsx('', className)}>
+        <Card className={clsx('', className)} {...props}>
             <div className="flex items-start justify-between">
                 <div>
                     <p className="text-sm font-medium text-dark-400 uppercase tracking-wider">
