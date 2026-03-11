@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:logger/logger.dart';
 
 import '../../models/employee_model.dart';
 import '../../models/session_model.dart';
@@ -9,8 +10,12 @@ import '../../models/expense_model.dart';
 /// Remote data source for Supabase operations
 class SupabaseDataSource {
   final SupabaseClient _client;
+  final Logger _logger = Logger();
 
   SupabaseDataSource(this._client);
+
+  /// Get the current logged in user's ID
+  String? get currentUserId => _client.auth.currentUser?.id;
 
   // ============================================================
   // EMPLOYEES
@@ -45,7 +50,7 @@ class SupabaseDataSource {
         .from('employees')
         .update({
           'device_token': token,
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', employeeId);
   }
@@ -110,17 +115,19 @@ class SupabaseDataSource {
     double? endLatitude,
     double? endLongitude,
     String? endAddress,
+    DateTime? endTime,
   }) async {
+    final effectiveEndTime = (endTime ?? DateTime.now()).toUtc();
     final response = await _client
         .from('shift_sessions')
         .update({
-          'end_time': DateTime.now().toIso8601String(),
+          'end_time': effectiveEndTime.toIso8601String(),
           'end_latitude': endLatitude,
           'end_longitude': endLongitude,
           'end_address': endAddress,
           'total_km': totalKm,
           'status': 'completed',
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', sessionId)
         .select()
@@ -135,7 +142,7 @@ class SupabaseDataSource {
         .from('shift_sessions')
         .update({
           'total_km': totalKm,
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', sessionId);
   }
@@ -168,9 +175,29 @@ class SupabaseDataSource {
         .from('shift_sessions')
         .select()
         .eq('employee_id', employeeId)
-        .gte('start_time', startOfDay.toIso8601String())
-        .lt('start_time', endOfDay.toIso8601String())
+        .gte('start_time', startOfDay.toUtc().toIso8601String())
+        .lt('start_time', endOfDay.toUtc().toIso8601String())
         .order('start_time', ascending: false);
+
+    return (response as List)
+        .map((e) => SessionModel.fromJson(e))
+        .toList();
+  }
+
+  /// Get sessions for a specific date for employee
+  Future<List<SessionModel>> getSessionsForDate(String employeeId, DateTime date) async {
+    // Use IST day boundaries but query in UTC (TIMESTAMPTZ-safe)
+    const istOffset = Duration(hours: 5, minutes: 30);
+    final startOfDayUtc = DateTime.utc(date.year, date.month, date.day).subtract(istOffset);
+    final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
+
+    final response = await _client
+        .from('shift_sessions')
+        .select()
+        .eq('employee_id', employeeId)
+        .gte('start_time', startOfDayUtc.toIso8601String())
+        .lt('start_time', endOfDayUtc.toIso8601String())
+        .order('start_time', ascending: true);
 
     return (response as List)
         .map((e) => SessionModel.fromJson(e))
@@ -187,8 +214,8 @@ class SupabaseDataSource {
         .from('shift_sessions')
         .select()
         .eq('employee_id', employeeId)
-        .gte('start_time', startOfMonth.toIso8601String())
-        .lt('start_time', endOfMonth.toIso8601String());
+        .gte('start_time', startOfMonth.toUtc().toIso8601String())
+        .lt('start_time', endOfMonth.toUtc().toIso8601String());
 
     return (response as List)
         .map((e) => SessionModel.fromJson(e))
@@ -203,8 +230,68 @@ class SupabaseDataSource {
   Future<void> uploadLocationBatch(List<LocationPointModel> points) async {
     if (points.isEmpty) return;
 
-    final data = points.map((p) => p.toJson()).toList();
-    await _client.from('location_points').upsert(data, onConflict: 'hash');
+    try {
+      final data = points.map((p) => p.toJson()).toList();
+      
+      // Enhanced diagnostic logging
+      _logger.i('SYNC DIAGNOSTIC: Attempting upload of ${points.length} points...');
+      _logger.d('SYNC: Session: ${points.first.sessionId}');
+      _logger.d('SYNC: Employee: ${points.first.employeeId}');
+      _logger.d('SYNC: Auth UID: $currentUserId');
+      _logger.d('SYNC: Hash: ${data.first['hash']}');
+      
+      // Verify employee_id matches auth.uid (RLS requirement)
+      if (points.first.employeeId != currentUserId) {
+        _logger.e('SYNC WARNING: employee_id (${points.first.employeeId}) != auth.uid ($currentUserId)');
+      }
+      
+      try {
+        // Try upsert first (idempotent)
+        await _client.from('location_points').upsert(data, onConflict: 'hash');
+        _logger.i('SYNC: Successfully uploaded ${points.length} points via upsert');
+      } catch (upsertError) {
+        _logger.w('SYNC: Upsert failed, trying insert: $upsertError');
+        
+        // Fallback to insert (handles case where hash column issue)
+        try {
+          await _client.from('location_points').insert(data);
+          _logger.i('SYNC: Successfully uploaded ${points.length} points via insert');
+        } catch (insertError) {
+          // If insert fails due to schema drift (missing columns), retry with a sanitized payload.
+          final msg = insertError.toString().toLowerCase();
+          if (msg.contains('column') &&
+              (msg.contains('hash') || msg.contains('provider') || msg.contains('address'))) {
+            _logger.w('SYNC: Insert failed due to missing columns. Retrying with sanitized payload...');
+
+            final sanitized = data.map((row) {
+              final copy = Map<String, dynamic>.from(row);
+              copy.remove('hash');
+              copy.remove('provider');
+              copy.remove('address');
+              return copy;
+            }).toList();
+
+            try {
+              await _client.from('location_points').insert(sanitized);
+              _logger.i('SYNC: Successfully uploaded ${points.length} points via sanitized insert');
+              return;
+            } catch (sanitizedError) {
+              _logger.e('SYNC CRITICAL: Sanitized insert also failed: $sanitizedError');
+              rethrow;
+            }
+          }
+
+          // If insert also fails, it's likely an RLS issue
+          _logger.e('SYNC CRITICAL: Insert also failed: $insertError');
+          _logger.e('SYNC: This is likely an RLS policy issue. Check employee_id matches auth.uid.');
+          rethrow;
+        }
+      }
+    } catch (e) {
+      _logger.e('SYNC FAILED: $e');
+      _logger.e('SYNC: Points employee_id: ${points.first.employeeId}, auth.uid: $currentUserId');
+      rethrow;
+    }
   }
 
   /// Get location points for a session
@@ -231,8 +318,8 @@ class SupabaseDataSource {
         .from('location_points')
         .select()
         .eq('employee_id', employeeId)
-        .gte('recorded_at', startDate.toIso8601String())
-        .lt('recorded_at', endDate.toIso8601String())
+        .gte('recorded_at', startDate.toUtc().toIso8601String())
+        .lt('recorded_at', endDate.toUtc().toIso8601String())
         .order('recorded_at');
 
     return (response as List)
@@ -293,7 +380,7 @@ class SupabaseDataSource {
       'anchor_latitude': null,
       'anchor_longitude': null,
       'anchor_time': null,
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     });
   }
 
@@ -376,13 +463,25 @@ class SupabaseDataSource {
 
   /// Create expense claim
   Future<ExpenseClaimModel> createExpenseClaim(ExpenseClaimModel claim) async {
-    final response = await _client
-        .from('expense_claims')
-        .insert(claim.toJson())
-        .select()
-        .single();
+    try {
+      _logger.d('Creating expense claim...');
+      _logger.d('Claim employee_id: ${claim.employeeId}');
+      _logger.d('Current auth.uid: $currentUserId');
+      
+      final response = await _client
+          .from('expense_claims')
+          .insert(claim.toJson())
+          .select()
+          .single();
 
-    return ExpenseClaimModel.fromJson(response);
+      _logger.i('Expense claim created successfully: ${response['id']}');
+      return ExpenseClaimModel.fromJson(response);
+    } catch (e) {
+      _logger.e('CRITICAL: Failed to create expense claim: $e');
+      _logger.e('Claim employee_id: ${claim.employeeId}');
+      _logger.e('Current auth.uid: $currentUserId');
+      rethrow;
+    }
   }
 
   /// Get expense claim by ID
@@ -398,23 +497,129 @@ class SupabaseDataSource {
   }
 
   /// Get expense claims for employee
-  Future<List<ExpenseClaimModel>> getEmployeeExpenses({
+  Future<List<Map<String, dynamic>>> getEmployeeExpenses({
     required String employeeId,
     int limit = 20,
     int offset = 0,
   }) async {
-    final response = await _client
-        .from('expense_claims')
-        .select('*, expense_items(*)')
-        .eq('employee_id', employeeId)
-        .order('claim_date', ascending: false)
-        .range(offset, offset + limit - 1);
-
-    return (response as List)
-        .map((e) => ExpenseClaimModel.fromJson(e))
-        .toList();
+    try {
+      final response = await _client
+          .from('expense_claims')
+          .select('*, employees!expense_claims_employee_id_fkey(name, phone), expense_items(*)')
+          .eq('employee_id', employeeId)
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+      
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      _logger.e('Error fetching employee expenses: $e');
+      rethrow;
+    }
   }
 
+  /// Create a timeline event (start/stop/move/end)
+  ///
+  /// Returns the inserted event id when available.
+  Future<String?> createTimelineEvent({
+    required String employeeId,
+    required String sessionId,
+    required String eventType, // 'start', 'stop', 'move', 'end'
+    required DateTime startTime,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      final startUtc = startTime.toUtc();
+      final endUtc = endTime.toUtc();
+      final data = {
+        'employee_id': employeeId,
+        'session_id': sessionId,
+        // day/duration are enforced in DB trigger, but keep for compatibility
+        'day': startUtc.toIso8601String().split('T')[0],
+        'event_type': eventType,
+        'start_time': startUtc.toIso8601String(),
+        'end_time': endUtc.toIso8601String(),
+        'duration_sec': durationSec ?? endUtc.difference(startUtc).inSeconds,
+        // Markers/stops use center; move segments may use start/end lat/lng (optional)
+        'center_lat': latitude,
+        'center_lng': longitude,
+        'address': address,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      };
+
+      final response = await _client
+          .from('timeline_events')
+          .insert(data)
+          .select('id')
+          .maybeSingle();
+      final id = response?['id'] as String?;
+      _logger.i('Created timeline event: $eventType');
+      return id;
+    } catch (e) {
+      _logger.e('Error creating timeline event: $e');
+      // Don't rethrow to avoid disrupting tracking flow
+      return null;
+    }
+  }
+
+  /// Update an existing timeline event (used to extend an in-progress stop)
+  Future<void> updateTimelineEvent({
+    required String id,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      final endUtc = endTime.toUtc();
+      final data = {
+        'end_time': endUtc.toIso8601String(),
+        'duration_sec': durationSec,
+        'center_lat': latitude,
+        'center_lng': longitude,
+        'address': address,
+      }..removeWhere((_, v) => v == null);
+
+      await _client.from('timeline_events').update(data).eq('id', id);
+      _logger.d('Updated timeline event: $id');
+    } catch (e) {
+      _logger.e('Error updating timeline event: $e');
+    }
+  }
+
+  /// Create an alert
+  Future<void> createAlert({
+    required String employeeId,
+    String? sessionId,
+    required String alertType,
+    required String message,
+    required String severity,
+    double? latitude,
+    double? longitude,
+  }) async {
+    try {
+      final data = {
+        'employee_id': employeeId,
+        'session_id': sessionId,
+        'alert_type': alertType,
+        'message': message,
+        'severity': severity,
+        'start_time': DateTime.now().toUtc().toIso8601String(),
+        'lat': latitude,
+        'lng': longitude,
+        'is_open': true,
+      };
+
+      await _client.from('mobitraq_alerts').insert(data);
+      _logger.i('Created alert: $alertType');
+    } catch (e) {
+      _logger.e('Error creating alert: $e');
+    }
+  }
   /// Add expense item
   Future<ExpenseItemModel> addExpenseItem(ExpenseItemModel item) async {
     final response = await _client
@@ -443,7 +648,7 @@ class SupabaseDataSource {
         .from('expense_claims')
         .update({
           'total_amount': total,
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', claimId);
   }
@@ -454,8 +659,8 @@ class SupabaseDataSource {
         .from('expense_claims')
         .update({
           'status': 'submitted',
-          'submitted_at': DateTime.now().toIso8601String(),
-          'updated_at': DateTime.now().toIso8601String(),
+          'submitted_at': DateTime.now().toUtc().toIso8601String(),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', claimId)
         .select()

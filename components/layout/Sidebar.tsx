@@ -28,6 +28,7 @@ import {
     Receipt,
     Route,
     Bell,
+    PackageSearch,
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { RoleBadge } from '@/components/ui';
@@ -68,6 +69,12 @@ const requesterNav: NavItem[] = [
         icon: <BookOpen className="w-5 h-5" />,
         roles: ['requester'],
     },
+    {
+        href: '/app/products',
+        label: 'Product Guide',
+        icon: <PackageSearch className="w-5 h-5" />,
+        roles: ['requester'],
+    },
 ];
 
 const adminNav: NavItem[] = [
@@ -90,10 +97,10 @@ const adminNav: NavItem[] = [
         roles: ['accounts_admin', 'director'],
     },
     {
-        href: '/director/mobitraq',
-        label: 'BenzMobiTraq Admin',
-        icon: <Smartphone className="w-5 h-5" />,
-        roles: ['accounts_admin', 'director'],  // Directors and Admins can access MobiTraq
+        href: '/app/products',
+        label: 'Product Guide',
+        icon: <PackageSearch className="w-5 h-5" />,
+        roles: ['accounts_admin', 'director'],
     },
 ];
 
@@ -124,37 +131,31 @@ const directorNav: NavItem[] = [
     },
 ];
 
-// BenzMobiTraq navigation (field tracking app)
+// BenzMobiTraq navigation — simplified
 const mobitraqNav: NavItem[] = [
     {
         href: '/director/mobitraq',
-        label: 'Field Overview',
+        label: "Today's Activity",
         icon: <Smartphone className="w-5 h-5" />,
-        roles: ['director'],
+        roles: ['accounts_admin', 'director'],
     },
     {
-        href: '/director/mobitraq/sessions',
-        label: 'Employee Sessions',
+        href: '/director/mobitraq/trips',
+        label: 'Trips',
         icon: <MapPin className="w-5 h-5" />,
-        roles: ['director'],
-    },
-    {
-        href: '/director/mobitraq/timeline',
-        label: 'Timeline & Map',
-        icon: <Route className="w-5 h-5" />,
-        roles: ['director'],
-    },
-    {
-        href: '/director/mobitraq/alerts',
-        label: 'Alerts',
-        icon: <Bell className="w-5 h-5" />,
-        roles: ['director'],
+        roles: ['accounts_admin', 'director'],
     },
     {
         href: '/director/mobitraq/expenses',
         label: 'Field Expenses',
         icon: <Receipt className="w-5 h-5" />,
-        roles: ['director'],
+        roles: ['accounts_admin', 'director'],
+    },
+    {
+        href: '/director/mobitraq/employees',
+        label: 'Employees',
+        icon: <Users className="w-5 h-5" />,
+        roles: ['accounts_admin', 'director'],
     },
 ];
 
@@ -233,11 +234,11 @@ export function Sidebar() {
 
         if (isAdmin || isDirector) {
             items.push(...adminNav);
+            items.push(...mobitraqNav);
         }
 
         if (isDirector) {
             items.push(...directorNav);
-            // MobiTraq link is now in adminNav under 'BenzMobiTraq Admin'
         }
 
         return items;

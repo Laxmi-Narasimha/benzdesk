@@ -26,7 +26,7 @@ interface Alert {
     employee_id: string;
     session_id: string | null;
     alert_type: 'stuck' | 'no_signal' | 'mock_location' | 'clock_drift';
-    severity: 'info' | 'warning' | 'critical';
+    severity: 'info' | 'warn' | 'critical';
     message: string;
     is_open: boolean;
     created_at: string;
@@ -34,7 +34,7 @@ interface Alert {
     acknowledged_by: string | null;
     employee?: {
         name: string;
-        email: string;
+        phone: string;
     };
 }
 
@@ -47,7 +47,7 @@ const alertTypeConfig = {
 
 const severityConfig = {
     info: { color: 'bg-blue-500', label: 'Info' },
-    warning: { color: 'bg-amber-500', label: 'Warning' },
+    warn: { color: 'bg-amber-500', label: 'Warning' },
     critical: { color: 'bg-red-500', label: 'Critical' },
 };
 
@@ -89,7 +89,7 @@ export default function AlertsPage() {
                 *,
                 employee:employees!employee_id (
                     name,
-                    email
+                    phone
                 )
             `)
             .order('created_at', { ascending: false })
@@ -236,8 +236,8 @@ export default function AlertsPage() {
                                 key={f}
                                 onClick={() => setFilter(f as typeof filter)}
                                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter === f
-                                        ? 'bg-primary-600 text-white'
-                                        : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
+                                    ? 'bg-primary-600 text-white'
+                                    : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
                                     }`}
                             >
                                 {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -278,15 +278,15 @@ export default function AlertsPage() {
 
                 {filteredAlerts.map((alert) => {
                     const config = alertTypeConfig[alert.alert_type] || alertTypeConfig.stuck;
-                    const severity = severityConfig[alert.severity] || severityConfig.warning;
+                    const severity = severityConfig[alert.severity] || severityConfig.warn;
                     const Icon = config.icon;
 
                     return (
                         <Card
                             key={alert.id}
                             className={`p-4 ${alert.is_open
-                                    ? 'border-l-4 border-' + severity.color.replace('bg-', '')
-                                    : 'opacity-60'
+                                ? 'border-l-4 border-' + severity.color.replace('bg-', '')
+                                : 'opacity-60'
                                 }`}
                         >
                             <div className="flex items-start gap-4">

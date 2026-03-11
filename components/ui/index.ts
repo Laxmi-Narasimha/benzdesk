@@ -33,6 +33,9 @@ export {
 export type { SpinnerProps, PageLoaderProps, SkeletonProps } from './Loading';
 
 export { ToastProvider, useToast } from './Toast';
+export * from './Drawer';
+export * from './StatCard';
+export * from './TimelineItem';
 export type { Toast, ToastType } from './Toast';
 
 export { DateTimePicker } from './DateTimePicker';

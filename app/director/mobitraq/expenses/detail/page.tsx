@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { PageLoader, Card } from '@/components/ui';
@@ -29,7 +29,7 @@ interface ExpenseClaim {
     submitted_at: string;
     employee?: {
         name: string;
-        email: string;
+        phone: string;
     };
 }
 
@@ -51,15 +51,9 @@ function ExpenseDetailContent() {
     const [commentBody, setCommentBody] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    useEffect(() => {
-        if (claimId) {
-            loadData();
-        } else {
-            setLoading(false);
-        }
-    }, [claimId]);
+    const loadData = useCallback(async () => {
+        if (!claimId) return;
 
-    async function loadData() {
         setLoading(true);
         const supabase = getSupabaseClient();
 
@@ -69,7 +63,7 @@ function ExpenseDetailContent() {
                 *,
                 employee:employees!employee_id (
                     name,
-                    email
+                    phone
                 )
             `)
             .eq('id', claimId)
@@ -87,7 +81,44 @@ function ExpenseDetailContent() {
 
         setComments(commentsData || []);
         setLoading(false);
-    }
+    }, [claimId]);
+
+    useEffect(() => {
+        if (claimId) {
+            void loadData();
+        } else {
+            setLoading(false);
+        }
+    }, [claimId, loadData]);
+
+    // Real-time comments subscription
+    useEffect(() => {
+        if (!claimId) return;
+
+        const supabase = getSupabaseClient();
+        const channelName = `comments_${claimId}`;
+
+        const channel = supabase
+            .channel(channelName)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'expense_claim_comments',
+                    filter: `claim_id=eq.${claimId}`
+                },
+                (payload) => {
+                    const newComment = payload.new as Comment;
+                    setComments(prev => [...prev, newComment]);
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [claimId]);
 
     async function handleSendComment() {
         if (!commentBody.trim()) return;
@@ -199,19 +230,19 @@ function ExpenseDetailContent() {
                     <div>
                         <p className="text-dark-500 text-sm">Status</p>
                         <p className={`text-lg font-semibold ${claim.status === 'approved' ? 'text-green-400' :
-                                claim.status === 'rejected' ? 'text-red-400' :
-                                    'text-amber-400'
+                            claim.status === 'rejected' ? 'text-red-400' :
+                                'text-amber-400'
                             }`}>
                             {claim.status}
                         </p>
                     </div>
                     <div>
                         <p className="text-dark-500 text-sm">Submitted</p>
-                        <p className="text-dark-200">{new Date(claim.submitted_at).toLocaleDateString()}</p>
+                        <p className="text-dark-200">{new Date(claim.submitted_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
                     </div>
                     <div>
                         <p className="text-dark-500 text-sm">Employee</p>
-                        <p className="text-dark-200">{claim.employee?.email}</p>
+                        <p className="text-dark-200">{claim.employee?.phone || claim.employee?.name || 'Unknown'}</p>
                     </div>
                 </div>
             </Card>
@@ -233,7 +264,7 @@ function ExpenseDetailContent() {
                                 <User className="w-4 h-4 text-dark-500" />
                                 <span className="text-sm text-dark-400">{comment.author_id}</span>
                                 <span className="text-xs text-dark-600">
-                                    {new Date(comment.created_at).toLocaleString()}
+                                    {new Date(comment.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                                 </span>
                             </div>
                             <p className="text-dark-200">{comment.body}</p>

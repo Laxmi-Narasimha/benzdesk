@@ -42,7 +42,7 @@ class NotificationService {
     'benzmobitraq_tracking',
     'Location Tracking',
     description: 'Background location tracking notification',
-    importance: Importance.low,
+    importance: Importance.defaultImportance, // Higher to prevent dismissal
     playSound: false,
     showBadge: false,
   );
@@ -249,10 +249,13 @@ class NotificationService {
       _trackingChannel.id,
       _trackingChannel.name,
       channelDescription: _trackingChannel.description,
-      importance: Importance.low,
-      priority: Priority.low,
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
       ongoing: true,
       autoCancel: false,
+      category: AndroidNotificationCategory.service,
+      usesChronometer: true,
+      when: DateTime.now().millisecondsSinceEpoch,
       icon: '@mipmap/ic_launcher',
     );
 

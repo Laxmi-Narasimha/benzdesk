@@ -366,6 +366,30 @@ export async function signInWithPassword(
 }
 
 /**
+ * Sign in with Google Oauth
+ */
+export async function signInWithGoogle(redirectTo?: string): Promise<{ error: Error | null }> {
+    const client = getSupabaseClient();
+    
+    // Default redirect to origin if none provided
+    const redirectUrl = redirectTo 
+        ? `${window.location.origin}${redirectTo}`
+        : `${window.location.origin}/`;
+
+    const { error } = await client.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+            redirectTo: redirectUrl,
+            queryParams: {
+                prompt: 'select_account',
+            }
+        },
+    });
+
+    return { error };
+}
+
+/**
  * Update user password (after first OTP login)
  */
 export async function updatePassword(
@@ -403,15 +427,16 @@ export async function getUserRole(userId: string): Promise<{
         .from('user_roles')
         .select('role, is_active')
         .eq('user_id', userId)
-        .single();
+        .maybeSingle();
 
     if (error) {
         return { role: null, is_active: false, error };
     }
 
+    // Default to 'requester' (standard employee) if they have no specific user_role metadata entry yet (e.g., they enrolled via BenzMobiTraq)
     return {
-        role: data?.role ?? null,
-        is_active: data?.is_active ?? false,
+        role: data?.role ?? 'requester',
+        is_active: data?.is_active ?? true,
         error: null,
     };
 }

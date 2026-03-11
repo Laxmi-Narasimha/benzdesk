@@ -187,6 +187,31 @@ class LocationRepository {
     }
   }
 
+  /// Get location points for the current user within a date range
+  /// Used by MyTimelineScreen for the logged-in employee's timeline
+  Future<List<LocationPointModel>> getLocationPointsForDateRange(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    try {
+      // Get current user ID from Supabase auth
+      final userId = _dataSource.currentUserId;
+      if (userId == null) {
+        _logger.e('No logged in user');
+        return [];
+      }
+      
+      return await _dataSource.getPointsByEmployeeAndDateRange(
+        employeeId: userId,
+        startDate: startDate,
+        endDate: endDate,
+      );
+    } catch (e) {
+      _logger.e('Error getting points for date range: $e');
+      return [];
+    }
+  }
+
 
   // ============================================================
   // EMPLOYEE STATE
@@ -216,6 +241,88 @@ class LocationRepository {
   }
 
   // ============================================================
+  // EVENTS & ALERTS
+  // ============================================================
+
+  /// Create a timeline event (e.g. stop)
+  Future<String?> createTimelineEvent({
+    required String employeeId,
+    required String sessionId,
+    required String eventType, // 'start', 'stop', 'move', 'end'
+    required DateTime startTime,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      return await _dataSource.createTimelineEvent(
+        employeeId: employeeId,
+        sessionId: sessionId,
+        eventType: eventType,
+        startTime: startTime,
+        endTime: endTime,
+        durationSec: durationSec,
+        latitude: latitude,
+        longitude: longitude,
+        address: address,
+      );
+    } catch (e) {
+      _logger.e('Error creating timeline event: $e');
+      return null;
+    }
+  }
+
+  /// Update an existing timeline event (used to extend an in-progress stop)
+  Future<void> updateTimelineEvent({
+    required String id,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+  }) async {
+    try {
+      await _dataSource.updateTimelineEvent(
+        id: id,
+        endTime: endTime,
+        durationSec: durationSec,
+        latitude: latitude,
+        longitude: longitude,
+        address: address,
+      );
+    } catch (e) {
+      _logger.e('Error updating timeline event: $e');
+    }
+  }
+
+  /// Create an alert
+  Future<void> createAlert({
+    required String employeeId,
+    String? sessionId,
+    required String alertType,
+    required String message,
+    required String severity,
+    double? latitude,
+    double? longitude,
+  }) async {
+    try {
+      await _dataSource.createAlert(
+        employeeId: employeeId,
+        sessionId: sessionId,
+        alertType: alertType,
+        message: message,
+        severity: severity,
+        latitude: latitude,
+        longitude: longitude,
+      );
+    } catch (e) {
+      _logger.e('Error creating alert: $e');
+    }
+  }
+
+  // ============================================================
   // CLEANUP
   // ============================================================
 
@@ -238,6 +345,18 @@ class LocationRepository {
       _logger.i('Local queue cleared');
     } catch (e) {
       _logger.e('Error clearing local queue: $e');
+    }
+  }
+
+  /// Delete all local queued points for a given session.
+  ///
+  /// Used for rollback when a session fails to start on the server.
+  Future<void> deleteLocalSessionPoints(String sessionId) async {
+    try {
+      await _localQueue.deleteBySession(sessionId);
+      _logger.i('Cleared local queued points for session: $sessionId');
+    } catch (e) {
+      _logger.e('Error clearing local session points: $e');
     }
   }
 }

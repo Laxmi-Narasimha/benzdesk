@@ -1,8 +1,11 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:logger/logger.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:convert';
 
 import '../datasources/local/preferences_local.dart';
 import '../models/employee_model.dart';
+
 
 /// Repository for handling authentication operations
 class AuthRepository {
@@ -51,7 +54,9 @@ class AuthRepository {
       // Store auth data locally
       await _preferences.setLoggedIn(true);
       await _preferences.setUserId(response.user!.id);
+      await _preferences.setUserId(response.user!.id);
       await _preferences.setUserRole(employee.role);
+      await _preferences.setCachedEmployeeProfileJson(jsonEncode(employee.toJson())); // Cache for offline
 
       _logger.i('Sign in successful for: ${response.user!.email}');
       return AuthResult.success(employee);
@@ -87,6 +92,64 @@ class AuthRepository {
     }
   }
 
+  bool _isGoogleSignInInitialized = false;
+
+  /// Sign in with Google
+  Future<AuthResult> signInWithGoogle() async {
+    try {
+      _logger.i('Attempting Google Sign-In');
+      
+      final googleSignIn = GoogleSignIn(
+        // IMPORTANT: The Web Client ID from Google Cloud Console MUST be placed here 
+        // for Supabase authentication to work on Android.
+        // E.g., '1234567890-abcdefg.apps.googleusercontent.com'
+        serverClientId: '337286635510-7bttaefo3askvou30kq0em84hh8l0gnp.apps.googleusercontent.com', 
+      );
+      
+      if (!_isGoogleSignInInitialized) {
+        // ... handled implicitly now, or we can just authenticate directly.
+      }
+      
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+          _logger.w('Google Sign-In canceled by user');
+          return AuthResult.failure('Sign-in canceled');
+      }
+      
+      final googleAuth = await googleUser.authentication;
+      final idToken = googleAuth.idToken;
+
+      if (idToken == null) {
+        _logger.e('Google Sign-In failed: Missing ID token');
+        return AuthResult.failure('Failed to get authentication tokens from Google');
+      }
+
+      final response = await _supabaseClient.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+      );
+
+      if (response.user == null) {
+        return AuthResult.failure('Authentication with Supabase failed');
+      }
+
+      // Fetch or auto-create employee profile based on existing triggers
+      final employee = await _getOrCreateEmployeeProfile(response.user!);
+
+      // Store auth data locally
+      await _preferences.setLoggedIn(true);
+      await _preferences.setUserId(response.user!.id);
+      await _preferences.setUserRole(employee.role);
+      await _preferences.setCachedEmployeeProfileJson(jsonEncode(employee.toJson())); // Cache for offline
+
+      _logger.i('Google Sign-In successful for: ${response.user!.email}');
+      return AuthResult.success(employee);
+    } catch (e) {
+      _logger.e('Unexpected error during Google Sign-In: $e');
+      return AuthResult.failure('An unexpected error occurred during Google Sign-In');
+    }
+  }
+
   /// Sign up with email and password
   Future<AuthResult> signUp({
     required String email,
@@ -118,9 +181,12 @@ class AuthRepository {
         updatedAt: now,
       );
 
+      final Map<String, dynamic> data = employee.toJson();
+      data['mobitraq_enrolled_at'] = now.toUtc().toIso8601String();
+
       await _supabaseClient
           .from('employees')
-          .insert(employee.toJson());
+          .insert(data);
 
       // Store auth data locally
       await _preferences.setLoggedIn(true);
@@ -182,12 +248,28 @@ class AuthRepository {
       // Update local preferences
       await _preferences.setLoggedIn(true);
       await _preferences.setUserId(employee.id);
+      await _preferences.setUserId(employee.id);
       await _preferences.setUserRole(employee.role);
+      await _preferences.setCachedEmployeeProfileJson(jsonEncode(employee.toJson())); // Cache for offline
 
       _logger.i('Auth status check: User authenticated as ${employee.name}');
       return employee;
     } catch (e) {
       _logger.e('Error checking auth status: $e');
+      _logger.e('Error checking auth status: $e');
+      
+      // OFFLINE FALLBACK
+      final cachedJson = _preferences.cachedEmployeeProfileJson;
+      if (cachedJson != null) {
+        try {
+          final cachedEmployee = EmployeeModel.fromJson(jsonDecode(cachedJson));
+          _logger.w('OFFLINE MODE: Using cached employee profile');
+          return cachedEmployee;
+        } catch (parseError) {
+          _logger.e('Error parsing cached profile: $parseError');
+        }
+      }
+      
       return null;
     }
   }
@@ -222,7 +304,7 @@ class AuthRepository {
 
     try {
       final updates = <String, dynamic>{
-        'updated_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
       if (name != null) updates['name'] = name;
@@ -252,7 +334,7 @@ class AuthRepository {
           .from('employees')
           .update({
             'device_token': token,
-            'updated_at': DateTime.now().toIso8601String(),
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
           })
           .eq('id', userId);
 
@@ -296,6 +378,11 @@ class AuthRepository {
         .maybeSingle();
 
     if (response != null) {
+      if (response['mobitraq_enrolled_at'] == null) {
+        await _supabaseClient.from('employees').update({
+          'mobitraq_enrolled_at': DateTime.now().toUtc().toIso8601String()
+        }).eq('id', user.id);
+      }
       return EmployeeModel.fromJson(response);
     }
 
@@ -310,9 +397,12 @@ class AuthRepository {
       updatedAt: now,
     );
 
+    final Map<String, dynamic> data = employee.toJson();
+    data['mobitraq_enrolled_at'] = now.toUtc().toIso8601String();
+
     await _supabaseClient
         .from('employees')
-        .insert(employee.toJson());
+        .insert(data);
 
     return employee;
   }

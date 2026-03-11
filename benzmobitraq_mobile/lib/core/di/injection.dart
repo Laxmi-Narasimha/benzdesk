@@ -10,6 +10,7 @@ import '../../data/repositories/session_repository.dart';
 import '../../data/repositories/location_repository.dart';
 import '../../data/repositories/notification_repository.dart';
 import '../../data/repositories/expense_repository.dart';
+import '../../data/repositories/trip_repository.dart';
 import '../../services/notification_service.dart';
 import '../../services/permission_service.dart';
 import '../../services/session_manager.dart';
@@ -107,6 +108,12 @@ Future<void> configureDependencies() async {
     ),
   );
 
+  getIt.registerLazySingleton<TripRepository>(
+    () => TripRepository(
+      supabaseClient: getIt<SupabaseClient>(),
+    ),
+  );
+
   // ============================================================
   // SERVICES
   // ============================================================
@@ -132,6 +139,7 @@ Future<void> configureDependencies() async {
       preferences: getIt<PreferencesLocal>(),
       permissionService: getIt<PermissionService>(),
       notificationScheduler: getIt<NotificationScheduler>(),
+      expenseRepository: getIt<ExpenseRepository>(),
     ),
   );
 

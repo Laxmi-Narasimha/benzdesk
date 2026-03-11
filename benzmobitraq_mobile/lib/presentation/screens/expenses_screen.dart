@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/router/app_router.dart';
+import '../../core/utils/date_utils.dart';
 import '../../data/models/simple_expense_model.dart';
 import '../blocs/expense/expense_bloc.dart';
 import '../widgets/app_bottom_nav_bar.dart';
@@ -145,10 +146,8 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
   }
 
   Widget _buildExpenseList(List<ExpenseModel> expenses) {
-    // Group by status
-    final pending = expenses.where((e) => e.status == 'pending' || e.status == 'submitted' || e.status == 'draft').toList();
-    final approved = expenses.where((e) => e.status == 'approved').toList();
-    final rejected = expenses.where((e) => e.status == 'rejected').toList();
+    final sortedExpenses = List<ExpenseModel>.from(expenses)
+      ..sort((a, b) => (b.createdAt ?? DateTime.now()).compareTo(a.createdAt ?? DateTime.now()));
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -163,60 +162,17 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
             ),
           ),
           
-          if (pending.isNotEmpty) ...[
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              sliver: SliverToBoxAdapter(
-                child: _buildSectionHeader('Pending', pending.length, Colors.orange),
-              ),
-            ),
+          if (sortedExpenses.isNotEmpty) ...[
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildExpenseCard(pending[index]),
-                  childCount: pending.length,
+                  (context, index) => _buildExpenseCard(sortedExpenses[index]),
+                  childCount: sortedExpenses.length,
                 ),
               ),
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 16)),
-          ],
-
-          if (approved.isNotEmpty) ...[
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              sliver: SliverToBoxAdapter(
-                child: _buildSectionHeader('Approved', approved.length, Colors.green),
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildExpenseCard(approved[index]),
-                  childCount: approved.length,
-                ),
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 16)),
-          ],
-
-          if (rejected.isNotEmpty) ...[
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              sliver: SliverToBoxAdapter(
-                child: _buildSectionHeader('Rejected', rejected.length, Colors.red),
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildExpenseCard(rejected[index]),
-                  childCount: rejected.length,
-                ),
-              ),
-            ),
           ],
 
           const SliverToBoxAdapter(child: SizedBox(height: 80)), // FAB space
@@ -226,14 +182,14 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
   }
 
   Widget _buildSummaryRow(List<ExpenseModel> expenses) {
-    double pendingAmount = 0;
-    double approvedAmount = 0;
+    int openCount = 0;
+    int closedCount = 0;
     
     for (final e in expenses) {
-      if (e.status == 'pending' || e.status == 'submitted' || e.status == 'draft') {
-        pendingAmount += e.amount;
-      } else if (e.status == 'approved') {
-        approvedAmount += e.amount;
+      if (['closed', 'resolved', 'paid', 'approved', 'rejected', 'cancelled'].contains(e.status?.toLowerCase())) {
+        closedCount++;
+      } else {
+        openCount++;
       }
     }
 
@@ -241,8 +197,8 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       children: [
         Expanded(
           child: _buildSummaryCard(
-            'Pending',
-            '₹${pendingAmount.toStringAsFixed(0)}',
+            'Open Requests',
+            openCount.toString(),
             Icons.hourglass_empty,
             Colors.orange,
           ),
@@ -250,8 +206,8 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
         const SizedBox(width: 12),
         Expanded(
           child: _buildSummaryCard(
-            'Approved',
-            '₹${approvedAmount.toStringAsFixed(0)}',
+            'Closed Requests',
+            closedCount.toString(),
             Icons.check_circle_outline,
             Colors.green,
           ),
@@ -342,129 +298,178 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
   Widget _buildExpenseCard(ExpenseModel expense) {
     Color statusColor;
     IconData statusIcon;
+    String statusText;
     
-    switch (expense.status) {
+    String rawStatus = expense.status?.toLowerCase() ?? 'pending';
+    
+    switch (rawStatus) {
       case 'approved':
-        statusColor = Colors.green;
-        statusIcon = Icons.check_circle;
+      case 'closed':
+      case 'resolved':
+      case 'paid':
+        statusColor = const Color(0xFF10B981); // Emerald 500
+        statusIcon = Icons.check_circle_rounded;
         break;
       case 'rejected':
-        statusColor = Colors.red;
-        statusIcon = Icons.cancel;
+      case 'cancelled':
+        statusColor = const Color(0xFFEF4444); // Red 500
+        statusIcon = Icons.cancel_rounded;
+        break;
+      case 'pending_closure':
+        statusColor = const Color(0xFF8B5CF6); // Purple 500
+        statusIcon = Icons.info_outline_rounded;
+        break;
+      case 'in_progress':
+      case 'in_review':
+        statusColor = const Color(0xFF3B82F6); // Blue 500
+        statusIcon = Icons.sync_rounded;
         break;
       default:
-        statusColor = Colors.orange;
-        statusIcon = Icons.hourglass_empty;
+        statusColor = const Color(0xFFF59E0B); // Amber 500
+        statusIcon = Icons.hourglass_empty_rounded;
     }
+
+    statusText = expense.status?.toUpperCase().replaceAll('_', ' ') ?? 'PENDING';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
-        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
+        border: Border(
+          left: BorderSide(color: statusColor, width: 4),
+          top: BorderSide(color: Colors.grey.shade100, width: 1),
+          right: BorderSide(color: Colors.grey.shade100, width: 1),
+          bottom: BorderSide(color: Colors.grey.shade100, width: 1),
+        ),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: () {
-            AppRouter.navigateTo(
+             AppRouter.navigateTo(
               context, 
               AppRouter.expenseDetail,
-              arguments: ExpenseDetailArguments(claimId: expense.id!),
+              arguments: ExpenseDetailArguments(
+                claimId: expense.id!,
+                category: expense.category,
+                amount: expense.amount,
+                status: expense.status,
+              ),
             );
           },
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Category icon
+                // Category icon with glass background
                 Container(
-                  width: 48,
-                  height: 48,
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                    color: Colors.grey.shade50,
                     borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade100),
                   ),
-                  child: Center(
-                    child: Icon(
-                      _getCategoryIcon(expense.category),
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                  child: Icon(
+                    _getCategoryIcon(expense.category),
+                    color: Colors.grey.shade700,
+                    size: 24,
                   ),
                 ),
                 const SizedBox(width: 16),
                 
-                // Details
+                // Details Column
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        expense.category,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              expense.category.toUpperCase().replaceAll('_', ' '),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15,
+                                color: Colors.black87,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            '₹${expense.amount.toStringAsFixed(0)}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        DateFormat('MMM d, yyyy').format(expense.expenseDate),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                        ),
-                      ),
                       if (expense.description?.isNotEmpty == true) ...[
-                        const SizedBox(height: 2),
                         Text(
                           expense.description!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
                           ),
                         ),
+                        const SizedBox(height: 8),
                       ],
+                      Row(
+                        children: [
+                          Icon(Icons.calendar_today_rounded, size: 14, color: Colors.grey.shade400),
+                          const SizedBox(width: 4),
+                          Text(
+                            DateTimeUtils.formatDate(expense.expenseDate),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade500,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const Spacer(),
+                          // Status Badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(statusIcon, size: 12, color: statusColor),
+                                const SizedBox(width: 4),
+                                Text(
+                                  statusText,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: statusColor,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
-                ),
-                
-                // Amount and status
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '₹${expense.amount.toStringAsFixed(0)}',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(statusIcon, size: 14, color: statusColor),
-                        const SizedBox(width: 4),
-                        Text(
-                          expense.status.toUpperCase(),
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: statusColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
                 ),
               ],
             ),

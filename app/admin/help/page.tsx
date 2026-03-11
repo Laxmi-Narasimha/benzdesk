@@ -35,20 +35,20 @@ export default function AdminHelpPage() {
 
                 <Card className="p-6 space-y-4">
                     <p className="text-gray-600">
-                        The <strong>Request Queue</strong> is your main workspace. Here's how to use it effectively:
+                        The <strong>Request Queue</strong> is your main workspace. Here&apos;s how to use it effectively:
                     </p>
                     <ul className="list-disc list-inside space-y-3 text-gray-700 ml-2">
                         <li>
-                            <strong>Filters (<Filter className="w-4 h-4 inline" />):</strong> Use the dropdowns to filter by Status (e.g., "Open"), Category (e.g., "Expense"), or Priority.
+                            <strong>Filters (<Filter className="w-4 h-4 inline" />):</strong> Use the dropdowns to filter by Status (e.g., &quot;Open&quot;), Category (e.g., &quot;Expense&quot;), or Priority.
                         </li>
                         <li>
                             <strong>Fresh Start View:</strong> By default, the system shows requests from Jan 14, 2026 onwards. Old requests are hidden but safe in the database.
                         </li>
                         <li>
-                            <strong>Sorting:</strong> Click "Sort by" to organize by Priority (handle Critical first!) or Created Date.
+                            <strong>Sorting:</strong> Click &quot;Sort by&quot; to organize by Priority (handle Critical first!) or Created Date.
                         </li>
                         <li>
-                            <strong>Assigning:</strong> Open a request and click "Take Ownership" or assign it to a colleague if you have Director access.
+                            <strong>Assigning:</strong> Open a request and click &quot;Take Ownership&quot; or assign it to a colleague if you have Director access.
                         </li>
                     </ul>
                 </Card>
@@ -76,7 +76,7 @@ export default function AdminHelpPage() {
                             <p className="text-gray-700 mt-1">
                                 As soon as you see a new request, change status to <strong>In Progress</strong>.
                                 <br />
-                                <span className="text-sm text-gray-500">This tells everyone: "I am working on it!"</span>
+                                <span className="text-sm text-gray-500">This tells everyone: &quot;I am working on it!&quot;</span>
                             </p>
                         </div>
 
@@ -104,11 +104,11 @@ export default function AdminHelpPage() {
                                 </span>
                             </div>
                             <p className="text-red-600 font-bold bg-white p-3 rounded-lg border border-red-100">
-                                ✋ STOP! You cannot click "Closed". Only the Employee can close it.
+                                ✋ STOP! You cannot click &quot;Closed&quot;. Only the Employee can close it.
                             </p>
                             <p className="text-gray-700 mt-2 text-sm">
                                 You set it to <strong>Pending Closure</strong>. This sends a message to the employee:
-                                <em>"I have done my part, please check and close."</em>
+                                <em>&quot;I have done my part, please check and close.&quot;</em>
                             </p>
                         </div>
                     </div>

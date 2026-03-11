@@ -21,7 +21,7 @@ interface Session {
     status: 'active' | 'completed' | 'cancelled';
     employees: {
         name: string;
-        email: string;
+        phone: string;
     } | null;
 }
 
@@ -32,6 +32,9 @@ export default function SessionsPage() {
     const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('week');
     const [currentPage, setCurrentPage] = useState(1);
     const pageSize = 20;
+
+    const getIstDateString = (date: Date = new Date()) =>
+        date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
     useEffect(() => {
         fetchSessions();
@@ -53,7 +56,7 @@ export default function SessionsPage() {
                     status,
                     employees (
                         name,
-                        email
+                        phone
                     )
                 `)
                 .order('start_time', { ascending: false });
@@ -61,8 +64,8 @@ export default function SessionsPage() {
             // Apply date filter
             const now = new Date();
             if (dateFilter === 'today') {
-                const today = now.toISOString().split('T')[0];
-                query = query.gte('start_time', `${today}T00:00:00`);
+                const today = getIstDateString(now);
+                query = query.gte('start_time', `${today}T00:00:00+05:30`);
             } else if (dateFilter === 'week') {
                 const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
                 query = query.gte('start_time', weekAgo.toISOString());
@@ -117,8 +120,8 @@ export default function SessionsPage() {
     const filteredSessions = sessions.filter(session => {
         if (!searchTerm) return true;
         const empName = session.employees?.name?.toLowerCase() || '';
-        const empEmail = session.employees?.email?.toLowerCase() || '';
-        return empName.includes(searchTerm.toLowerCase()) || empEmail.includes(searchTerm.toLowerCase());
+        const empPhone = session.employees?.phone?.toLowerCase() || '';
+        return empName.includes(searchTerm.toLowerCase()) || empPhone.includes(searchTerm.toLowerCase());
     });
 
     // Pagination
@@ -208,7 +211,7 @@ export default function SessionsPage() {
                                                     </div>
                                                     <div>
                                                         <div className="font-medium text-gray-900">{session.employees?.name || 'Unknown'}</div>
-                                                        <div className="text-xs text-gray-500">{session.employees?.email}</div>
+                                                        <div className="text-xs text-gray-500">{session.employees?.phone || ''}</div>
                                                     </div>
                                                 </div>
                                             </td>
@@ -233,10 +236,31 @@ export default function SessionsPage() {
                                             </td>
                                             <td className="px-6 py-4">
                                                 {session.status === 'active' ? (
-                                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                                                        Live
-                                                    </span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                                                            Live
+                                                        </span>
+                                                        <button
+                                                            onClick={async (e) => {
+                                                                e.stopPropagation();
+                                                                if (!confirm('Are you sure you want to force-stop this session? This will mark it as completed immediately.')) return;
+
+                                                                const supabase = getSupabaseClient();
+                                                                const { data, error } = await supabase.rpc('force_end_session', { target_session_id: session.id });
+
+                                                                if (error) {
+                                                                    alert('Failed to stop session: ' + error.message);
+                                                                } else {
+                                                                    fetchSessions();
+                                                                }
+                                                            }}
+                                                            className="px-2 py-0.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition-colors"
+                                                            title="Force Stop Session"
+                                                        >
+                                                            Stop
+                                                        </button>
+                                                    </div>
                                                 ) : session.status === 'completed' ? (
                                                     <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                                                         Completed

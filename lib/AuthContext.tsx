@@ -21,6 +21,7 @@ import {
     signInWithOtp,
     verifyOtp,
     signInWithPassword,
+    signInWithGoogle,
     signOut,
     onAuthStateChange,
 } from './supabaseClient';
@@ -35,6 +36,7 @@ interface AuthContextValue extends AuthState {
     sendOtp: (email: string) => Promise<{ success: boolean; error?: string }>;
     verifyOtpCode: (email: string, token: string) => Promise<{ success: boolean; error?: string }>;
     loginWithPassword: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    loginWithGoogle: (redirectTo?: string) => Promise<{ success: boolean; error?: string }>;
     logout: () => Promise<void>;
 
     // Role checks
@@ -229,6 +231,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return { success: true };
     }, [loadUser]);
 
+    const loginWithGoogle = useCallback(async (redirectTo?: string) => {
+        setState(prev => ({ ...prev, loading: true, error: null }));
+        const { error } = await signInWithGoogle(redirectTo);
+        
+        if (error) {
+            console.error('Google login error:', error);
+            setState(prev => ({
+                ...prev,
+                loading: false,
+                error: error.message,
+            }));
+            return { success: false, error: error.message };
+        }
+        
+        // Browser will redirect to Google, so we intentionally don't clear loading
+        return { success: true };
+    }, []);
+
     const logout = useCallback(async () => {
         setState(prev => ({ ...prev, loading: true }));
         await signOut();
@@ -266,10 +286,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
             sendOtp,
             verifyOtpCode,
             loginWithPassword,
+            loginWithGoogle,
             logout,
             refreshUser,
         }),
-        [state, roleChecks, sendOtp, verifyOtpCode, loginWithPassword, logout, refreshUser]
+        [state, roleChecks, sendOtp, verifyOtpCode, loginWithPassword, loginWithGoogle, logout, refreshUser]
     );
 
     return (

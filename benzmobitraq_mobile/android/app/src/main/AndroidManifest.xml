@@ -71,7 +71,7 @@
             tools:node="replace">
         </service>
         
-        <!-- Boot Receiver - Resume tracking after device restart -->
+        <!-- Boot Receiver - Resume tracking after device restart (DISABLED TO PREVENT FREEZE)
         <receiver
             android:name="id.flutter.flutter_background_service.BootReceiver"
             android:enabled="true"
@@ -81,6 +81,7 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        -->
         
         <!-- Firebase Messaging Service -->
         <service
@@ -101,6 +102,11 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- DISABLE IMPELLER: Known to cause freezes on some devices -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
             
     </application>
     

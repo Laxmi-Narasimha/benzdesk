@@ -3,8 +3,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../data/models/session_model.dart';
+import '../../core/utils/date_utils.dart';
 import '../blocs/session/session_bloc.dart';
+import '../widgets/stats_card.dart';
 import '../widgets/app_bottom_nav_bar.dart';
+import '../widgets/post_session_expense_dialog.dart';
 
 /// Screen showing session history with distance and duration
 class SessionHistoryScreen extends StatefulWidget {
@@ -90,7 +93,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
     final groupedSessions = <String, List<SessionModel>>{};
     
     for (final session in sessions) {
-      final dateKey = DateFormat('yyyy-MM-dd').format(session.startTime);
+      final dateKey = DateTimeUtils.formatIsoDate(session.startTime);
       groupedSessions.putIfAbsent(dateKey, () => []).add(session);
     }
 
@@ -111,10 +114,8 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
 
   Widget _buildDaySection(String dateKey, List<SessionModel> sessions) {
     final date = DateTime.parse(dateKey);
-    final isToday = DateFormat('yyyy-MM-dd').format(DateTime.now()) == dateKey;
-    final isYesterday = DateFormat('yyyy-MM-dd').format(
-      DateTime.now().subtract(const Duration(days: 1))
-    ) == dateKey;
+    final isToday = DateTimeUtils.isToday(date);
+    final isYesterday = DateTimeUtils.isYesterday(date);
 
     String dateLabel;
     if (isToday) {
@@ -122,7 +123,8 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
     } else if (isYesterday) {
       dateLabel = 'Yesterday';
     } else {
-      dateLabel = DateFormat('EEEE, MMM d').format(date);
+      // Custom format not in utils yet, but ensure IST
+      dateLabel = DateFormat('EEEE, MMM d').format(DateTimeUtils.toIST(date));
     }
 
     // Calculate totals for the day
@@ -259,7 +261,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          '${DateFormat('h:mm a').format(session.startTime)} - ${session.endTime != null ? DateFormat('h:mm a').format(session.endTime!) : 'Active'}',
+                          '${DateTimeUtils.formatTime(session.startTime)} - ${session.endTime != null ? DateTimeUtils.formatTime(session.endTime!) : 'Active'}',
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             fontWeight: FontWeight.w500,
                           ),
@@ -345,6 +347,26 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ] else if (session.totalKm > 0.1) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        PostSessionExpenseDialog.showIfNeeded(context, session, session.totalKm);
+                      },
+                      icon: const Icon(Icons.local_gas_station),
+                      label: const Text('Log Fuel Expense'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                        side: BorderSide(color: Theme.of(context).colorScheme.primary),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -491,13 +513,13 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
               // Date
               _buildDetailRow(
                 'Date',
-                DateFormat('EEEE, MMMM d, yyyy').format(session.startTime),
+                DateFormat('EEEE, MMMM d, yyyy').format(DateTimeUtils.toIST(session.startTime)),
               ),
               
               // Time range
               _buildDetailRow(
                 'Time',
-                '${DateFormat('h:mm a').format(session.startTime)} - ${session.endTime != null ? DateFormat('h:mm a').format(session.endTime!) : 'Active'}',
+                '${DateTimeUtils.formatTime(session.startTime)} - ${session.endTime != null ? DateTimeUtils.formatTime(session.endTime!) : 'Active'}',
               ),
               
               // Distance

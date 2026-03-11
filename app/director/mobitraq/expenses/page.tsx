@@ -1,26 +1,40 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import {
     Receipt,
-    Calendar,
     ChevronLeft,
     ChevronRight,
     Search,
-    Filter,
     Check,
     X,
     Clock,
-    FileText,
-    ChevronDown,
-    ChevronUp,
-    Download,
-    Eye,
     AlertTriangle,
-    User,
-    BadgeCheck
+    Eye,
 } from 'lucide-react';
+import {
+    Card,
+    Button,
+    Input,
+    Select,
+    Badge,
+    StatCard
+} from '@/components/ui';
+
+interface ExpenseClaimComment {
+    id: number;
+    claim_id: string;
+    author_id: string;
+    body: string;
+    is_internal: boolean;
+    created_at: string;
+    author: {
+        name: string;
+        role: string;
+    } | null;
+}
 
 interface ExpenseItem {
     id: string;
@@ -43,29 +57,28 @@ interface ExpenseClaim {
     rejection_reason: string | null;
     employees: {
         name: string;
-        email: string;
+        phone: string;
         band: string | null;
     } | null;
     expense_items?: ExpenseItem[];
 }
 
-// Category display mapping
+// Category display mapping — unified 9 categories
 const CATEGORY_INFO: Record<string, { icon: string; label: string }> = {
-    local_conveyance: { icon: '🚗', label: 'Local Conveyance' },
-    fuel: { icon: '⛽', label: 'Fuel' },
-    toll: { icon: '🛣️', label: 'Toll / Parking' },
-    outstation_travel: { icon: '✈️', label: 'Outstation Travel' },
-    food_da: { icon: '🍽️', label: 'Food & DA' },
-    food: { icon: '🍽️', label: 'Food & Meals' },
-    accommodation: { icon: '🏨', label: 'Accommodation' },
+    food_da: { icon: '🍽️', label: 'Food DA' },
+    hotel: { icon: '🏨', label: 'Hotel' },
+    local_travel: { icon: '🚗', label: 'Local Travel' },
+    fuel_car: { icon: '⛽', label: 'Fuel - Car' },
+    fuel_bike: { icon: '🏍️', label: 'Fuel - Bike' },
     laundry: { icon: '👔', label: 'Laundry' },
+    toll: { icon: '🛣️', label: 'Toll/Parking' },
     internet: { icon: '📶', label: 'Internet' },
-    mobile: { icon: '📱', label: 'Mobile' },
-    petty_cash: { icon: '💵', label: 'Petty Cash' },
-    advance_request: { icon: '💳', label: 'Advance Request' },
-    stationary: { icon: '✏️', label: 'Stationary' },
-    medical: { icon: '🏥', label: 'Medical' },
     other: { icon: '📋', label: 'Other' },
+    // Legacy aliases for older data
+    fuel: { icon: '⛽', label: 'Fuel' },
+    food: { icon: '🍽️', label: 'Food & Meals' },
+    accommodation: { icon: '🏨', label: 'Hotel' },
+    local_conveyance: { icon: '🚗', label: 'Local Travel' },
 };
 
 // Band display names
@@ -84,20 +97,30 @@ const BAND_NAMES: Record<string, string> = {
 };
 
 export default function ExpensesPage() {
+    const router = useRouter();
     const [expenses, setExpenses] = useState<ExpenseClaim[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'submitted' | 'in_review' | 'approved' | 'rejected'>('all');
     const [currentPage, setCurrentPage] = useState(1);
-    const [processingId, setProcessingId] = useState<string | null>(null);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
-    const [rejectionReason, setRejectionReason] = useState('');
-    const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
     const pageSize = 15;
 
     useEffect(() => {
         fetchExpenses();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        // Subscribe to real-time updates for live sync
+        const supabase = getSupabaseClient();
+        const channel = supabase
+            .channel('expense_claims_changes_v2')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'expense_claims' },
+                () => fetchExpenses()
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, [statusFilter]);
 
     const fetchExpenses = async () => {
@@ -107,28 +130,9 @@ export default function ExpensesPage() {
             let query = supabase
                 .from('expense_claims')
                 .select(`
-                    id,
-                    employee_id,
-                    total_amount,
-                    status,
-                    notes,
-                    claim_date,
-                    reviewed_at,
-                    created_at,
-                    rejection_reason,
-                    employees (
-                        name,
-                        email,
-                        band
-                    ),
-                    expense_items (
-                        id,
-                        category,
-                        amount,
-                        description,
-                        receipt_url,
-                        exceeds_limit
-                    )
+                    id, employee_id, total_amount, status, notes, claim_date, reviewed_at, created_at, rejection_reason,
+                    employees!employee_id (name, phone, band),
+                    expense_items (id, category, amount, description, exceeds_limit, receipt_url:receipt_path)
                 `)
                 .neq('status', 'draft')
                 .order('created_at', { ascending: false });
@@ -138,10 +142,8 @@ export default function ExpensesPage() {
             }
 
             const { data, error } = await query;
-
             if (error) throw error;
 
-            // Transform data to handle Supabase relation format
             const transformedExpenses: ExpenseClaim[] = (data || []).map((e: any) => ({
                 ...e,
                 employees: Array.isArray(e.employees) ? e.employees[0] : e.employees,
@@ -149,87 +151,22 @@ export default function ExpensesPage() {
             }));
 
             setExpenses(transformedExpenses);
-        } catch (error) {
-            console.error('Error fetching expenses:', error);
+        } catch (error: any) {
+            console.error('Error fetching expenses:', error.message || error);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleApprove = async (id: string) => {
-        setProcessingId(id);
-        try {
-            const supabase = getSupabaseClient();
-            const { error } = await supabase
-                .from('expense_claims')
-                .update({
-                    status: 'approved',
-                    reviewed_at: new Date().toISOString()
-                })
-                .eq('id', id);
-
-            if (error) throw error;
-
-            setExpenses(prev => prev.map(exp =>
-                exp.id === id ? { ...exp, status: 'approved' as const, reviewed_at: new Date().toISOString() } : exp
-            ));
-        } catch (error) {
-            console.error('Error approving expense:', error);
-        } finally {
-            setProcessingId(null);
-        }
-    };
-
-    const handleReject = async (id: string) => {
-        if (!rejectionReason.trim()) {
-            alert('Please provide a rejection reason');
-            return;
-        }
-
-        setProcessingId(id);
-        try {
-            const supabase = getSupabaseClient();
-            const { error } = await supabase
-                .from('expense_claims')
-                .update({
-                    status: 'rejected',
-                    reviewed_at: new Date().toISOString(),
-                    rejection_reason: rejectionReason
-                })
-                .eq('id', id);
-
-            if (error) throw error;
-
-            setExpenses(prev => prev.map(exp =>
-                exp.id === id ? {
-                    ...exp,
-                    status: 'rejected' as const,
-                    reviewed_at: new Date().toISOString(),
-                    rejection_reason: rejectionReason
-                } : exp
-            ));
-            setShowRejectModal(null);
-            setRejectionReason('');
-        } catch (error) {
-            console.error('Error rejecting expense:', error);
-        } finally {
-            setProcessingId(null);
-        }
-    };
-
     const formatDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString('en-IN', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
+            day: '2-digit', month: 'short', year: 'numeric'
         });
     };
 
     const formatCurrency = (amount: number) => {
         return new Intl.NumberFormat('en-IN', {
-            style: 'currency',
-            currency: 'INR',
-            maximumFractionDigits: 0,
+            style: 'currency', currency: 'INR', maximumFractionDigits: 0
         }).format(amount);
     };
 
@@ -237,27 +174,26 @@ export default function ExpensesPage() {
         return CATEGORY_INFO[category] || { icon: '📋', label: category };
     };
 
-    const getBandName = (band: string | null | undefined) => {
-        if (!band) return 'Executive';
-        return BAND_NAMES[band] || band;
+    const getStatusBadge = (status: string) => {
+        switch (status) {
+            case 'submitted': return <Badge color="yellow" dot>Pending Review</Badge>;
+            case 'in_review': return <Badge color="blue" dot>In Review</Badge>;
+            case 'approved': return <Badge color="green" dot>Approved</Badge>;
+            case 'rejected': return <Badge color="red" dot>Rejected</Badge>;
+            default: return <Badge color="gray">{status}</Badge>;
+        }
     };
 
     // Filter by search term
     const filteredExpenses = expenses.filter(expense => {
         if (!searchTerm) return true;
         const empName = expense.employees?.name?.toLowerCase() || '';
-        const empEmail = expense.employees?.email?.toLowerCase() || '';
-        const notes = expense.notes?.toLowerCase() || '';
-        return empName.includes(searchTerm.toLowerCase()) ||
-            empEmail.includes(searchTerm.toLowerCase()) ||
-            notes.includes(searchTerm.toLowerCase());
+        return empName.includes(searchTerm.toLowerCase());
     });
 
-    // Calculate stats
+    // Stats
     const stats = {
         pending: expenses.filter(e => e.status === 'submitted' || e.status === 'in_review').length,
-        pendingAmount: expenses.filter(e => e.status === 'submitted' || e.status === 'in_review').reduce((sum, e) => sum + e.total_amount, 0),
-        approved: expenses.filter(e => e.status === 'approved').length,
         approvedAmount: expenses.filter(e => e.status === 'approved').reduce((sum, e) => sum + e.total_amount, 0),
         rejected: expenses.filter(e => e.status === 'rejected').length,
         exceedsLimit: expenses.filter(e => e.expense_items?.some(i => i.exceeds_limit)).length,
@@ -265,10 +201,7 @@ export default function ExpensesPage() {
 
     // Pagination
     const totalPages = Math.ceil(filteredExpenses.length / pageSize);
-    const paginatedExpenses = filteredExpenses.slice(
-        (currentPage - 1) * pageSize,
-        currentPage * pageSize
-    );
+    const paginatedExpenses = filteredExpenses.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
     if (isLoading) {
         return (
@@ -280,342 +213,166 @@ export default function ExpensesPage() {
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div>
-                <h1 className="text-2xl font-bold text-gray-900">Field Expense Approval</h1>
-                <p className="text-gray-500">Review and approve expense claims from field employees</p>
+            {/* Header Area */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Field Expenses</h1>
+                    <p className="text-gray-500 dark:text-gray-400">Manage and approve reimbursement claims</p>
+                </div>
             </div>
 
-            {/* Stats Cards */}
+            {/* Stats Overview Using New StatCards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                    <div className="flex items-center gap-3">
-                        <Clock className="w-8 h-8 text-yellow-600" />
-                        <div>
-                            <p className="text-sm text-yellow-700">Pending Review</p>
-                            <p className="text-xl font-bold text-yellow-800">{stats.pending}</p>
-                            <p className="text-xs text-yellow-600">{formatCurrency(stats.pendingAmount)}</p>
-                        </div>
-                    </div>
-                </div>
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                    <div className="flex items-center gap-3">
-                        <Check className="w-8 h-8 text-green-600" />
-                        <div>
-                            <p className="text-sm text-green-700">Approved</p>
-                            <p className="text-xl font-bold text-green-800">{stats.approved}</p>
-                            <p className="text-xs text-green-600">{formatCurrency(stats.approvedAmount)}</p>
-                        </div>
-                    </div>
-                </div>
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                    <div className="flex items-center gap-3">
-                        <X className="w-8 h-8 text-red-600" />
-                        <div>
-                            <p className="text-sm text-red-700">Rejected</p>
-                            <p className="text-xl font-bold text-red-800">{stats.rejected}</p>
-                        </div>
-                    </div>
-                </div>
-                {stats.exceedsLimit > 0 && (
-                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
-                        <div className="flex items-center gap-3">
-                            <AlertTriangle className="w-8 h-8 text-orange-600" />
-                            <div>
-                                <p className="text-sm text-orange-700">Exceeds Limit</p>
-                                <p className="text-xl font-bold text-orange-800">{stats.exceedsLimit}</p>
-                                <p className="text-xs text-orange-600">Needs skip-level approval</p>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                <StatCard
+                    title="Pending Review"
+                    value={stats.pending}
+                    icon={<Clock />}
+                    color="warning"
+                />
+                <StatCard
+                    title="Approved Amount"
+                    value={formatCurrency(stats.approvedAmount)}
+                    icon={<Check />}
+                    color="success"
+                />
+                <StatCard
+                    title="Rejected Claims"
+                    value={stats.rejected}
+                    icon={<X />}
+                    color="danger"
+                />
+                <StatCard
+                    title="Policy Violations"
+                    value={stats.exceedsLimit}
+                    icon={<AlertTriangle />}
+                    color="danger"
+                    trend={{ value: 0, label: 'needs review', direction: 'neutral' }}
+                />
             </div>
 
-            {/* Filters */}
-            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-                <div className="relative w-full sm:w-72">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input
-                        type="text"
-                        placeholder="Search by employee name..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    />
-                </div>
-
-                <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-gray-400" />
-                    <select
-                        value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-                        className="border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    >
-                        <option value="all">All Status</option>
-                        <option value="submitted">Pending Review</option>
-                        <option value="in_review">In Review</option>
-                        <option value="approved">Approved</option>
-                        <option value="rejected">Rejected</option>
-                    </select>
-                </div>
-            </div>
-
-            {/* Expense Claims List */}
-            <div className="space-y-4">
-                {paginatedExpenses.length === 0 ? (
-                    <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-500">
-                        <Receipt className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-                        <p>No expense claims found</p>
+            {/* Main Content Area */}
+            <Card className="min-h-[500px]" padding="none">
+                {/* Filters Bar */}
+                <div className="p-4 border-b border-gray-200 dark:border-dark-700 flex flex-col sm:flex-row gap-4 justify-between items-center bg-gray-50/50 dark:bg-dark-800/50">
+                    <div className="w-full sm:w-72">
+                        <Input
+                            placeholder="Search employee..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            leftIcon={<Search className="w-4 h-4" />}
+                        />
                     </div>
-                ) : (
-                    paginatedExpenses.map((expense) => {
-                        const isExpanded = expandedId === expense.id;
-                        const hasExceedsLimit = expense.expense_items?.some(i => i.exceeds_limit);
-
-                        return (
-                            <div
-                                key={expense.id}
-                                className={`bg-white rounded-xl border transition-all ${hasExceedsLimit
-                                        ? 'border-orange-300 bg-orange-50/30'
-                                        : 'border-gray-200'
-                                    }`}
-                            >
-                                {/* Main Row */}
-                                <div
-                                    className="p-4 cursor-pointer hover:bg-gray-50"
-                                    onClick={() => setExpandedId(isExpanded ? null : expense.id)}
-                                >
-                                    <div className="flex items-center gap-4">
-                                        {/* Employee Info */}
-                                        <div className="flex items-center gap-3 flex-1">
-                                            <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
-                                                <span className="text-primary-600 font-semibold">
-                                                    {expense.employees?.name?.charAt(0).toUpperCase() || '?'}
-                                                </span>
-                                            </div>
-                                            <div>
-                                                <div className="font-medium text-gray-900 flex items-center gap-2">
-                                                    {expense.employees?.name || 'Unknown'}
-                                                    <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">
-                                                        {getBandName(expense.employees?.band)}
-                                                    </span>
-                                                </div>
-                                                <div className="text-xs text-gray-500 flex items-center gap-2">
-                                                    <Calendar className="w-3 h-3" />
-                                                    {formatDate(expense.claim_date)}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Amount */}
-                                        <div className="text-right">
-                                            <div className="font-bold text-lg text-gray-900">
-                                                {formatCurrency(expense.total_amount)}
-                                            </div>
-                                            <div className="text-xs text-gray-500">
-                                                {expense.expense_items?.length || 0} items
-                                            </div>
-                                        </div>
-
-                                        {/* Status Badge */}
-                                        <div>
-                                            {expense.status === 'submitted' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
-                                                    <Clock className="w-3 h-3" />
-                                                    Pending
-                                                </span>
-                                            )}
-                                            {expense.status === 'in_review' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                                                    <Eye className="w-3 h-3" />
-                                                    In Review
-                                                </span>
-                                            )}
-                                            {expense.status === 'approved' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                                                    <Check className="w-3 h-3" />
-                                                    Approved
-                                                </span>
-                                            )}
-                                            {expense.status === 'rejected' && (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                                                    <X className="w-3 h-3" />
-                                                    Rejected
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        {/* Exceeds Limit Warning */}
-                                        {hasExceedsLimit && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-orange-100 text-orange-700">
-                                                <AlertTriangle className="w-3 h-3" />
-                                                Over Limit
-                                            </span>
-                                        )}
-
-                                        {/* Actions */}
-                                        {(expense.status === 'submitted' || expense.status === 'in_review') && (
-                                            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                                                <button
-                                                    onClick={() => handleApprove(expense.id)}
-                                                    disabled={processingId === expense.id}
-                                                    className="p-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 disabled:opacity-50"
-                                                    title="Approve"
-                                                >
-                                                    <Check className="w-5 h-5" />
-                                                </button>
-                                                <button
-                                                    onClick={() => setShowRejectModal(expense.id)}
-                                                    disabled={processingId === expense.id}
-                                                    className="p-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50"
-                                                    title="Reject"
-                                                >
-                                                    <X className="w-5 h-5" />
-                                                </button>
-                                            </div>
-                                        )}
-
-                                        {/* Expand Button */}
-                                        <button className="p-2 text-gray-400 hover:text-gray-600">
-                                            {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Expanded Details */}
-                                {isExpanded && (
-                                    <div className="border-t border-gray-200 p-4 bg-gray-50">
-                                        {/* Notes */}
-                                        {expense.notes && (
-                                            <div className="mb-4 p-3 bg-white rounded-lg border border-gray-200">
-                                                <div className="text-xs text-gray-500 mb-1">Notes</div>
-                                                <div className="text-sm text-gray-700">{expense.notes}</div>
-                                            </div>
-                                        )}
-
-                                        {/* Rejection Reason */}
-                                        {expense.rejection_reason && (
-                                            <div className="mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
-                                                <div className="text-xs text-red-600 mb-1">Rejection Reason</div>
-                                                <div className="text-sm text-red-800">{expense.rejection_reason}</div>
-                                            </div>
-                                        )}
-
-                                        {/* Expense Items */}
-                                        <div className="text-xs text-gray-500 uppercase font-medium mb-2">Expense Items</div>
-                                        <div className="space-y-2">
-                                            {expense.expense_items?.map((item) => {
-                                                const catInfo = getCategoryInfo(item.category);
-                                                return (
-                                                    <div
-                                                        key={item.id}
-                                                        className={`flex items-center gap-4 p-3 bg-white rounded-lg border ${item.exceeds_limit ? 'border-orange-300' : 'border-gray-200'
-                                                            }`}
-                                                    >
-                                                        <span className="text-xl">{catInfo.icon}</span>
-                                                        <div className="flex-1">
-                                                            <div className="font-medium text-gray-900 flex items-center gap-2">
-                                                                {catInfo.label}
-                                                                {item.exceeds_limit && (
-                                                                    <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">
-                                                                        Exceeds Limit
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            {item.description && (
-                                                                <div className="text-xs text-gray-500">{item.description}</div>
-                                                            )}
-                                                        </div>
-                                                        <div className="font-semibold text-gray-900">
-                                                            {formatCurrency(item.amount)}
-                                                        </div>
-                                                        {item.receipt_url && (
-                                                            <a
-                                                                href={item.receipt_url}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg"
-                                                                onClick={e => e.stopPropagation()}
-                                                            >
-                                                                <FileText className="w-4 h-4" />
-                                                            </a>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })
-                )}
-            </div>
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-                <div className="flex items-center justify-between">
-                    <p className="text-sm text-gray-500">
-                        Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredExpenses.length)} of {filteredExpenses.length}
-                    </p>
                     <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                            disabled={currentPage === 1}
-                            className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                        >
-                            <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <span className="text-sm text-gray-600">
+                        <Select
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value as any)}
+                            options={[
+                                { value: 'all', label: 'All Status' },
+                                { value: 'submitted', label: 'Pending' },
+                                { value: 'approved', label: 'Approved' },
+                                { value: 'rejected', label: 'Rejected' },
+                            ]}
+                        />
+                    </div>
+                </div>
+
+                {/* Table View */}
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-gray-50 text-slate-600 uppercase font-semibold border-b border-gray-200">
+                            <tr>
+                                <th className="px-6 py-4 text-xs tracking-wider">Employee</th>
+                                <th className="px-6 py-4 text-xs tracking-wider">Claim Date</th>
+                                <th className="px-6 py-4 text-xs tracking-wider">Items</th>
+                                <th className="px-6 py-4 text-right text-xs tracking-wider">Amount</th>
+                                <th className="px-6 py-4 text-xs tracking-wider">Status</th>
+                                <th className="px-6 py-4 w-10"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {paginatedExpenses.length === 0 ? (
+                                <tr>
+                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                                        <div className="flex flex-col items-center gap-2">
+                                            <Receipt className="w-8 h-8 opacity-40" />
+                                            <p>No claims found matching your filters</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : (
+                                paginatedExpenses.map((expense) => (
+                                    <tr
+                                        key={expense.id}
+                                        onClick={() => router.push(`/director/request?id=${expense.id}`)}
+                                        className="hover:bg-gray-50 cursor-pointer transition-colors group"
+                                    >
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs ring-2 ring-white">
+                                                    {expense.employees?.name?.charAt(0).toUpperCase()}
+                                                </div>
+                                                <div>
+                                                    <div className="font-semibold text-slate-900">{expense.employees?.name}</div>
+                                                    <div className="text-xs text-slate-500 font-medium">{expense.employees?.phone}</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-slate-600 font-medium">
+                                            {formatDate(expense.claim_date)}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-1">
+                                                <Badge variant="subtle" color="gray" size="sm">
+                                                    {expense.expense_items?.length} Items
+                                                </Badge>
+                                                {expense.expense_items?.some(i => i.exceeds_limit) && (
+                                                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-right font-bold text-slate-900">
+                                            {formatCurrency(expense.total_amount)}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            {getStatusBadge(expense.status)}
+                                        </td>
+                                        <td className="px-6 py-4 text-gray-400">
+                                            <Eye className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                    <div className="p-4 border-t border-gray-200 dark:border-dark-700 flex items-center justify-between">
+                        <span className="text-sm text-gray-500">
                             Page {currentPage} of {totalPages}
                         </span>
-                        <button
-                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                            disabled={currentPage === totalPages}
-                            className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                        >
-                            <ChevronRight className="w-4 h-4" />
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Rejection Modal */}
-            {showRejectModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
-                        <h3 className="text-lg font-bold text-gray-900 mb-4">Reject Expense Claim</h3>
-                        <p className="text-sm text-gray-600 mb-4">
-                            Please provide a reason for rejecting this expense claim.
-                        </p>
-                        <textarea
-                            value={rejectionReason}
-                            onChange={(e) => setRejectionReason(e.target.value)}
-                            placeholder="Enter rejection reason..."
-                            className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                            rows={3}
-                        />
-                        <div className="flex gap-3 mt-4">
-                            <button
-                                onClick={() => {
-                                    setShowRejectModal(null);
-                                    setRejectionReason('');
-                                }}
-                                className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50"
+                        <div className="flex gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={currentPage === 1}
+                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                             >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => handleReject(showRejectModal)}
-                                disabled={!rejectionReason.trim() || processingId === showRejectModal}
-                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                                <ChevronLeft className="w-4 h-4" />
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={currentPage === totalPages}
+                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                             >
-                                Reject
-                            </button>
+                                <ChevronRight className="w-4 h-4" />
+                            </Button>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+            </Card>
         </div>
     );
 }

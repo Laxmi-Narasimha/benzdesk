@@ -249,7 +249,7 @@ export function NotificationBell() {
                             </div>
                             <p className="text-sm font-medium text-gray-600">No notifications yet</p>
                             <p className="text-xs text-gray-400 mt-1 max-w-[200px] mx-auto">
-                                You'll be notified when there are updates to your requests
+                                You&apos;ll be notified when there are updates to your requests
                             </p>
                         </div>
                     ) : (
@@ -312,7 +312,7 @@ export function NotificationBell() {
                                             {requestTitle && (
                                                 <p className="text-sm text-gray-700 font-medium truncate">
                                                     <span className="text-gray-400">on </span>
-                                                    "{requestTitle}"
+                                                    &quot;{requestTitle}&quot;
                                                 </p>
                                             )}
 

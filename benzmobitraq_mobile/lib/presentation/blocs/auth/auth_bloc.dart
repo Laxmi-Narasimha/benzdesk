@@ -22,6 +22,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         super(AuthInitial()) {
     on<AuthCheckRequested>(_onAuthCheckRequested);
     on<AuthSignInRequested>(_onSignInRequested);
+    on<AuthGoogleSignInRequested>(_onGoogleSignInRequested);
     on<AuthSignUpRequested>(_onSignUpRequested);
     on<AuthSignOutRequested>(_onSignOutRequested);
     on<AuthProfileUpdateRequested>(_onProfileUpdateRequested);
@@ -96,6 +97,22 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(AuthAuthenticated(result.employee!));
     } else {
       emit(AuthError(result.error ?? 'Sign in failed'));
+    }
+  }
+
+  Future<void> _onGoogleSignInRequested(
+    AuthGoogleSignInRequested event,
+    Emitter<AuthState> emit,
+  ) async {
+    emit(AuthLoading());
+
+    final result = await _authRepository.signInWithGoogle();
+
+    if (result.success && result.employee != null) {
+      await _registerForPushNotifications();
+      emit(AuthAuthenticated(result.employee!));
+    } else {
+      emit(AuthError(result.error ?? 'Google Sign In failed'));
     }
   }
 

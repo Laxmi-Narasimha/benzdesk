@@ -11,6 +11,8 @@ import '../blocs/auth/auth_bloc.dart';
 import '../blocs/session/session_bloc.dart';
 import '../widgets/stats_card.dart';
 import '../widgets/app_bottom_nav_bar.dart';
+import '../widgets/post_session_expense_dialog.dart';
+import '../widgets/monthly_expense_summary.dart';
 import 'settings_screen.dart';
 
 /// Main home screen with session tracking
@@ -21,7 +23,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final PermissionService _permissionService = PermissionService();
   bool _batteryDialogShown = false;
   String? _currentAddress;
@@ -30,12 +32,53 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    // Register lifecycle observer to detect app resume
+    WidgetsBinding.instance.addObserver(this);
     // Load session history
     context.read<SessionBloc>().add(const SessionLoadHistory());
+    // Request permissions immediately on app entry (before user taps anything)
+    _requestEssentialPermissions();
     // Check battery optimization on first load
     _checkBatteryOptimization();
     // Fetch initial location
     _fetchCurrentLocation();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Re-sync with SessionManager when app resumes from background
+      // This ensures UI matches the background tracking state shown in notification
+      context.read<SessionBloc>().add(const SessionInitialize());
+      // Also refresh location
+      _fetchCurrentLocation();
+    }
+  }
+
+  /// Request location and notification permissions immediately on app entry
+  Future<void> _requestEssentialPermissions() async {
+    try {
+      // Request location permissions first
+      final locationResult = await _permissionService.requestLocationPermissions();
+      if (!locationResult.granted) {
+        debugPrint('Location permission not granted: ${locationResult.issue}');
+      }
+      
+      // Request notification permission (returns bool directly)
+      final notificationGranted = await _permissionService.requestNotificationPermission();
+      if (!notificationGranted) {
+        debugPrint('Notification permission not granted');
+      }
+    } catch (e) {
+      debugPrint('Error requesting permissions: $e');
+    }
   }
 
   Future<void> _fetchCurrentLocation() async {
@@ -43,16 +86,36 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isLoadingAddress = true);
     
     try {
-      final position = await TrackingService.getCurrentLocation();
+      // First try to get last known position (fast)
+      Position? position = await Geolocator.getLastKnownPosition();
+      
+      // If no last known, try current position
+      if (position == null) {
+        final permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.always || 
+            permission == LocationPermission.whileInUse) {
+          position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium, // Less aggressive
+          ).timeout(const Duration(seconds: 10), onTimeout: () => throw 'Timeout');
+        }
+      }
+      
       if (position != null && mounted) {
         final address = await GeocodingService.getAddressFromCoordinates(
           position.latitude,
           position.longitude,
         );
-        setState(() => _currentAddress = address);
+        if (mounted) {
+          setState(() => _currentAddress = address);
+        }
+      } else if (mounted) {
+        setState(() => _currentAddress = 'Location unavailable');
       }
     } catch (e) {
       debugPrint('Error fetching location: $e');
+      if (mounted) {
+        setState(() => _currentAddress = 'Location unavailable');
+      }
     } finally {
       if (mounted) setState(() => _isLoadingAddress = false);
     }
@@ -128,7 +191,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onWorkDoneTapped() {
+    final sessionState = context.read<SessionBloc>().state;
+    final distanceKm = sessionState.currentDistanceKm;
+    final currentSession = sessionState.currentSession;
+
     context.read<SessionBloc>().add(const SessionStopRequested());
+
+    // After session stops, prompt for fuel expense if distance > 0
+    if (distanceKm > 0.1 && currentSession != null) {
+      // Small delay to let session complete
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          PostSessionExpenseDialog.showIfNeeded(context, currentSession, distanceKm);
+        }
+      });
+    }
   }
 
   void _handlePermissionRequired(List<PermissionIssue> issues) {
@@ -356,6 +433,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   
                   // Stats Cards
                   _buildStatsSection(context, sessionState),
+                  const SizedBox(height: 20),
+
+                  // Monthly Expense Summary
+                  const MonthlyExpenseSummary(),
                   const SizedBox(height: 20),
                   
                   // Quick Actions
@@ -624,7 +705,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        // First row - Live Location and Settings
+        // First row - Live Location and My Timeline
         Row(
           children: [
             Expanded(
@@ -639,13 +720,10 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: _buildActionCard(
                 context,
-                icon: Icons.settings_outlined,
-                label: 'Settings',
+                icon: Icons.timeline_rounded,
+                label: 'My Timeline',
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                  );
+                  AppRouter.navigateTo(context, AppRouter.myTimeline);
                 },
               ),
             ),
@@ -676,6 +754,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
             ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Third row - Settings (single button, full width would look awkward)
+        Row(
+          children: [
+            Expanded(
+              child: _buildActionCard(
+                context,
+                icon: Icons.settings_outlined,
+                label: 'Settings',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Placeholder for future action or leave empty
+            const Expanded(child: SizedBox()),
           ],
         ),
       ],

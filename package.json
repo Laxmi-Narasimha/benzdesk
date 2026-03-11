@@ -20,7 +20,7 @@
     "next": "14.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-leaflet": "^5.0.0"
+    "react-leaflet": "^4.2.1"
   },
   "devDependencies": {
     "@cloudflare/next-on-pages": "^1.13.16",

@@ -350,25 +350,29 @@ class TravelAllowanceLimits {
     final lowered = category.toLowerCase();
     
     // Local Travel
-    if (lowered == 'travel' || lowered == 'conveyance' || lowered == 'local_conveyance' ||
-        lowered == 'travel_allowance' || lowered == 'transport_expense') {
+    if (lowered == 'local_travel') {
       final limit = getLocalDailyLimit(grade);
       return limit < 0 ? null : limit; // null means actuals
     }
     
     // Food DA
-    if (lowered == 'food' || lowered == 'food_da' || lowered == 'food & meals') {
+    if (lowered == 'food_da') {
       return getFoodDailyLimit(grade);
     }
     
     // Accommodation
-    if (lowered == 'accommodation' || lowered == 'hotel') {
+    if (lowered == 'hotel') {
       return getHotelNightLimit(grade);
     }
 
     // Laundry
     if (lowered == 'laundry') {
       return getLaundryDailyLimit();
+    }
+    
+    // Fuel - It doesn't use daily limit directly (uses rate * km), we return null to bypass fixed daily limit
+    if (lowered == 'fuel_car' || lowered == 'fuel_bike') {
+      return null;
     }
     
     return null; // No limit for other categories (Toll, Parking, Internet, etc.)
@@ -446,62 +450,48 @@ class ExpenseCategoryInfo {
     this.description,
   });
 
-  /// All expense categories aligned with BENZ Travel Policy
+  /// All expense categories aligned with BenzDesk exact categories
   static const List<ExpenseCategoryInfo> allCategories = [
-    // ========================================
-    // TRAVEL & TRANSPORT
-    // ========================================
-    ExpenseCategoryInfo(
-      name: 'local_conveyance',
-      displayName: 'Local Conveyance',
-      icon: '🚗',
-      hasDailyLimit: true,
-      isTravelRelated: true,
-      description: 'Auto, Bus, Cab for local travel',
-    ),
-    ExpenseCategoryInfo(
-      name: 'fuel',
-      displayName: 'Fuel',
-      icon: '⛽',
-      hasDailyLimit: false,
-      isTravelRelated: true,
-      description: 'Car @₹7.5/km, Bike @₹5/km (Mgrs+)',
-    ),
-    ExpenseCategoryInfo(
-      name: 'toll',
-      displayName: 'Toll / Parking',
-      icon: '🛣️',
-      hasDailyLimit: false,
-      isTravelRelated: true,
-      description: 'Actuals with receipt',
-    ),
-    ExpenseCategoryInfo(
-      name: 'outstation_travel',
-      displayName: 'Outstation Travel',
-      icon: '✈️',
-      hasDailyLimit: false,
-      isTravelRelated: true,
-      description: 'Flight / Train / Bus tickets',
-    ),
-
-    // ========================================
-    // DAILY ALLOWANCES (Outstation)
-    // ========================================
+    // Travel Related
     ExpenseCategoryInfo(
       name: 'food_da',
-      displayName: 'Food & Daily Allowance',
+      displayName: 'Food DA',
       icon: '🍽️',
       hasDailyLimit: true,
       isTravelRelated: true,
-      description: 'For travel >50km or overnight',
+      description: 'Daily food allowance',
     ),
     ExpenseCategoryInfo(
-      name: 'accommodation',
-      displayName: 'Hotel / Accommodation',
+      name: 'hotel',
+      displayName: 'Hotel',
       icon: '🏨',
       hasDailyLimit: true,
       isTravelRelated: true,
-      description: 'Book via Corporate MMT',
+      description: 'Per night accommodation',
+    ),
+    ExpenseCategoryInfo(
+      name: 'local_travel',
+      displayName: 'Local Travel',
+      icon: '🚗',
+      hasDailyLimit: true,
+      isTravelRelated: true,
+      description: 'Per day local transport',
+    ),
+    ExpenseCategoryInfo(
+      name: 'fuel_car',
+      displayName: 'Fuel - Car',
+      icon: '⛽',
+      hasDailyLimit: true, // It's rate * km limit, functionally has a limit check
+      isTravelRelated: true,
+      description: '₹7.5/km auto-calculated',
+    ),
+    ExpenseCategoryInfo(
+      name: 'fuel_bike',
+      displayName: 'Fuel - Bike',
+      icon: '🏍️',
+      hasDailyLimit: true, // Rate * km limit
+      isTravelRelated: true,
+      description: '₹5.0/km auto-calculated',
     ),
     ExpenseCategoryInfo(
       name: 'laundry',
@@ -509,71 +499,121 @@ class ExpenseCategoryInfo {
       icon: '👔',
       hasDailyLimit: true,
       isTravelRelated: true,
-      description: 'Max ₹300/day if stay >3 nights',
+      description: 'Max ₹300/day (stay >3 nights)',
+    ),
+    ExpenseCategoryInfo(
+      name: 'toll',
+      displayName: 'Toll/Parking',
+      icon: '🛣️',
+      hasDailyLimit: false,
+      isTravelRelated: true,
+      description: 'Actual charges',
     ),
 
-    // ========================================
-    // MISCELLANEOUS (Actuals)
-    // ========================================
+    // Other/Business (General Requests)
     ExpenseCategoryInfo(
-      name: 'internet',
-      displayName: 'Internet / Connectivity',
-      icon: '📶',
+      name: 'expense_reimbursement',
+      displayName: 'Expense Reimbursement',
+      icon: '🧾',
       hasDailyLimit: false,
       isTravelRelated: false,
-      description: 'Actuals with bill',
+      description: 'General expenses',
     ),
     ExpenseCategoryInfo(
-      name: 'mobile',
-      displayName: 'Mobile Recharge',
-      icon: '📱',
+      name: 'travel_allowance',
+      displayName: 'Travel Allowance (TA/DA)',
+      icon: '✈️',
       hasDailyLimit: false,
       isTravelRelated: false,
-      description: 'Work-related only',
+      description: 'TA/DA Claims',
     ),
-
-    // ========================================
-    // BUSINESS EXPENSES
-    // ========================================
     ExpenseCategoryInfo(
-      name: 'petty_cash',
-      displayName: 'Petty Cash',
-      icon: '💵',
+      name: 'transport_expense',
+      displayName: 'Transport Expense',
+      icon: '🚚',
       hasDailyLimit: false,
       isTravelRelated: false,
-      description: 'Small office expenses',
+      description: 'Transport & Logistics',
     ),
     ExpenseCategoryInfo(
       name: 'advance_request',
       displayName: 'Advance Request',
-      icon: '💳',
+      icon: '💸',
       hasDailyLimit: false,
       isTravelRelated: false,
-      description: 'Pre-approved advances',
+      description: 'Request advance payment',
     ),
     ExpenseCategoryInfo(
-      name: 'stationary',
-      displayName: 'Stationary',
-      icon: '✏️',
+      name: 'petty_cash',
+      displayName: 'Petty Cash',
+      icon: '💰',
       hasDailyLimit: false,
       isTravelRelated: false,
-      description: 'Office supplies',
+      description: 'Petty cash request',
     ),
     ExpenseCategoryInfo(
-      name: 'medical',
-      displayName: 'Medical',
-      icon: '🏥',
+      name: 'salary_payroll_query',
+      displayName: 'Salary / Payroll Query',
+      icon: '💵',
       hasDailyLimit: false,
       isTravelRelated: false,
-      description: 'Emergency medical expenses',
+      description: 'HR & Payroll',
     ),
     ExpenseCategoryInfo(
-      name: 'other',
-      displayName: 'Other',
-      icon: '📋',
+      name: 'bank_account_update',
+      displayName: 'Bank Account Update',
+      icon: '🏦',
       hasDailyLimit: false,
       isTravelRelated: false,
-      description: 'Miscellaneous expenses',
+      description: 'Update bank details',
+    ),
+    ExpenseCategoryInfo(
+      name: 'purchase_order_query',
+      displayName: 'Purchase Order Query',
+      icon: '🛒',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'PO related issues',
+    ),
+    ExpenseCategoryInfo(
+      name: 'delivery_challan',
+      displayName: 'Delivery Challan',
+      icon: '📦',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'Delivery documents',
+    ),
+    ExpenseCategoryInfo(
+      name: 'invoice_query',
+      displayName: 'Invoice Query',
+      icon: '🧾',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'Invoice related',
+    ),
+    ExpenseCategoryInfo(
+      name: 'vendor_payment_status',
+      displayName: 'Vendor Payment Status',
+      icon: '🏢',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'Vendor concerns',
+    ),
+    ExpenseCategoryInfo(
+      name: 'gst_tax_query',
+      displayName: 'GST / Tax Query',
+      icon: '⚖️',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'Tax related issues',
+    ),
+    ExpenseCategoryInfo(
+      name: 'other_query',
+      displayName: 'Other Query',
+      icon: '❓',
+      hasDailyLimit: false,
+      isTravelRelated: false,
+      description: 'Any other requests',
     ),
   ];
 

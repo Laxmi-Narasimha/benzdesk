@@ -49,8 +49,8 @@ class NotificationScheduler {
         'time=${settings.timeMinutes}min, '
         'distance=${settings.distanceKm}km');
     
-    // Show persistent tracking notification
-    _showOngoingNotification(0, Duration.zero);
+    // Show persistent tracking notification - DONE by Background Service now
+    // _showOngoingNotification(0, Duration.zero);
     
     // Start periodic timer (check every 30 seconds for both time and distance)
     _periodicTimer = Timer.periodic(
@@ -73,8 +73,9 @@ class NotificationScheduler {
       _lastDistanceNotifiedKm = totalDistanceKm;
     }
     
-    // Always update the ongoing notification with current stats
-    _showOngoingNotification(totalDistanceKm, elapsed);
+    // Do NOT update ongoing notification here - it is handled by the Background Service
+    // to avoid ID conflicts and "zeroed out" issues.
+    // _showOngoingNotification(totalDistanceKm, elapsed);
   }
   
   /// Check if time-based notification should trigger
@@ -118,15 +119,7 @@ class NotificationScheduler {
     _logger.i('Time notification triggered: ${elapsed.inMinutes}min');
   }
   
-  /// Update the persistent ongoing notification
-  void _showOngoingNotification(double totalKm, Duration elapsed) {
-    final hours = elapsed.inHours;
-    final minutes = elapsed.inMinutes % 60;
-    
-    _notificationService.updateTrackingNotification(
-      body: '${totalKm.toStringAsFixed(2)} km • ${hours}h ${minutes}m elapsed',
-    );
-  }
+  // Removed _showOngoingNotification to prevent conflict with TrackingService
   
   /// Stop monitoring and show session summary
   /// 
@@ -139,17 +132,26 @@ class NotificationScheduler {
     _periodicTimer?.cancel();
     _periodicTimer = null;
     
-    // Cancel the ongoing tracking notification
-    await _notificationService.cancelTrackingNotification();
+    // Cancel the ongoing tracking notification (wrapped in try-catch to prevent crash)
+    try {
+      await _notificationService.cancelTrackingNotification();
+    } catch (e) {
+      _logger.w('Failed to cancel tracking notification: $e');
+      // Continue even if notification cancel fails
+    }
     
     // Show session summary notification
     final hours = totalDuration.inHours;
     final minutes = totalDuration.inMinutes % 60;
     
-    await _notificationService.showLocalNotification(
-      title: '✅ Session Complete',
-      body: 'Total: ${totalKm.toStringAsFixed(2)} km in ${hours}h ${minutes}m',
-    );
+    try {
+      await _notificationService.showLocalNotification(
+        title: '✅ Session Complete',
+        body: 'Total: ${totalKm.toStringAsFixed(2)} km in ${hours}h ${minutes}m',
+      );
+    } catch (e) {
+      _logger.w('Failed to show session summary notification: $e');
+    }
     
     _logger.i('NotificationScheduler stopped. Summary: ${totalKm}km, ${totalDuration.inMinutes}min');
   }

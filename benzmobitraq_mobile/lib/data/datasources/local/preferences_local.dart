@@ -108,6 +108,7 @@ class PreferencesLocal {
   Future<void> clearActiveSession() async {
     await setActiveSessionId(null);
     await clearSessionStartTime();
+    await clearSessionDistance();
   }
 
   /// Get session start time for duration calculation
@@ -127,8 +128,36 @@ class PreferencesLocal {
     return prefs.remove('session_start_time');
   }
 
+  /// Get session distance in meters (for persistence across app restart)
+  double getSessionDistanceMeters() {
+    return prefs.getDouble('session_distance_meters') ?? 0.0;
+  }
+
+  /// Set session distance in meters (called on each location update)
+  Future<bool> setSessionDistanceMeters(double meters) {
+    return prefs.setDouble('session_distance_meters', meters);
+  }
+
+  /// Clear session distance
+  Future<bool> clearSessionDistance() {
+    return prefs.remove('session_distance_meters');
+  }
+
   /// Check if there's an active session
   bool get hasActiveSession => activeSessionId != null;
+
+  /// Get cached session model JSON (for offline resume)
+  String? get cachedSessionJson => prefs.getString('cached_session_json');
+
+  /// Set cached session model JSON
+  Future<bool> setCachedSessionJson(String json) {
+    return prefs.setString('cached_session_json', json);
+  }
+
+  /// Clear cached session model
+  Future<bool> clearCachedSession() {
+    return prefs.remove('cached_session_json');
+  }
 
   // ============================================================
   // SYNC STATUS
@@ -208,6 +237,63 @@ class PreferencesLocal {
   /// Clear all preferences
   Future<bool> clearAll() {
     return prefs.clear();
+  }
+  // ============================================================
+  // OFFLINE SESSION END (PENDING SYNC)
+  // ============================================================
+
+  /// Get pending session end data (if any)
+  /// Returns a Map with keys: sessionId, endTime (iso), latitude, longitude, address, totalKm
+  Map<String, dynamic>? getPendingSessionEnd() {
+    final jsonStr = prefs.getString('pending_session_end');
+    if (jsonStr == null) return null;
+    try {
+      return jsonDecode(jsonStr) as Map<String, dynamic>;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Save pending session end data
+  Future<bool> setPendingSessionEnd({
+    required String sessionId,
+    required DateTime endTime,
+    required double? latitude,
+    required double? longitude,
+    required String? address,
+    required double totalKm,
+  }) {
+    final data = {
+      'sessionId': sessionId,
+      'endTime': endTime.toIso8601String(),
+      'latitude': latitude,
+      'longitude': longitude,
+      'address': address,
+      'totalKm': totalKm,
+    };
+    return prefs.setString('pending_session_end', jsonEncode(data));
+  }
+
+  /// Clear pending session end data
+  Future<bool> clearPendingSessionEnd() {
+    return prefs.remove('pending_session_end');
+  }
+
+  // ============================================================
+  // CACHED EMPLOYEE PROFILE (OFFLINE AUTH)
+  // ============================================================
+
+  /// Get cached employee profile JSON
+  String? get cachedEmployeeProfileJson => prefs.getString('cached_employee_profile');
+
+  /// Save cached employee profile
+  Future<bool> setCachedEmployeeProfileJson(String json) {
+    return prefs.setString('cached_employee_profile', json);
+  }
+
+  /// Clear cached employee profile
+  Future<bool> clearCachedEmployeeProfile() {
+    return prefs.remove('cached_employee_profile');
   }
 }
 

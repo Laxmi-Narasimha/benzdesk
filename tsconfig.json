@@ -54,6 +54,8 @@
     ],
     "exclude": [
         "node_modules",
-        "functions"
+        "functions",
+        "infra/supabase/functions",
+        "supabase/functions"
     ]
 }

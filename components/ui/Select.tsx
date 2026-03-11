@@ -47,7 +47,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         },
         ref
     ) => {
-        const selectId = id || React.useId();
+        const generatedId = React.useId();
+        const selectId = id ?? generatedId;
 
         return (
             <div className={clsx('space-y-1.5', fullWidth && 'w-full')}>
