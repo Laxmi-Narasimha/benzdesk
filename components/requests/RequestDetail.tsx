@@ -32,9 +32,11 @@ import {
     useToast,
     Spinner,
 } from '@/components/ui';
+import { CustomSelect } from '@/components/ui/Select';
 import { RequestTimeline } from './RequestTimeline';
 import { CommentThread } from './CommentThread';
 import { AttachmentList } from './AttachmentList';
+import { TripExpenseCard } from './TripExpenseCard';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import type { Request, RequestComment, RequestEvent, RequestAttachment, RequestStatus, Priority } from '@/types';
@@ -66,6 +68,12 @@ const adminStatusOptions = allStatusOptions.filter(opt => opt.value !== 'closed'
 // Component
 // ============================================================================
 
+interface AdminUser {
+    id: string;
+    email: string;
+    display_name: string;
+}
+
 export function RequestDetail({ requestId }: RequestDetailProps) {
     const router = useRouter();
     const { user, isAdmin, isDirector, canManageRequests } = useAuth();
@@ -75,6 +83,8 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
     const [comments, setComments] = useState<RequestComment[]>([]);
     const [events, setEvents] = useState<RequestEvent[]>([]);
     const [attachments, setAttachments] = useState<RequestAttachment[]>([]);
+    const [admins, setAdmins] = useState<AdminUser[]>([]);
+    const [assigning, setAssigning] = useState(false);
     const [loading, setLoading] = useState(true);
     const [updating, setUpdating] = useState(false);
     const [activeTab, setActiveTab] = useState<'comments' | 'timeline'>('comments');
@@ -139,6 +149,31 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
         fetchData();
     }, [requestId, showError]);
 
+    // Fetch admin list for assignment dropdown
+    useEffect(() => {
+        if (!canManageRequests) return;
+        async function fetchAdmins() {
+            try {
+                const supabase = getSupabaseClient();
+                const { data } = await (supabase
+                    .from('v_admin_backlog')
+                    .select('admin_id, admin_email') as any);
+                if (data) {
+                    setAdmins(
+                        data.map((a: any) => ({
+                            id: a.admin_id,
+                            email: a.admin_email,
+                            display_name: a.admin_email?.split('@')[0] || a.admin_email,
+                        }))
+                    );
+                }
+            } catch (err) {
+                console.error('Error fetching admins:', err);
+            }
+        }
+        fetchAdmins();
+    }, [canManageRequests]);
+
     // ============================================================================
     // Update Status (Admin only)
     // ============================================================================
@@ -190,6 +225,40 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
             showError('Error', 'Failed to update status');
         } finally {
             setUpdating(false);
+        }
+    };
+
+    // ============================================================================
+    // Assign Request to Admin
+    // ============================================================================
+
+    const handleAssign = async (adminId: string) => {
+        if (!request || !canManageRequests) return;
+        setAssigning(true);
+        try {
+            const supabase = getSupabaseClient();
+            const { data, error } = await supabase
+                .from('requests')
+                .update({ assigned_to: adminId || null })
+                .eq('id', request.id)
+                .select()
+                .single();
+            if (error) throw error;
+            setRequest(data);
+            const assignedAdmin = admins.find((a) => a.id === adminId);
+            success('Assigned', `Request assigned to ${assignedAdmin?.display_name || 'admin'}`);
+            // Refresh events
+            const { data: eventsData } = await supabase
+                .from('request_events')
+                .select('*')
+                .eq('request_id', requestId)
+                .order('created_at', { ascending: true });
+            setEvents(eventsData || []);
+        } catch (err: any) {
+            console.error('Error assigning:', err);
+            showError('Error', 'Failed to assign request');
+        } finally {
+            setAssigning(false);
         }
     };
 
@@ -362,6 +431,72 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
     };
 
     // ============================================================================
+    // Delete Comment (Admin only)
+    // ============================================================================
+
+    const handleDeleteComment = async (commentId: number) => {
+        try {
+            const supabase = getSupabaseClient();
+
+            const { error } = await supabase
+                .from('request_comments')
+                .delete()
+                .eq('id', commentId);
+
+            if (error) throw error;
+
+            setComments(prev => prev.filter(c => c.id !== commentId));
+            success('Deleted', 'Message removed successfully');
+        } catch (err: any) {
+            console.error('Error deleting comment:', err);
+            showError('Error', err?.message || 'Failed to delete message');
+            throw err;
+        }
+    };
+
+    // ============================================================================
+    // Delete Attachment
+    // ============================================================================
+
+    const handleDeleteAttachment = async (attachment: RequestAttachment) => {
+        if (!confirm('Are you sure you want to delete this attachment?')) return;
+
+        try {
+            const supabase = getSupabaseClient();
+
+            // 1. Delete from Storage
+            const { error: storageError } = await supabase.storage
+                .from(attachment.bucket)
+                .remove([attachment.path]);
+
+            if (storageError) {
+                console.error('Storage delete error:', storageError);
+                throw new Error('Failed to delete file from storage');
+            }
+
+            // 2. Delete from Database
+            const { error: dbError } = await supabase
+                .from('request_attachments')
+                .delete()
+                .eq('id', attachment.id);
+
+            if (dbError) throw dbError;
+
+            // 3. Update State
+            setAttachments(prev => prev.filter(a => a.id !== attachment.id));
+            success('Deleted', 'Attachment removed successfully');
+
+            // 4. Log Event (optional but good practice)
+            // Ideally we should log this to request_events, but for now we skip to keep it simple
+            // or we can manually insert an event if needed.
+
+        } catch (err: any) {
+            console.error('Error deleting attachment:', err);
+            showError('Error', err.message || 'Failed to delete attachment');
+        }
+    };
+
+    // ============================================================================
     // Loading State
     // ============================================================================
 
@@ -447,7 +582,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                             </div>
 
                             {/* Admin status control */}
-                            {canManageRequests && (
+                            {canManageRequests && request.category !== 'expense_reimbursement' && (
                                 <div className="flex-shrink-0 w-full sm:w-auto">
                                     <Select
                                         options={isDirector ? allStatusOptions : adminStatusOptions}
@@ -466,7 +601,35 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                         <div className="prose max-w-none">
                             <p className="text-gray-600 whitespace-pre-wrap">{request.description}</p>
                         </div>
+                        
+                        {/* Session Details Link */}
+                        {request.description?.includes('Session ID:') && (
+                            <div className="mt-6 pt-4 border-t border-gray-100">
+                                <Button 
+                                    variant="outline" 
+                                    className="w-full sm:w-auto flex items-center gap-2 text-blue-600 border-blue-200 hover:bg-blue-50"
+                                    onClick={() => {
+                                        const match = request.description?.match(/Session ID: ([a-zA-Z0-9-]+)/);
+                                        if (match && match[1]) {
+                                            router.push(`/director/map?session=${match[1]}`);
+                                        }
+                                    }}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                                    View GPS Session Map
+                                </Button>
+                            </div>
+                        )}
                     </Card>
+
+                    {request.category === 'expense_reimbursement' && (
+                        <TripExpenseCard 
+                            requestId={request.id} 
+                            onStatusChange={() => {
+                                window.location.reload();
+                            }}
+                        />
+                    )}
 
                     {/* Tabs - Comments / Timeline */}
                     <div className="flex gap-1 p-1 rounded-xl bg-gray-100 border border-gray-200">
@@ -501,6 +664,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                         <CommentThread
                             comments={comments}
                             onAddComment={handleAddComment}
+                            onDeleteComment={canManageRequests ? handleDeleteComment : undefined}
                             canAddInternal={canManageRequests}
                             requestCreatorId={request.created_by}
                         />
@@ -526,6 +690,30 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                                     {REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category}
                                 </dd>
                             </div>
+
+                            {/* Assign To — Admin only */}
+                            {canManageRequests && admins.length > 0 && (
+                                <div className="pt-3 border-t border-dark-700">
+                                    <dt className="text-xs font-medium text-dark-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                        <User className="w-3 h-3" />
+                                        Assign To
+                                    </dt>
+                                    <CustomSelect
+                                        options={[
+                                            { value: '', label: 'Unassigned' },
+                                            ...admins.map((a) => ({
+                                                value: a.id,
+                                                label: a.display_name,
+                                            })),
+                                        ]}
+                                        value={request.assigned_to || ''}
+                                        onChange={(val) => handleAssign(val)}
+                                    />
+                                    {assigning && (
+                                        <p className="text-xs text-dark-500 mt-1">Saving...</p>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Deadline display */}
                             {request.deadline && (
@@ -640,6 +828,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                             requestId={request.id}
                             canUpload={request.created_by === user?.id || canManageRequests}
                             onUpload={(newAttachment) => setAttachments(prev => [...prev, newAttachment])}
+                            onDelete={(canManageRequests || request.created_by === user?.id) ? handleDeleteAttachment : undefined}
                         />
                     </Card>
                 </div>

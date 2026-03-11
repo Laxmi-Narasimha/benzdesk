@@ -5,9 +5,8 @@
 
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue, useRef } from 'react';
 import Link from 'next/link';
-import { clsx } from 'clsx';
 import { formatDistanceToNow } from 'date-fns';
 import {
     Search,
@@ -30,12 +29,12 @@ import {
 } from '@/components/ui';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
-import type { Request, RequestStatus, RequestFilters, Priority } from '@/types';
+import type { Request, RequestStatus, Priority } from '@/types';
 import { REQUEST_STATUS_LABELS, REQUEST_CATEGORY_LABELS, FRESH_START_DATE, getDisplayName } from '@/types';
 
 // Extended type with creator email
 interface RequestWithCreator extends Request {
-    creator_email?: string;
+    creator_email?: string | null;
 }
 
 // ============================================================================
@@ -98,31 +97,98 @@ export function RequestList({
 
     const [requests, setRequests] = useState<RequestWithCreator[]>([]);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const hasLoadedOnceRef = useRef(false);
 
     // Filters
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState(defaultStatus);
     const [categoryFilter, setCategoryFilter] = useState('all');
     const [priorityFilter, setPriorityFilter] = useState('all');
+    const [employeeFilter, setEmployeeFilter] = useState('all');
+    const [employeeOptions, setEmployeeOptions] = useState([
+        { value: 'all', label: 'All Employees' },
+    ]);
     const [sortField, setSortField] = useState<SortField>('created_at');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
     const [showFilterPanel, setShowFilterPanel] = useState(false);
+    const deferredSearch = useDeferredValue(search);
+    const canFilterByEmployee = isAdmin || isDirector;
 
     // Sync status filter when defaultStatus changes
     useEffect(() => {
         setStatusFilter(defaultStatus);
     }, [defaultStatus]);
 
+    useEffect(() => {
+        if (!canFilterByEmployee) {
+            setEmployeeFilter('all');
+            setEmployeeOptions([{ value: 'all', label: 'All Employees' }]);
+            return;
+        }
+
+        let cancelled = false;
+
+        async function fetchEmployeeOptions() {
+            try {
+                const supabase = getSupabaseClient();
+                const { data, error: fetchError } = await supabase
+                    .from('requests_with_creator')
+                    .select('creator_email')
+                    .gte('created_at', FRESH_START_DATE)
+                    .not('creator_email', 'is', null);
+
+                if (fetchError) throw fetchError;
+                if (cancelled) return;
+
+                const uniqueEmployees = Array.from(
+                    new Map(
+                        (data || [])
+                            .map((row) => row.creator_email)
+                            .filter((email): email is string => Boolean(email))
+                            .map((email) => [
+                                email.toLowerCase(),
+                                {
+                                    value: email,
+                                    label: getDisplayName(email),
+                                },
+                            ])
+                    ).values()
+                ).sort((a, b) => a.label.localeCompare(b.label));
+
+                setEmployeeOptions([
+                    { value: 'all', label: 'All Employees' },
+                    ...uniqueEmployees,
+                ]);
+            } catch (err) {
+                console.error('Error fetching employee filter options:', err);
+            }
+        }
+
+        fetchEmployeeOptions();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [canFilterByEmployee]);
+
     // ============================================================================
     // Fetch Requests
     // ============================================================================
 
     useEffect(() => {
+        let cancelled = false;
+
         async function fetchRequests() {
             if (!user) return;
 
-            setLoading(true);
+            const isInitialLoad = !hasLoadedOnceRef.current;
+            if (isInitialLoad) {
+                setLoading(true);
+            } else {
+                setIsRefreshing(true);
+            }
             setError(null);
 
             try {
@@ -147,8 +213,8 @@ export function RequestList({
                     query = query.eq('priority', parseInt(priorityFilter));
                 }
 
-                if (search.trim()) {
-                    query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
+                if (canFilterByEmployee && employeeFilter !== 'all') {
+                    query = query.eq('creator_email', employeeFilter);
                 }
 
                 // Fresh start filter - only show requests after the fresh start date
@@ -165,31 +231,67 @@ export function RequestList({
                 const { data, error: fetchError } = await query;
 
                 if (fetchError) throw fetchError;
+                if (cancelled) return;
 
                 setRequests(data || []);
             } catch (err: any) {
+                if (cancelled) return;
                 console.error('Error fetching requests:', err);
                 setError('Failed to load requests');
             } finally {
+                if (cancelled) return;
+                hasLoadedOnceRef.current = true;
                 setLoading(false);
+                setIsRefreshing(false);
             }
         }
 
         fetchRequests();
-    }, [user, isAdmin, isDirector, statusFilter, categoryFilter, priorityFilter, search, sortField, sortOrder, limit]);
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        user,
+        isAdmin,
+        isDirector,
+        canFilterByEmployee,
+        statusFilter,
+        categoryFilter,
+        priorityFilter,
+        employeeFilter,
+        sortField,
+        sortOrder,
+        limit,
+    ]);
 
-    // ============================================================================
-    // Toggle Sort
-    // ============================================================================
-
-    const toggleSort = (field: SortField) => {
-        if (sortField === field) {
-            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortField(field);
-            setSortOrder('desc');
+    const normalizedSearch = deferredSearch.trim().toLowerCase();
+    const filteredRequests = useMemo(() => {
+        if (!normalizedSearch) {
+            return requests;
         }
-    };
+
+        return requests.filter((request) => {
+            const searchableFields = [
+                request.title,
+                request.description,
+                REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category,
+            ];
+
+            if (canFilterByEmployee && request.creator_email) {
+                searchableFields.push(request.creator_email, getDisplayName(request.creator_email));
+            }
+
+            return searchableFields.some((value) => value.toLowerCase().includes(normalizedSearch));
+        });
+    }, [canFilterByEmployee, normalizedSearch, requests]);
+
+    const hasActiveFilters = Boolean(
+        search.trim() ||
+        categoryFilter !== 'all' ||
+        priorityFilter !== 'all' ||
+        employeeFilter !== 'all' ||
+        statusFilter !== defaultStatus
+    );
 
     // ============================================================================
     // Render
@@ -199,7 +301,7 @@ export function RequestList({
         return <RequestListSkeleton count={5} />;
     }
 
-    if (error) {
+    if (error && requests.length === 0) {
         return (
             <Card className="text-center py-12">
                 <p className="text-red-400">{error}</p>
@@ -262,6 +364,18 @@ export function RequestList({
                             className="w-36"
                         />
 
+                        {/* Employee filter for admins/directors */}
+                        {canFilterByEmployee && (
+                            <Select
+                                options={employeeOptions}
+                                value={employeeFilter}
+                                onChange={(e) => setEmployeeFilter(e.target.value)}
+                                size="sm"
+                                fullWidth={false}
+                                className="w-44"
+                            />
+                        )}
+
                         {/* Toggle more filters */}
                         <Button
                             variant="ghost"
@@ -271,6 +385,12 @@ export function RequestList({
                         >
                             {showFilterPanel ? 'Less' : 'More'}
                         </Button>
+
+                        {isRefreshing && (
+                            <span className="text-xs text-dark-500 ml-auto">
+                                Updating...
+                            </span>
+                        )}
                     </div>
 
                     {/* Expanded filter panel */}
@@ -309,14 +429,15 @@ export function RequestList({
                             </div>
 
                             {/* Clear filters */}
-                            {(statusFilter !== 'all' || categoryFilter !== 'all' || priorityFilter !== 'all' || search) && (
+                            {hasActiveFilters && (
                                 <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => {
-                                        setStatusFilter('all');
+                                        setStatusFilter(defaultStatus);
                                         setCategoryFilter('all');
                                         setPriorityFilter('all');
+                                        setEmployeeFilter('all');
                                         setSearch('');
                                     }}
                                     className="text-red-400 hover:text-red-300"
@@ -326,50 +447,56 @@ export function RequestList({
                             )}
                         </div>
                     )}
+
+                    {error && requests.length > 0 && (
+                        <p className="pt-3 mt-3 border-t border-dark-700 text-sm text-red-400">
+                            {error}
+                        </p>
+                    )}
                 </Card>
             )}
 
             {/* Request List */}
-            {requests.length === 0 ? (
+            {filteredRequests.length === 0 ? (
                 <Card className="text-center py-12">
                     <div className="text-dark-500 mb-2">
                         <Search className="w-12 h-12 mx-auto opacity-50" />
                     </div>
                     <p className="text-dark-400">No requests found</p>
                     <p className="text-sm text-dark-500 mt-1">
-                        {search || statusFilter !== 'all'
+                        {hasActiveFilters
                             ? 'Try adjusting your filters'
                             : 'Create your first request to get started'}
                     </p>
                 </Card>
             ) : (
                 <div className="space-y-3">
-                    {requests.map((request) => (
+                    {filteredRequests.map((request) => (
                         <Link
                             key={request.id}
                             href={`${linkPrefix}?id=${request.id}`}
                             className="block group"
                         >
-                            <Card hover padding="sm">
+                            <Card hover padding="sm" className="bg-white/60 backdrop-blur-md border border-gray-100 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:bg-white/90 group-hover:border-blue-200">
                                 <div className="flex items-start justify-between gap-4">
                                     {/* Main content */}
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-3 mb-2">
-                                            <h3 className="text-base font-semibold text-dark-50 truncate group-hover:text-primary-400 transition-colors">
+                                            <h3 className="text-base font-semibold text-gray-900 truncate group-hover:text-blue-600 transition-colors">
                                                 {request.title}
                                             </h3>
                                             <StatusBadge status={request.status} />
                                         </div>
 
-                                        <p className="text-sm text-dark-400 line-clamp-2 mb-3">
+                                        <p className="text-sm text-gray-500 line-clamp-2 mb-3">
                                             {request.description}
                                         </p>
 
-                                        <div className="flex flex-wrap items-center gap-3 text-xs text-dark-500">
+                                        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
                                             <PriorityBadge priority={request.priority as Priority} size="sm" />
 
                                             <span className="flex items-center gap-1">
-                                                <span className="px-2 py-0.5 rounded bg-dark-800 text-dark-400">
+                                                <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
                                                     {REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category}
                                                 </span>
                                             </span>
@@ -381,14 +508,14 @@ export function RequestList({
 
                                             {/* Show requester name for admin/director */}
                                             {(isAdmin || isDirector) && request.creator_email && (
-                                                <span className="flex items-center gap-1 text-dark-300">
+                                                <span className="flex items-center gap-1 text-gray-400">
                                                     <User className="w-3.5 h-3.5" />
                                                     {getDisplayName(request.creator_email)}
                                                 </span>
                                             )}
 
                                             {showAssignee && request.assigned_to && (
-                                                <span className="flex items-center gap-1">
+                                                <span className="flex items-center gap-1 text-blue-500 font-medium">
                                                     <User className="w-3.5 h-3.5" />
                                                     Assigned
                                                 </span>
@@ -396,7 +523,7 @@ export function RequestList({
                                         </div>
                                     </div>
 
-                                    {/* Delete button for closed requests (admin/director only) */}
+                                    {/* Delete button (admin/director only) */}
                                     {(isAdmin || isDirector) && request.status === 'closed' && (
                                         <button
                                             onClick={(e) => {
@@ -418,7 +545,7 @@ export function RequestList({
                                                         });
                                                 }
                                             }}
-                                            className="flex-shrink-0 p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                                            className="flex-shrink-0 p-2 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                                             title="Delete closed request"
                                         >
                                             <Trash2 className="w-4 h-4" />
@@ -426,7 +553,7 @@ export function RequestList({
                                     )}
 
                                     {/* Arrow indicator */}
-                                    <div className="flex-shrink-0 text-dark-600 group-hover:text-primary-400 transition-colors">
+                                    <div className="flex-shrink-0 text-gray-400 group-hover:text-blue-500 transition-colors mt-1">
                                         <ChevronRight className="w-5 h-5" />
                                     </div>
                                 </div>

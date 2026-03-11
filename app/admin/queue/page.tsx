@@ -83,13 +83,15 @@ export default function AdminQueuePage() {
     const [currentStatusFilter, setCurrentStatusFilter] = useState<'not_closed' | 'open' | 'in_progress' | 'waiting_on_requester' | 'pending_closure'>('not_closed');
 
     return (
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white/60 backdrop-blur-md p-6 rounded-3xl border border-white/40 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Request Queue</h1>
-                    <p className="text-gray-500 mt-1">
-                        Manage and respond to all incoming requests
+                    <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-gray-900 via-gray-800 to-gray-600 tracking-tight">
+                        Master Request Queue
+                    </h1>
+                    <p className="text-gray-500 mt-2 font-medium">
+                        Unified inbox for BenzDesk requests and MobiTraq expense claims
                     </p>
                 </div>
                 {/* Reset filter button */}
@@ -106,50 +108,50 @@ export default function AdminQueuePage() {
             </div>
 
             {/* Quick Stats */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
                 <MetricCard
-                    title="Open"
+                    title="Open Requests"
                     value={stats.open}
-                    icon={<AlertTriangle className="w-5 h-5" />}
+                    icon={<AlertTriangle className="w-6 h-6 text-emerald-500" />}
                     className={clsx(
-                        "border-l-4 border-green-500 cursor-pointer transition-all active:scale-95",
-                        currentStatusFilter === 'open' ? 'ring-2 ring-green-500 shadow-md transform scale-[1.02]' : 'hover:shadow-md'
+                        "relative overflow-hidden cursor-pointer transition-all duration-300 rounded-2xl active:scale-[0.98]",
+                        "bg-gradient-to-br from-white to-emerald-50/30 border border-emerald-100",
+                        currentStatusFilter === 'open' ? 'ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/10 transform scale-[1.02]' : 'hover:shadow-md hover:-translate-y-1'
                     )}
                     onClick={() => setCurrentStatusFilter(currentStatusFilter === 'open' ? 'not_closed' : 'open')}
-                    hover
                 />
                 <MetricCard
                     title="In Progress"
                     value={stats.in_progress}
-                    icon={<Clock className="w-5 h-5" />}
+                    icon={<Clock className="w-6 h-6 text-blue-500" />}
                     className={clsx(
-                        "border-l-4 border-blue-500 cursor-pointer transition-all active:scale-95",
-                        currentStatusFilter === 'in_progress' ? 'ring-2 ring-blue-500 shadow-md transform scale-[1.02]' : 'hover:shadow-md'
+                        "relative overflow-hidden cursor-pointer transition-all duration-300 rounded-2xl active:scale-[0.98]",
+                        "bg-gradient-to-br from-white to-blue-50/30 border border-blue-100",
+                        currentStatusFilter === 'in_progress' ? 'ring-2 ring-blue-500/50 shadow-lg shadow-blue-500/10 transform scale-[1.02]' : 'hover:shadow-md hover:-translate-y-1'
                     )}
                     onClick={() => setCurrentStatusFilter(currentStatusFilter === 'in_progress' ? 'not_closed' : 'in_progress')}
-                    hover
                 />
                 <MetricCard
-                    title="Waiting on Requester"
+                    title="Awaiting Reply"
                     value={stats.waiting}
-                    icon={<Users className="w-5 h-5" />}
+                    icon={<Users className="w-6 h-6 text-amber-500" />}
                     className={clsx(
-                        "border-l-4 border-amber-500 cursor-pointer transition-all active:scale-95",
-                        currentStatusFilter === 'waiting_on_requester' ? 'ring-2 ring-amber-500 shadow-md transform scale-[1.02]' : 'hover:shadow-md'
+                        "relative overflow-hidden cursor-pointer transition-all duration-300 rounded-2xl active:scale-[0.98]",
+                        "bg-gradient-to-br from-white to-amber-50/30 border border-amber-100",
+                        currentStatusFilter === 'waiting_on_requester' ? 'ring-2 ring-amber-500/50 shadow-lg shadow-amber-500/10 transform scale-[1.02]' : 'hover:shadow-md hover:-translate-y-1'
                     )}
                     onClick={() => setCurrentStatusFilter(currentStatusFilter === 'waiting_on_requester' ? 'not_closed' : 'waiting_on_requester')}
-                    hover
                 />
                 <MetricCard
                     title="Pending Closure"
                     value={stats.closed_today}
-                    icon={<CheckCircle className="w-5 h-5" />}
+                    icon={<CheckCircle className="w-6 h-6 text-purple-500" />}
                     className={clsx(
-                        "border-l-4 border-purple-500 cursor-pointer transition-all active:scale-95",
-                        currentStatusFilter === 'pending_closure' ? 'ring-2 ring-purple-500 shadow-md transform scale-[1.02]' : 'hover:shadow-md'
+                        "relative overflow-hidden cursor-pointer transition-all duration-300 rounded-2xl active:scale-[0.98]",
+                        "bg-gradient-to-br from-white to-purple-50/30 border border-purple-100",
+                        currentStatusFilter === 'pending_closure' ? 'ring-2 ring-purple-500/50 shadow-lg shadow-purple-500/10 transform scale-[1.02]' : 'hover:shadow-md hover:-translate-y-1'
                     )}
                     onClick={() => setCurrentStatusFilter(currentStatusFilter === 'pending_closure' ? 'not_closed' : 'pending_closure')}
-                    hover
                 />
             </div>
 

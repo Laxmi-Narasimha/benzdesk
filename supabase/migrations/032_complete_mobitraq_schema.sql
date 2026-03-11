@@ -333,6 +333,16 @@ CREATE TABLE IF NOT EXISTS mobitraq_alerts (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'mobitraq_alerts' AND column_name = 'is_read'
+    ) THEN
+        ALTER TABLE mobitraq_alerts ADD COLUMN is_read BOOLEAN DEFAULT false;
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_mobitraq_alerts_employee ON mobitraq_alerts(employee_id);
 CREATE INDEX IF NOT EXISTS idx_mobitraq_alerts_type ON mobitraq_alerts(alert_type);
 CREATE INDEX IF NOT EXISTS idx_mobitraq_alerts_unread ON mobitraq_alerts(is_read) WHERE is_read = false;

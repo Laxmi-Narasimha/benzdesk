@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../data/models/expense_model.dart';
@@ -72,7 +73,6 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
             ));
           }
         } else {
-          // If no items, create expense from claim
           expenses.add(ExpenseModel(
             id: claim.id,
             employeeId: claim.employeeId,
@@ -86,6 +86,48 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
           ));
         }
       }
+
+      // Also fetch trip_expenses to show in the combined list
+      try {
+        final supabase = Supabase.instance.client;
+        final tripExpData = await supabase
+            .from('trip_expenses')
+            .select('*, trips!inner(from_location, to_location)')
+            .eq('employee_id', employeeId)
+            .order('created_at', ascending: false)
+            .limit(50);
+
+        for (final te in tripExpData as List) {
+          final tripInfo = te['trips'] as Map<String, dynamic>?;
+          final tripName = tripInfo != null
+              ? '${tripInfo['from_location'] ?? ''} → ${tripInfo['to_location'] ?? ''}'
+              : '';
+          expenses.add(ExpenseModel(
+            id: te['id'] as String?,
+            employeeId: employeeId,
+            category: (te['category'] as String? ?? 'Other').replaceAll('_', ' '),
+            amount: (te['amount'] as num?)?.toDouble() ?? 0,
+            description: tripName.isNotEmpty
+                ? '$tripName • ${te['description'] ?? ''}'
+                : (te['description'] as String?),
+            expenseDate: DateTime.tryParse(te['expense_date'] as String? ?? '') ?? DateTime.now(),
+            status: te['status'] as String? ?? 'pending',
+            receiptPath: te['receipt_path'] as String?,
+            createdAt: te['created_at'] != null
+                ? DateTime.tryParse(te['created_at'] as String)
+                : null,
+            submittedAt: te['submitted_at'] != null
+                ? DateTime.tryParse(te['submitted_at'] as String)
+                : null,
+          ));
+        }
+      } catch (_) {
+        // Silently ignore if trip_expenses fails; expense_claims data still shown
+      }
+
+      // Sort all by date descending
+      expenses.sort((a, b) =>
+          (b.createdAt ?? DateTime(2000)).compareTo(a.createdAt ?? DateTime(2000)));
 
       emit(ExpenseLoaded(
         expenses: expenses,
@@ -110,7 +152,6 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
       }
 
       // Create claim
-      final claimId = _uuid.v4();
       final claim = await _expenseRepository.createClaim(
         employeeId: employeeId,
         claimDate: event.expenseDate,
@@ -122,7 +163,6 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
       }
 
       // Add item
-      // Prefer DB-safe category keys (e.g. "local_conveyance") and fall back to display name matching.
       var category = ExpenseCategory.fromString(event.category);
       if (category == ExpenseCategory.other && event.category.toLowerCase() != 'other') {
         category = ExpenseCategory.values.firstWhere(
@@ -131,11 +171,15 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
         );
       }
 
+      final finalDescription = event.title != null && event.title!.isNotEmpty
+          ? '${event.title}${event.description != null && event.description!.isNotEmpty ? " - ${event.description}" : ""}'
+          : event.description;
+
       final item = await _expenseRepository.addItem(
         claimId: claim.id,
         category: category,
         amount: event.amount,
-        description: event.description,
+        description: finalDescription,
         expenseDate: event.expenseDate,
         receiptImage: event.receiptPath != null ? File(event.receiptPath!) : null,
       );
@@ -208,7 +252,6 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
       );
 
       if (item != null) {
-        // Reload the claim to get updated total
         final updatedClaim = await _expenseRepository.getClaim(event.claimId);
         if (updatedClaim != null) {
           emit(ExpenseClaimDetailLoaded(updatedClaim));
@@ -274,7 +317,6 @@ class ExpenseBloc extends Bloc<ExpenseEvent, ExpenseState> {
       );
 
       if (success) {
-        // Reload the claim to get updated total
         final updatedClaim = await _expenseRepository.getClaim(event.claimId);
         if (updatedClaim != null) {
           emit(ExpenseClaimDetailLoaded(updatedClaim));

@@ -7,8 +7,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { clsx } from 'clsx';
-import { formatDistanceToNow, format } from 'date-fns';
-import { Send, Lock, MessageSquare, User, Shield } from 'lucide-react';
+import { format } from 'date-fns';
+import { Send, Lock, MessageSquare, User, Shield, Trash2 } from 'lucide-react';
 import { Button, Textarea, useToast } from '@/components/ui';
 import { useAuth } from '@/lib/AuthContext';
 import type { RequestComment } from '@/types';
@@ -20,6 +20,7 @@ import type { RequestComment } from '@/types';
 interface CommentThreadProps {
     comments: RequestComment[];
     onAddComment: (body: string, isInternal: boolean) => Promise<void>;
+    onDeleteComment?: (commentId: number) => Promise<void>;
     canAddInternal?: boolean;
     requestCreatorId: string;
 }
@@ -33,21 +34,39 @@ function ChatBubble({
     isOwn,
     isRequester,
     showAvatar,
+    canDelete,
+    onDelete,
 }: {
     comment: RequestComment;
     isOwn: boolean;
     isRequester: boolean;
     showAvatar: boolean;
+    canDelete: boolean;
+    onDelete: () => void;
 }) {
-    // Determine alignment: requester on left, admin on right
+    const [isHovered, setIsHovered] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+
     const isLeft = isRequester;
+
+    const handleDelete = async () => {
+        if (!confirm('Delete this message?')) return;
+        setIsDeleting(true);
+        try {
+            await onDelete();
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
     return (
         <div
             className={clsx(
-                'flex gap-2 animate-fade-in',
+                'flex gap-2 animate-fade-in group/bubble',
                 isLeft ? 'flex-row' : 'flex-row-reverse'
             )}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
         >
             {/* Avatar */}
             <div className={clsx('flex-shrink-0 mt-1', !showAvatar && 'invisible')}>
@@ -67,59 +86,75 @@ function ChatBubble({
                 </div>
             </div>
 
-            {/* Bubble */}
+            {/* Bubble + Delete Button row */}
             <div
                 className={clsx(
-                    'max-w-[75%] sm:max-w-[70%]',
-                    isLeft ? 'mr-auto' : 'ml-auto'
+                    'flex items-end gap-1.5 max-w-[75%] sm:max-w-[70%]',
+                    isLeft ? 'flex-row mr-auto' : 'flex-row-reverse ml-auto'
                 )}
             >
-                {/* Name/Role label */}
-                {showAvatar && (
-                    <div className={clsx(
-                        'flex items-center gap-2 mb-1 px-1',
-                        isLeft ? 'justify-start' : 'justify-end'
-                    )}>
-                        <span className={clsx(
-                            'text-xs font-medium',
-                            isRequester ? 'text-green-600' : 'text-primary-600'
-                        )}>
-                            {isOwn ? 'You' : isRequester ? 'Employee' : 'Admin'}
-                        </span>
-                        {comment.is_internal && (
-                            <span className="flex items-center gap-0.5 text-xs text-amber-600">
-                                <Lock className="w-3 h-3" />
-                                Internal
-                            </span>
+                {/* Delete button — shown for admins on hover */}
+                {canDelete && (
+                    <button
+                        onClick={handleDelete}
+                        disabled={isDeleting}
+                        className={clsx(
+                            'flex-shrink-0 p-1.5 rounded-lg transition-all duration-200',
+                            'text-gray-300 hover:text-red-500 hover:bg-red-50',
+                            isHovered ? 'opacity-100 scale-100' : 'opacity-0 scale-75',
+                            'mb-1'
                         )}
-                    </div>
+                        title="Delete message"
+                    >
+                        <Trash2 className={clsx('w-3.5 h-3.5', isDeleting && 'animate-spin')} />
+                    </button>
                 )}
 
-                {/* Message bubble */}
-                <div
-                    className={clsx(
-                        'relative px-4 py-2.5 rounded-2xl shadow-sm',
-                        // Bubble styling
-                        isLeft
-                            ? 'bg-gray-100 text-gray-900 rounded-tl-md'
-                            : 'bg-primary-500 text-white rounded-tr-md',
-                        // Internal note styling
-                        comment.is_internal && 'bg-amber-50 text-amber-900 border border-amber-200',
+                {/* Bubble content */}
+                <div className={clsx(isLeft ? '' : '')}>
+                    {/* Name/Role label */}
+                    {showAvatar && (
+                        <div className={clsx(
+                            'flex items-center gap-2 mb-1 px-1',
+                            isLeft ? 'justify-start' : 'justify-end'
+                        )}>
+                            <span className={clsx(
+                                'text-xs font-medium',
+                                isRequester ? 'text-green-600' : 'text-primary-600'
+                            )}>
+                                {isOwn ? 'You' : isRequester ? 'Employee' : 'Admin'}
+                            </span>
+                            {comment.is_internal && (
+                                <span className="flex items-center gap-0.5 text-xs text-amber-600">
+                                    <Lock className="w-3 h-3" />
+                                    Internal
+                                </span>
+                            )}
+                        </div>
                     )}
-                >
-                    <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
-                        {comment.body}
-                    </p>
-                </div>
 
-                {/* Timestamp */}
-                <div className={clsx(
-                    'mt-1 px-1',
-                    isLeft ? 'text-left' : 'text-right'
-                )}>
-                    <span className="text-xs text-gray-400" suppressHydrationWarning>
-                        {format(new Date(comment.created_at), 'MMM d, h:mm a')}
-                    </span>
+                    {/* Message bubble */}
+                    <div
+                        className={clsx(
+                            'relative px-4 py-2.5 rounded-2xl shadow-sm transition-opacity',
+                            isLeft
+                                ? 'bg-gray-100 text-gray-900 rounded-tl-md'
+                                : 'bg-primary-500 text-white rounded-tr-md',
+                            comment.is_internal && 'bg-amber-50 text-amber-900 border border-amber-200',
+                            isDeleting && 'opacity-50'
+                        )}
+                    >
+                        <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                            {comment.body}
+                        </p>
+                    </div>
+
+                    {/* Timestamp */}
+                    <div className={clsx('mt-1 px-1', isLeft ? 'text-left' : 'text-right')}>
+                        <span className="text-xs text-gray-400" suppressHydrationWarning>
+                            {format(new Date(comment.created_at), 'MMM d, h:mm a')}
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -133,6 +168,7 @@ function ChatBubble({
 export function CommentThread({
     comments,
     onAddComment,
+    onDeleteComment,
     canAddInternal = false,
     requestCreatorId,
 }: CommentThreadProps) {
@@ -140,12 +176,18 @@ export function CommentThread({
     const { error: showError } = useToast();
     const scrollRef = useRef<HTMLDivElement>(null);
 
+    const [localComments, setLocalComments] = useState<RequestComment[]>(comments);
     const [newComment, setNewComment] = useState('');
     const [isInternal, setIsInternal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // Sync local comments when prop changes
+    useEffect(() => {
+        setLocalComments(comments);
+    }, [comments]);
+
     // Filter comments based on visibility
-    const visibleComments = comments.filter(
+    const visibleComments = localComments.filter(
         (c) => !c.is_internal || canManageRequests
     );
 
@@ -178,6 +220,20 @@ export function CommentThread({
         }
     };
 
+    // ============================================================================
+    // Delete Handler
+    // ============================================================================
+
+    const handleDeleteComment = async (commentId: number) => {
+        if (!onDeleteComment) return;
+        try {
+            await onDeleteComment(commentId);
+            setLocalComments(prev => prev.filter(c => c.id !== commentId));
+        } catch (err: any) {
+            showError('Error', err?.message || 'Failed to delete message');
+        }
+    };
+
     // Check if we should show avatar (first message from this sender or different from previous)
     const shouldShowAvatar = (index: number, comment: RequestComment) => {
         if (index === 0) return true;
@@ -200,7 +256,7 @@ export function CommentThread({
                 </span>
             </div>
 
-            {/* Messages area - limited height so input is always visible */}
+            {/* Messages area */}
             <div
                 ref={scrollRef}
                 className="overflow-y-auto p-4 space-y-4 min-h-[150px] max-h-[250px] sm:max-h-[350px] bg-gradient-to-b from-gray-50/50 to-white"
@@ -225,6 +281,8 @@ export function CommentThread({
                                 isOwn={isOwn}
                                 isRequester={isRequester}
                                 showAvatar={shouldShowAvatar(index, comment)}
+                                canDelete={canManageRequests && !!onDeleteComment}
+                                onDelete={() => handleDeleteComment(comment.id)}
                             />
                         );
                     })

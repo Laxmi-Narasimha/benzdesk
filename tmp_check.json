@@ -1,0 +1,62 @@
+{
+  "rollups": [
+    {
+      "session_id": "8628448f-ca4e-41e5-aa62-c8bb36f2f07d",
+      "distance_km": 3.10011,
+      "point_count": 43,
+      "last_point_time": "2026-03-10T10:14:02.798+00:00",
+      "last_lat": 28.3690159,
+      "last_lng": 76.9245108,
+      "created_at": "2026-03-10T10:06:55.487135+00:00",
+      "updated_at": "2026-03-10T10:14:03.884113+00:00"
+    },
+    {
+      "session_id": "e0dcaa96-e813-471c-b8f1-ad4a0468b25a",
+      "distance_km": 1.42276,
+      "point_count": 29,
+      "last_point_time": "2026-03-10T09:48:49.549+00:00",
+      "last_lat": 28.3768303,
+      "last_lng": 76.9256362,
+      "created_at": "2026-03-10T09:45:26.056753+00:00",
+      "updated_at": "2026-03-10T09:48:50.654863+00:00"
+    }
+  ],
+  "shifts": [
+    {
+      "id": "378baa64-d43d-425f-a991-f807fbffa1e0",
+      "employee_id": "7f074be1-ee3f-46cd-844b-ed219e91e0a0",
+      "start_time": "2026-03-11T05:29:30.956526+00:00",
+      "end_time": "2026-03-11T05:29:41.682626+00:00",
+      "start_latitude": 28.3688749,
+      "start_longitude": 76.9244608,
+      "end_latitude": 28.3688803,
+      "end_longitude": 76.9244635,
+      "total_km": 0,
+      "status": "completed",
+      "created_at": "2026-03-11T05:29:30.956526+00:00",
+      "updated_at": "2026-03-11T05:29:42.21356+00:00",
+      "start_address": "9W9F+JQ8, Imt Manesar, Haryana",
+      "end_address": "9W9F+JQ8, Imt Manesar, Haryana",
+      "session_name": null,
+      "trip_id": null
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "employee_id": "7fa7c2e9-e3d4-489d-a03f-16b6e391b99c",
+      "start_time": "2026-03-11T05:08:59.584+00:00",
+      "end_time": null,
+      "start_latitude": null,
+      "start_longitude": null,
+      "end_latitude": null,
+      "end_longitude": null,
+      "total_km": 0,
+      "status": "active",
+      "created_at": "2026-03-11T05:08:59.555188+00:00",
+      "updated_at": "2026-03-11T05:08:59.555188+00:00",
+      "start_address": null,
+      "end_address": null,
+      "session_name": null,
+      "trip_id": null
+    }
+  ]
+}

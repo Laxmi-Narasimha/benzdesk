@@ -16,6 +16,7 @@ import {
     Plus,
     Loader2,
     ExternalLink,
+    Trash2,
 } from 'lucide-react';
 import { Button, useToast } from '@/components/ui';
 import { getSupabaseClient } from '@/lib/supabaseClient';
@@ -31,6 +32,7 @@ interface AttachmentListProps {
     requestId: string;
     canUpload?: boolean;
     onUpload?: (attachment: RequestAttachment) => void;
+    onDelete?: (attachment: RequestAttachment) => void;
 }
 
 // ============================================================================
@@ -68,6 +70,7 @@ export function AttachmentList({
     requestId,
     canUpload = false,
     onUpload,
+    onDelete,
 }: AttachmentListProps) {
     const { user } = useAuth();
     const { success, error: showError } = useToast();
@@ -279,6 +282,21 @@ export function AttachmentList({
                                     <Download className="w-4 h-4" />
                                 )}
                             </button>
+
+                            {/* Delete button (if handler provided) */}
+                            {onDelete && (
+                                <button
+                                    onClick={() => {
+                                        if (confirm('Are you sure you want to delete this attachment?')) {
+                                            onDelete(attachment);
+                                        }
+                                    }}
+                                    className="flex-shrink-0 p-2 rounded-lg text-dark-400 hover:text-red-400 hover:bg-red-900/20 transition-colors"
+                                    title="Delete Attachment"
+                                >
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
+                            )}
                         </div>
                     ))}
                 </div>

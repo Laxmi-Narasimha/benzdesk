@@ -7,10 +7,11 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Paperclip, X, FileText } from 'lucide-react';
+import { Send, Paperclip, X, FileText, CheckCircle2, PackageSearch, ArrowRight } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
-import { useToast, DateTimePicker } from '@/components/ui';
+import { useToast, DateTimePicker, Modal, Button } from '@/components/ui';
+import Link from 'next/link';
 import type { CreateRequestInput, RequestCategory, Priority } from '@/types';
 import { REQUEST_CATEGORY_LABELS, PRIORITY_LABELS } from '@/types';
 
@@ -96,6 +97,8 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
     const { success, error: showError } = useToast();
 
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [createdRequestId, setCreatedRequestId] = useState<string | null>(null);
     const [errors, setErrors] = useState<FormErrors>({});
     const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
 
@@ -241,10 +244,11 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
 
             success('Request Submitted', 'Your request has been sent to the accounts team');
 
+            setCreatedRequestId(request.id);
+            setShowSuccessModal(true);
+
             if (onSuccess) {
                 onSuccess(request.id);
-            } else {
-                router.push(`/app/request?id=${request.id}`);
             }
 
             // Send push notification to admins
@@ -487,6 +491,72 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
                     </button>
                 </div>
             </form>
+
+            {/* Success Modal */}
+            <Modal
+                isOpen={showSuccessModal}
+                onClose={() => {
+                    if (createdRequestId) {
+                        router.push(`/app/request?id=${createdRequestId}`);
+                    } else {
+                        setShowSuccessModal(false);
+                    }
+                }}
+                title="Request Submitted Successfully"
+                size="md"
+                footer={
+                    <div className="flex w-full gap-3">
+                        <Button
+                            variant="secondary"
+                            className="flex-1"
+                            onClick={() => router.push('/app/products')}
+                        >
+                            <PackageSearch className="w-4 h-4 mr-2" />
+                            Open Product Guide
+                        </Button>
+                        <Button
+                            variant="primary"
+                            className="flex-1"
+                            onClick={() => {
+                                if (createdRequestId) router.push(`/app/request?id=${createdRequestId}`);
+                            }}
+                        >
+                            View Request
+                            <ArrowRight className="w-4 h-4 ml-2" />
+                        </Button>
+                    </div>
+                }
+            >
+                <div className="flex flex-col items-center text-center py-4">
+                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-6 animate-bounce">
+                        <CheckCircle2 className="w-8 h-8 text-green-600" />
+                    </div>
+
+                    <h3 className="text-xl font-bold text-gray-100 mb-2">Request Sent!</h3>
+                    <p className="text-gray-400 mb-8 max-w-sm">
+                        Your request has been submitted to the accounts team. You will receive notifications on its status.
+                    </p>
+
+                    <div className="w-full bg-gradient-to-r from-primary-900/50 to-primary-800/30 border border-primary-700/50 rounded-xl p-4 text-left relative overflow-hidden group hover:border-primary-500/50 transition-colors">
+                        <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <PackageSearch className="w-24 h-24 text-primary-400" />
+                        </div>
+
+                        <div className="relative z-10">
+                            <h4 className="font-semibold text-primary-100 mb-1 flex items-center gap-2">
+                                <PackageSearch className="w-4 h-4 text-primary-400" />
+                                While you wait...
+                            </h4>
+                            <p className="text-sm text-primary-200/80 mb-3">
+                                Explore the details and certifications of our entire product range in the new guide.
+                            </p>
+                            <Link href="/app/products" className="text-sm font-medium text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                                Visit Product Guide <ArrowRight className="w-3 h-3" />
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 }

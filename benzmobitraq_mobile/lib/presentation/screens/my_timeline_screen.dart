@@ -97,13 +97,16 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
         final points = await _locationRepo.getSessionLocations(session.id);
         
         // Generate timeline events
-        final events = points.isEmpty ? <TimelineEvent>[] : TimelineEngine.generateTimeline(points);
+        final rawEvents = points.isEmpty ? <TimelineEvent>[] : TimelineEngine.generateTimeline(points);
         
-        // Calculate session stats
+        // Filter out move events to reduce UI clutter, showing only start, stop, and end
+        final events = rawEvents.where((e) => e.type != TimelineEventType.move).toList();
+        
+        // Calculate session stats using raw events (to include movement distance)
         double sessionDistance = 0;
         int sessionStops = 0;
         
-        for (final event in events) {
+        for (final event in rawEvents) {
           if (event.type == TimelineEventType.stop) {
             sessionStops++;
           } else if (event.type == TimelineEventType.move) {
@@ -350,7 +353,8 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
   }
 
   Widget _buildSessionCard(SessionTimelineGroup group, int sessionNumber) {
-    final isExpanded = _expandedSessions.contains(group.session.id);
+    final session = group.session;
+    final isExpanded = _expandedSessions.contains(session.id);
     final startTimeStr = DateTimeUtils.formatTime(session.startTime);
     final endTimeStr = session.endTime != null 
         ? DateTimeUtils.formatTime(session.endTime!) 

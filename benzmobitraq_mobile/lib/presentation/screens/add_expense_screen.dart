@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/utils/date_utils.dart';
 import '../../data/models/travel_allowance_model.dart';
@@ -24,6 +25,7 @@ class AddExpenseScreen extends StatefulWidget {
 
 class _AddExpenseScreenState extends State<AddExpenseScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
   final _amountController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _distanceController = TextEditingController(); // For fuel expenses
@@ -634,7 +636,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           ),
 
         // Fuel-specific: Distance input
-        if (_selectedCategory?.name == 'fuel') ...[
+        if (_selectedCategory?.name == 'fuel_car' || _selectedCategory?.name == 'fuel_bike') ...[
           _buildLabel('Distance (KM)'),
           TextFormField(
             controller: _distanceController,
@@ -644,7 +646,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Rate: ₹${TravelAllowanceLimits.getFuelRatePerKm(_employeeGrade)}/km',
+            'Rate: ₹${_selectedCategory?.name == 'fuel_car' 
+                ? TravelAllowanceLimits.getFuelRatePerKm(_employeeGrade) 
+                : TravelAllowanceLimits.getBikeRatePerKm(_employeeGrade)}/km',
             style: TextStyle(
               fontSize: 12,
               color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
@@ -653,8 +657,25 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           const SizedBox(height: 16),
         ],
 
+        // Title (For general requests)
+        if (!_isTravelExpense) ...[
+          _buildLabel('Title (Required)'),
+          TextFormField(
+            controller: _titleController,
+            textCapitalization: TextCapitalization.words,
+            decoration: _inputDecoration('Short title for your request...'),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Title is required';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
+
         // Amount
-        _buildLabel('Amount'),
+        _buildLabel('Amount' + (!_isTravelExpense ? ' (Optional)' : '')),
         TextFormField(
           controller: _amountController,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -670,9 +691,15 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             ),
           ),
           validator: (value) {
-            if (value == null || value.isEmpty) return 'Required';
-            if (double.tryParse(value) == null) return 'Invalid amount';
-            if (double.parse(value) <= 0) return 'Must be > 0';
+            if (_isTravelExpense) {
+              if (value == null || value.isEmpty) return 'Required';
+              if (double.tryParse(value) == null) return 'Invalid amount';
+              if (double.parse(value) <= 0) return 'Must be > 0';
+            } else {
+               if (value != null && value.isNotEmpty && double.tryParse(value) == null) {
+                  return 'Invalid amount';
+               }
+            }
             return null;
           },
         ),
@@ -728,11 +755,17 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         const SizedBox(height: 16),
 
         // Description
-        _buildLabel('Description (Optional)'),
+        _buildLabel(_isTravelExpense ? 'Description (Required)' : 'Description (Optional)'),
         TextFormField(
           controller: _descriptionController,
           maxLines: 2,
           decoration: _inputDecoration('Add a note about this expense...'),
+          validator: (value) {
+            if (_isTravelExpense && (value == null || value.trim().isEmpty)) {
+              return 'Description is required for travel expenses';
+            }
+            return null;
+          },
         ),
 
         const SizedBox(height: 16),
@@ -895,7 +928,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   void _calculateFuelAmount() {
     final distance = double.tryParse(_distanceController.text);
     if (distance != null && distance > 0) {
-      final rate = TravelAllowanceLimits.getFuelRatePerKm(_employeeGrade);
+      final rate = _selectedCategory?.name == 'fuel_car'
+          ? TravelAllowanceLimits.getFuelRatePerKm(_employeeGrade)
+          : TravelAllowanceLimits.getBikeRatePerKm(_employeeGrade);
       final amount = distance * rate;
       _amountController.text = amount.toStringAsFixed(2);
       _checkAllowanceLimit();
@@ -1037,7 +1072,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     }
   }
 
-  void _submitExpense() {
+  void _submitExpense() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1045,12 +1080,84 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       );
       return;
     }
+    if (_isTravelExpense && _descriptionController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Description is required for travel expenses')),
+      );
+      return;
+    }
     
     setState(() => _isSubmitting = true);
+
+    // Duplicate detection: check for same category + date
+    try {
+      final sb = Supabase.instance.client;
+      final userId = sb.auth.currentUser?.id;
+      if (userId != null) {
+        final dateStr = _selectedDate.toIso8601String().split('T').first;
+        final existing = await sb
+            .from('expense_claims')
+            .select('id, total_amount, notes')
+            .eq('employee_id', userId)
+            .gte('created_at', '${dateStr}T00:00:00')
+            .lte('created_at', '${dateStr}T23:59:59')
+            .limit(5);
+
+        if (existing is List && existing.isNotEmpty && mounted) {
+          final amount = double.parse(_amountController.text);
+          final duplicateFound = existing.any((e) {
+            final existingAmt = (e['total_amount'] as num?)?.toDouble() ?? 0;
+            return (existingAmt - amount).abs() < 1.0; // Same amount within ₹1
+          });
+
+          if (duplicateFound) {
+            final proceed = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                title: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700),
+                    const SizedBox(width: 8),
+                    const Text('Possible Duplicate'),
+                  ],
+                ),
+                content: Text(
+                  'An expense with a similar amount (₹${amount.toStringAsFixed(0)}) was already submitted today.\n\nDo you still want to submit?',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade700,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Submit Anyway'),
+                  ),
+                ],
+              ),
+            );
+
+            if (proceed != true) {
+              setState(() => _isSubmitting = false);
+              return;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // If duplicate check fails, proceed with submission anyway
+    }
+    
+    if (!mounted) return;
     
     context.read<ExpenseBloc>().add(ExpenseSubmitRequested(
       amount: double.parse(_amountController.text),
-      category: _selectedCategory!.name, // Use name, not displayName, for database
+      category: _selectedCategory!.name,
       expenseDate: _selectedDate,
       description: _descriptionController.text.isNotEmpty 
           ? _descriptionController.text 

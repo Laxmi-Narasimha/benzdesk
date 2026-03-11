@@ -29,6 +29,7 @@ class ExpenseSubmitRequested extends ExpenseEvent {
   final double amount;
   final String category;
   final DateTime expenseDate;
+  final String? title; // New field for general requests
   final String? description;
   final String? receiptPath;
 
@@ -36,12 +37,13 @@ class ExpenseSubmitRequested extends ExpenseEvent {
     required this.amount,
     required this.category,
     required this.expenseDate,
+    this.title,
     this.description,
     this.receiptPath,
   });
 
   @override
-  List<Object?> get props => [amount, category, expenseDate, description, receiptPath];
+  List<Object?> get props => [amount, category, expenseDate, title, description, receiptPath];
 }
 
 /// Create a new expense claim

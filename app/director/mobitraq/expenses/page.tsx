@@ -1,23 +1,18 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import {
     Receipt,
-    Calendar,
     ChevronLeft,
     ChevronRight,
     Search,
-    Filter,
     Check,
     X,
     Clock,
-    FileText,
     AlertTriangle,
-    MessageCircle,
-    Send,
     Eye,
-    MoreHorizontal
 } from 'lucide-react';
 import {
     Card,
@@ -25,11 +20,9 @@ import {
     Input,
     Select,
     Badge,
-    Drawer,
     StatCard
 } from '@/components/ui';
 
-// ... (Types remain the same as before, copying them for completeness)
 interface ExpenseClaimComment {
     id: number;
     claim_id: string;
@@ -70,23 +63,22 @@ interface ExpenseClaim {
     expense_items?: ExpenseItem[];
 }
 
-// Category display mapping
+// Category display mapping — unified 9 categories
 const CATEGORY_INFO: Record<string, { icon: string; label: string }> = {
-    local_conveyance: { icon: '🚗', label: 'Local Conveyance' },
-    fuel: { icon: '⛽', label: 'Fuel' },
-    toll: { icon: '🛣️', label: 'Toll / Parking' },
-    outstation_travel: { icon: '✈️', label: 'Outstation Travel' },
-    food_da: { icon: '🍽️', label: 'Food & DA' },
-    food: { icon: '🍽️', label: 'Food & Meals' },
-    accommodation: { icon: '🏨', label: 'Accommodation' },
+    food_da: { icon: '🍽️', label: 'Food DA' },
+    hotel: { icon: '🏨', label: 'Hotel' },
+    local_travel: { icon: '🚗', label: 'Local Travel' },
+    fuel_car: { icon: '⛽', label: 'Fuel - Car' },
+    fuel_bike: { icon: '🏍️', label: 'Fuel - Bike' },
     laundry: { icon: '👔', label: 'Laundry' },
+    toll: { icon: '🛣️', label: 'Toll/Parking' },
     internet: { icon: '📶', label: 'Internet' },
-    mobile: { icon: '📱', label: 'Mobile' },
-    petty_cash: { icon: '💵', label: 'Petty Cash' },
-    advance_request: { icon: '💳', label: 'Advance Request' },
-    stationary: { icon: '✏️', label: 'Stationary' },
-    medical: { icon: '🏥', label: 'Medical' },
     other: { icon: '📋', label: 'Other' },
+    // Legacy aliases for older data
+    fuel: { icon: '⛽', label: 'Fuel' },
+    food: { icon: '🍽️', label: 'Food & Meals' },
+    accommodation: { icon: '🏨', label: 'Hotel' },
+    local_conveyance: { icon: '🚗', label: 'Local Travel' },
 };
 
 // Band display names
@@ -105,86 +97,13 @@ const BAND_NAMES: Record<string, string> = {
 };
 
 export default function ExpensesPage() {
+    const router = useRouter();
     const [expenses, setExpenses] = useState<ExpenseClaim[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'submitted' | 'in_review' | 'approved' | 'rejected'>('all');
     const [currentPage, setCurrentPage] = useState(1);
-    const [processingId, setProcessingId] = useState<string | null>(null);
-    const [selectedClaim, setSelectedClaim] = useState<ExpenseClaim | null>(null);
-    const [rejectionReason, setRejectionReason] = useState('');
-    const [showRejectInput, setShowRejectInput] = useState(false);
-    const [comments, setComments] = useState<ExpenseClaimComment[]>([]);
-    const [newComment, setNewComment] = useState('');
-    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const pageSize = 15;
-
-    useEffect(() => {
-        const getCurrentUser = async () => {
-            const supabase = getSupabaseClient();
-            const { data: { user } } = await supabase.auth.getUser();
-            setCurrentUserId(user?.id || null);
-        };
-        getCurrentUser();
-    }, []);
-
-    useEffect(() => {
-        if (selectedClaim) {
-            fetchComments(selectedClaim.id);
-            // Reset reject state when opening new claim
-            setShowRejectInput(false);
-            setRejectionReason('');
-        }
-    }, [selectedClaim]);
-
-    const fetchComments = async (claimId: string) => {
-        try {
-            const supabase = getSupabaseClient();
-            const { data, error } = await supabase
-                .from('expense_claim_comments')
-                .select(`
-                    *,
-                    author:employees!author_id (name, role)
-                `)
-                .eq('claim_id', claimId)
-                .order('created_at', { ascending: true });
-
-            if (error) throw error;
-
-            const transformedComments = (data || []).map((c: any) => ({
-                ...c,
-                author: Array.isArray(c.author) ? c.author[0] : c.author
-            }));
-
-            setComments(transformedComments);
-        } catch (error) {
-            console.error('Error fetching comments:', error);
-        }
-    };
-
-    const handlePostComment = async () => {
-        if (!newComment.trim() || !currentUserId || !selectedClaim) return;
-
-        try {
-            const supabase = getSupabaseClient();
-            const { error } = await supabase
-                .from('expense_claim_comments')
-                .insert({
-                    claim_id: selectedClaim.id,
-                    author_id: currentUserId,
-                    body: newComment.trim(),
-                    is_internal: false
-                });
-
-            if (error) throw error;
-
-            setNewComment('');
-            fetchComments(selectedClaim.id);
-        } catch (error) {
-            console.error('Error posting comment:', error);
-            alert('Failed to post comment');
-        }
-    };
 
     useEffect(() => {
         fetchExpenses();
@@ -236,66 +155,6 @@ export default function ExpensesPage() {
             console.error('Error fetching expenses:', error.message || error);
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const handleApprove = async () => {
-        if (!selectedClaim) return;
-        setProcessingId(selectedClaim.id);
-        try {
-            const supabase = getSupabaseClient();
-            const { error } = await supabase
-                .from('expense_claims')
-                .update({
-                    status: 'approved',
-                    reviewed_at: new Date().toISOString()
-                })
-                .eq('id', selectedClaim.id);
-
-            if (error) throw error;
-
-            // Update local state and close drawer
-            setExpenses(prev => prev.map(exp =>
-                exp.id === selectedClaim.id ? { ...exp, status: 'approved' as const, reviewed_at: new Date().toISOString() } : exp
-            ));
-            setSelectedClaim(null);
-        } catch (error) {
-            console.error('Error approving expense:', error);
-        } finally {
-            setProcessingId(null);
-        }
-    };
-
-    const handleReject = async () => {
-        if (!selectedClaim || !rejectionReason.trim()) return;
-
-        setProcessingId(selectedClaim.id);
-        try {
-            const supabase = getSupabaseClient();
-            const { error } = await supabase
-                .from('expense_claims')
-                .update({
-                    status: 'rejected',
-                    reviewed_at: new Date().toISOString(),
-                    rejection_reason: rejectionReason
-                })
-                .eq('id', selectedClaim.id);
-
-            if (error) throw error;
-
-            setExpenses(prev => prev.map(exp =>
-                exp.id === selectedClaim.id ? {
-                    ...exp,
-                    status: 'rejected' as const,
-                    reviewed_at: new Date().toISOString(),
-                    rejection_reason: rejectionReason
-                } : exp
-            ));
-            setSelectedClaim(null);
-        } catch (error) {
-            console.error('Error rejecting expense:', error);
-        } finally {
-            setProcessingId(null);
         }
     };
 
@@ -444,7 +303,7 @@ export default function ExpensesPage() {
                                 paginatedExpenses.map((expense) => (
                                     <tr
                                         key={expense.id}
-                                        onClick={() => setSelectedClaim(expense)}
+                                        onClick={() => router.push(`/director/request?id=${expense.id}`)}
                                         className="hover:bg-gray-50 cursor-pointer transition-colors group"
                                     >
                                         <td className="px-6 py-4">
@@ -514,176 +373,6 @@ export default function ExpensesPage() {
                     </div>
                 )}
             </Card>
-
-            {/* Claim Details Drawer */}
-            <Drawer
-                isOpen={!!selectedClaim}
-                onClose={() => setSelectedClaim(null)}
-                title={selectedClaim ? `Claim #${selectedClaim.id.slice(0, 8)}` : 'Details'}
-                size="lg"
-                footer={
-                    selectedClaim?.status === 'submitted' && (
-                        <div className="flex w-full gap-3">
-                            {showRejectInput ? (
-                                <div className="w-full space-y-3">
-                                    <Input
-                                        placeholder="Reason for rejection..."
-                                        value={rejectionReason}
-                                        onChange={(e) => setRejectionReason(e.target.value)}
-                                        className="w-full"
-                                    />
-                                    <div className="flex gap-2">
-                                        <Button
-                                            variant="outline"
-                                            onClick={() => setShowRejectInput(false)}
-                                            className="flex-1"
-                                        >
-                                            Cancel
-                                        </Button>
-                                        <Button
-                                            className="flex-1 bg-red-600 hover:bg-red-700 text-white"
-                                            onClick={handleReject}
-                                            disabled={!rejectionReason.trim() || !!processingId}
-                                        >
-                                            Confirm Reject
-                                        </Button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <>
-                                    <Button
-                                        className="flex-1 bg-red-50 text-red-600 hover:bg-red-100 border-red-200"
-                                        onClick={() => setShowRejectInput(true)}
-                                    >
-                                        Reject
-                                    </Button>
-                                    <Button
-                                        className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                                        onClick={handleApprove}
-                                        disabled={!!processingId}
-                                    >
-                                        Approve Claim
-                                    </Button>
-                                </>
-                            )}
-                        </div>
-                    )
-                }
-            >
-                {selectedClaim && (
-                    <div className="space-y-6">
-                        {/* Summary Header */}
-                        <div className="p-4 bg-gray-50 dark:bg-dark-800 rounded-xl flex items-center justify-between">
-                            <div>
-                                <p className="text-sm text-slate-500 font-medium">Total Claim Amount</p>
-                                <p className="text-2xl font-bold text-slate-900">
-                                    {formatCurrency(selectedClaim.total_amount)}
-                                </p>
-                            </div>
-                            <div className="text-right">
-                                <div className="flex items-center gap-2 justify-end mb-1">
-                                    <span className="text-sm font-bold text-slate-900">{selectedClaim.employees?.name}</span>
-                                    <Badge variant="outline" size="sm">{selectedClaim.employees?.band || 'NA'}</Badge>
-                                </div>
-                                <p className="text-xs text-slate-500 font-medium">{formatDate(selectedClaim.claim_date)}</p>
-                            </div>
-                        </div>
-
-                        {/* Status/Notes */}
-                        <div className="space-y-3">
-                            {selectedClaim.status === 'rejected' && selectedClaim.rejection_reason && (
-                                <div className="p-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700">
-                                    <span className="font-semibold">Rejected:</span> {selectedClaim.rejection_reason}
-                                </div>
-                            )}
-                            {selectedClaim.notes && (
-                                <div className="text-sm text-slate-700 font-medium bg-white p-3 border border-gray-200 rounded-lg italic">
-                                    "{selectedClaim.notes}"
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Line Items */}
-                        <div>
-                            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-3">Line Items</h3>
-                            <div className="space-y-3">
-                                {selectedClaim.expense_items?.map((item) => {
-                                    const cat = getCategoryInfo(item.category);
-                                    return (
-                                        <div key={item.id} className="flex gap-4 p-4 border border-gray-200 rounded-xl hover:border-primary-200 transition-colors bg-white">
-                                            <div className="text-2xl pt-1">{cat.icon}</div>
-                                            <div className="flex-1">
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <p className="font-bold text-slate-900">{cat.label}</p>
-                                                        {item.description && <p className="text-sm text-slate-500 font-medium">{item.description}</p>}
-                                                    </div>
-                                                    <p className="font-bold text-slate-900">{formatCurrency(item.amount)}</p>
-                                                </div>
-                                                <div className="flex items-center gap-2 mt-2">
-                                                    {item.receipt_url && (
-                                                        <a
-                                                            href={item.receipt_url}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="inline-flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 bg-primary-50 px-2 py-1 rounded"
-                                                        >
-                                                            <FileText className="w-3 h-3" /> View Receipt
-                                                        </a>
-                                                    )}
-                                                    {item.exceeds_limit && (
-                                                        <Badge color="yellow" size="sm" variant="subtle">Exceeds Policy Limit</Badge>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* Discussion */}
-                        <div className="border-t border-gray-200 pt-6">
-                            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4 flex items-center gap-2">
-                                <MessageCircle className="w-4 h-4" /> Discussion history
-                            </h3>
-                            <div className="space-y-4 max-h-[300px] overflow-y-auto mb-4 p-1">
-                                {comments.length === 0 ? (
-                                    <p className="text-sm text-gray-400 italic">No comments yet.</p>
-                                ) : (
-                                    comments.map((comment) => (
-                                        <div key={comment.id} className={`flex gap-3 ${comment.author_id === currentUserId ? 'flex-row-reverse' : ''}`}>
-                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${comment.author_id === currentUserId ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-slate-600'
-                                                }`}>
-                                                {comment.author?.name?.charAt(0).toUpperCase()}
-                                            </div>
-                                            <div className={`max-w-[85%] p-3 rounded-2xl text-sm border border-transparent ${comment.author_id === currentUserId
-                                                ? 'bg-primary-50 text-slate-900 rounded-tr-none'
-                                                : 'bg-gray-100 text-slate-900 rounded-tl-none border-gray-200'
-                                                }`}>
-                                                <p className="font-bold text-xs opacity-70 mb-1">{comment.author?.name}</p>
-                                                <p>{comment.body}</p>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                            <div className="flex gap-2">
-                                <Input
-                                    placeholder="Add internal note..."
-                                    value={newComment}
-                                    onChange={(e) => setNewComment(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && handlePostComment()}
-                                    className="flex-1"
-                                />
-                                <Button onClick={handlePostComment} disabled={!newComment.trim()}>
-                                    <Send className="w-4 h-4" />
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </Drawer>
         </div>
     );
 }

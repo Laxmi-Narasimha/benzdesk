@@ -6,9 +6,15 @@ import '../../presentation/screens/home_screen.dart';
 import '../../presentation/screens/session_history_screen.dart';
 import '../../presentation/screens/expenses_screen.dart';
 import '../../presentation/screens/add_expense_screen.dart';
+import '../../presentation/screens/expense_detail_screen.dart';
 import '../../presentation/screens/profile_screen.dart';
 import '../../presentation/screens/notifications_screen.dart';
 import '../../presentation/screens/my_timeline_screen.dart';
+import '../../presentation/screens/my_trips_screen.dart';
+import '../../presentation/screens/create_trip_screen.dart';
+import '../../presentation/screens/create_trip_expense_screen.dart';
+import '../../presentation/screens/faq_screen.dart';
+import '../../data/models/trip_model.dart';
 
 /// Application router for named route navigation
 class AppRouter {
@@ -29,6 +35,10 @@ class AppRouter {
   static const String expenseDetail = '/expenses/detail';
   static const String profile = '/profile';
   static const String myTimeline = '/timeline';
+  static const String myTrips = '/trips';
+  static const String createTrip = '/trips/create';
+  static const String createTripExpense = '/trips/expense/create';
+  static const String faq = '/faq';
 
   // ============================================================
   // ROUTE GENERATOR
@@ -88,7 +98,12 @@ class AppRouter {
         final args = settings.arguments as ExpenseDetailArguments?;
         return _buildRoute(
           settings,
-          _PlaceholderScreen(title: 'Expense: ${args?.claimId ?? "Unknown"}'),
+          ExpenseDetailScreen(
+            claimId: args?.claimId ?? '',
+            category: args?.category,
+            amount: args?.amount,
+            status: args?.status,
+          ),
         );
 
       case profile:
@@ -101,6 +116,31 @@ class AppRouter {
         return _buildRoute(
           settings,
           const MyTimelineScreen(),
+        );
+
+      case myTrips:
+        return _buildRoute(
+          settings,
+          const MyTripsScreen(),
+        );
+
+      case createTrip:
+        return _buildRoute(
+          settings,
+          const CreateTripScreen(),
+        );
+
+      case createTripExpense:
+        final trip = settings.arguments as TripModel;
+        return _buildRoute(
+          settings,
+          CreateTripExpenseScreen(trip: trip),
+        );
+
+      case faq:
+        return _buildRoute(
+          settings,
+          const FaqScreen(),
         );
 
       default:
@@ -166,8 +206,16 @@ class AddExpenseArguments {
 /// Arguments for ExpenseDetailScreen
 class ExpenseDetailArguments {
   final String claimId;
+  final String? category;
+  final double? amount;
+  final String? status;
 
-  const ExpenseDetailArguments({required this.claimId});
+  const ExpenseDetailArguments({
+    required this.claimId,
+    this.category,
+    this.amount,
+    this.status,
+  });
 }
 
 // ============================================================

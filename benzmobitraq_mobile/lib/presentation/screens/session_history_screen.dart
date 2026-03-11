@@ -5,7 +5,9 @@ import 'package:intl/intl.dart';
 import '../../data/models/session_model.dart';
 import '../../core/utils/date_utils.dart';
 import '../blocs/session/session_bloc.dart';
+import '../widgets/stats_card.dart';
 import '../widgets/app_bottom_nav_bar.dart';
+import '../widgets/post_session_expense_dialog.dart';
 
 /// Screen showing session history with distance and duration
 class SessionHistoryScreen extends StatefulWidget {
@@ -345,6 +347,26 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ] else if (session.totalKm > 0.1) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        PostSessionExpenseDialog.showIfNeeded(context, session, session.totalKm);
+                      },
+                      icon: const Icon(Icons.local_gas_station),
+                      label: const Text('Log Fuel Expense'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                        side: BorderSide(color: Theme.of(context).colorScheme.primary),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),

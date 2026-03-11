@@ -323,11 +323,41 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: const Text('Use Magic Link Instead'),
                   ),
                 ] else ...[
-                  // Magic Link button
-                  LoadingButton(
-                    onPressed: _onSendMagicLink,
-                    isLoading: isLoading,
-                    label: 'Send Login Link',
+                  // Google Sign In button
+                  ElevatedButton.icon(
+                    onPressed: isLoading ? null : () {
+                      context.read<AuthBloc>().add(AuthGoogleSignInRequested());
+                    },
+                    icon: Container(
+                      width: 24,
+                      height: 24,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Text(
+                        'G',
+                        style: TextStyle(
+                          color: Colors.blue,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                    label: const Text(
+                      'Continue with Google',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade600,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   
@@ -347,6 +377,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       Expanded(child: Divider(color: Colors.grey.shade300)),
                     ],
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Magic Link button
+                  LoadingButton(
+                    onPressed: _onSendMagicLink,
+                    isLoading: isLoading,
+                    label: 'Send Login Link',
                   ),
                   const SizedBox(height: 16),
                   

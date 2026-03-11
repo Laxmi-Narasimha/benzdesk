@@ -440,11 +440,10 @@ void _onServiceStart(ServiceInstance service) async {
 
       // ============================================================
       // ADAPTIVE SAMPLING (bike vs car mode)
-      // Per spec Section 7.3: speed-based distance thresholds
       // ============================================================
       
-      // Check minimum time gate first (5 seconds)
-      if (timeDelta < AppConstants.minTimeBetweenUpdates) {
+      // Check minimum time gate first
+      if (timeDelta < AppConstants.minTimeBetweenUpdates && distanceDelta < AppConstants.carDistanceThreshold) {
         logger.d('Rejected: too soon (${timeDelta}s < ${AppConstants.minTimeBetweenUpdates}s)');
         return;
       }
@@ -452,8 +451,8 @@ void _onServiceStart(ServiceInstance service) async {
       // Determine distance threshold based on speed
       final speedMps = position.speed >= 0 ? position.speed : 0.0;
       final distanceThreshold = speedMps <= AppConstants.bikeSpeedThresholdMps
-          ? AppConstants.bikeDistanceThreshold  // Bike mode: 30m
-          : AppConstants.carDistanceThreshold;   // Car mode: 60m
+          ? AppConstants.bikeDistanceThreshold  // Bike mode
+          : AppConstants.carDistanceThreshold;   // Car mode
       
       if (distanceDelta < distanceThreshold) {
         stationaryCount++;
@@ -467,25 +466,30 @@ void _onServiceStart(ServiceInstance service) async {
             shouldRecord = false;
           }
         }
+        // DO NOT update lastPosition! Let distance build up from the original anchor.
       } else {
         // Movement detected - distance delta exceeds threshold
-        // Since the distance threshold already filters GPS drift,
-        // we always accumulate distance when it passes
         stationaryCount = 0;
         isMoving = true;
         totalDistance += distanceDelta;
         logger.d('Distance accumulated: +${distanceDelta.toStringAsFixed(1)}m, total=${totalDistance.toStringAsFixed(1)}m');
+        
+        // Update anchor position
+        lastPosition = position;
+        lastPositionTime = now;
       }
 
+    } else {
+      // First position received
+      lastPosition = position;
+      lastPositionTime = now;
     }
 
-    // Update last position
-    lastPosition = position;
-    lastPositionTime = now;
-
     // Persist for recovery
-    await prefs.setDouble(TrackingService._keyLastLat, position.latitude);
-    await prefs.setDouble(TrackingService._keyLastLon, position.longitude);
+    if (lastPosition != null) {
+      await prefs.setDouble(TrackingService._keyLastLat, lastPosition!.latitude);
+      await prefs.setDouble(TrackingService._keyLastLon, lastPosition!.longitude);
+    }
     await prefs.setDouble(TrackingService._keyTotalDistance, totalDistance);
 
     if (!shouldRecord && !forceRecord) return;

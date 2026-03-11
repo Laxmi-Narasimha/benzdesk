@@ -33,13 +33,13 @@ class ProfileScreen extends StatelessWidget {
                 // Stats summary
                 _buildStatsSummary(context),
                 const SizedBox(height: 24),
-                
+
                 // Menu items
                 _buildMenuSection(context),
               ],
             ),
           ),
-          bottomNavigationBar: const AppBottomNavBar(currentIndex: 3),
+          bottomNavigationBar: const AppBottomNavBar(currentIndex: 4),
         );
       },
     );
@@ -90,14 +90,28 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           
-          // Name
-          Text(
-            employee?.name ?? 'User',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
+          // Name and Edit Icon
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                employee?.name ?? 'User',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _editName(context, employee?.name ?? ''),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                  child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           
@@ -327,6 +341,15 @@ class ProfileScreen extends StatelessWidget {
             // TODO: Navigate to settings
           },
         ),
+        _buildMenuItem(
+          context,
+          icon: Icons.help_outline,
+          title: 'User Guide / FAQ',
+          subtitle: 'Help and common questions',
+          onTap: () {
+            AppRouter.navigateTo(context, AppRouter.faq);
+          },
+        ),
         const SizedBox(height: 16),
         _buildMenuItem(
           context,
@@ -341,7 +364,6 @@ class ProfileScreen extends StatelessWidget {
       ],
     );
   }
-
   Widget _buildMenuItem(
     BuildContext context, {
     required IconData icon,
@@ -436,6 +458,34 @@ class ProfileScreen extends StatelessWidget {
               foregroundColor: Colors.white,
             ),
             child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _editName(BuildContext context, String currentName) {
+    final controller = TextEditingController(text: currentName);
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit Display Name'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Name', hintText: 'Enter your new display name'),
+          textCapitalization: TextCapitalization.words,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty && newName != currentName) {
+                context.read<AuthBloc>().add(AuthProfileUpdateRequested(name: newName, phone: ''));
+              }
+            },
+            child: const Text('Save'),
           ),
         ],
       ),

@@ -11,6 +11,8 @@ import '../blocs/auth/auth_bloc.dart';
 import '../blocs/session/session_bloc.dart';
 import '../widgets/stats_card.dart';
 import '../widgets/app_bottom_nav_bar.dart';
+import '../widgets/post_session_expense_dialog.dart';
+import '../widgets/monthly_expense_summary.dart';
 import 'settings_screen.dart';
 
 /// Main home screen with session tracking
@@ -189,7 +191,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _onWorkDoneTapped() {
+    final sessionState = context.read<SessionBloc>().state;
+    final distanceKm = sessionState.currentDistanceKm;
+    final currentSession = sessionState.currentSession;
+
     context.read<SessionBloc>().add(const SessionStopRequested());
+
+    // After session stops, prompt for fuel expense if distance > 0
+    if (distanceKm > 0.1 && currentSession != null) {
+      // Small delay to let session complete
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          PostSessionExpenseDialog.showIfNeeded(context, currentSession, distanceKm);
+        }
+      });
+    }
   }
 
   void _handlePermissionRequired(List<PermissionIssue> issues) {
@@ -417,6 +433,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   
                   // Stats Cards
                   _buildStatsSection(context, sessionState),
+                  const SizedBox(height: 20),
+
+                  // Monthly Expense Summary
+                  const MonthlyExpenseSummary(),
                   const SizedBox(height: 20),
                   
                   // Quick Actions
