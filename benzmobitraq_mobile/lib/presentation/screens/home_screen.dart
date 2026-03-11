@@ -6,7 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../core/router/app_router.dart';
 import '../../services/geocoding_service.dart';
 import '../../services/permission_service.dart';
-import '../../services/tracking_service.dart';
+
 import '../blocs/auth/auth_bloc.dart';
 import '../blocs/session/session_bloc.dart';
 import '../widgets/stats_card.dart';

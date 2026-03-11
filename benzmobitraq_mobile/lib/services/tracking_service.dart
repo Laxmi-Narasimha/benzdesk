@@ -3,7 +3,6 @@ import 'dart:ui';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:logger/logger.dart';
@@ -383,8 +382,9 @@ void _onServiceStart(ServiceInstance service) async {
   // Load persisted state
   final prefs = await SharedPreferences.getInstance();
   totalDistance = prefs.getDouble(TrackingService._keyTotalDistance) ?? 0;
-  final lastLat = prefs.getDouble(TrackingService._keyLastLat);
-  final lastLon = prefs.getDouble(TrackingService._keyLastLon);
+  // Persisted last position loaded via prefs but only used for recovery check
+  final savedLastLat = prefs.getDouble(TrackingService._keyLastLat);
+  final savedLastLon = prefs.getDouble(TrackingService._keyLastLon);
   
   // Load session start time for elapsed time calculation
   final startTimeMs = prefs.getInt(TrackingService._keySessionStartTime);
@@ -534,7 +534,7 @@ void _onServiceStart(ServiceInstance service) async {
       final timeStr = '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
       
       try {
-        (service as AndroidServiceInstance).setForegroundNotificationInfo(
+        service.setForegroundNotificationInfo(
           title: 'Tracking Active - $status',
           content: '$timeStr elapsed • $distanceKm km',
         );
@@ -555,7 +555,7 @@ void _onServiceStart(ServiceInstance service) async {
     positionSubscription?.cancel();
 
     // CRITICAL FIX: Use smaller distance filter for more frequent updates
-    final distanceFilter = 5; // Was AppConstants.distanceFilterDefault (50m)
+    // distance filter is configured inline below in LocationSettings
 
     // CRITICAL FIX: Use bestForNavigation for highest accuracy
     // NOTE: Removed timeLimit as it causes TimeoutException on real devices

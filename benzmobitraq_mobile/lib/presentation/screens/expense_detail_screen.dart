@@ -6,8 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/di/injection.dart';
 import '../../data/repositories/expense_repository.dart';
 import '../../core/utils/image_picker_helper.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
+
 import 'package:path/path.dart' as p;
 import '../blocs/auth/auth_bloc.dart';
 

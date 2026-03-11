@@ -3,11 +3,11 @@ import 'dart:convert';
 
 import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
-import 'package:geolocator/geolocator.dart';
+
 
 import '../data/models/session_model.dart';
 import '../data/models/location_point_model.dart';
-import '../data/models/notification_settings.dart';
+
 import '../data/repositories/session_repository.dart';
 import '../data/repositories/location_repository.dart';
 import '../data/repositories/expense_repository.dart';

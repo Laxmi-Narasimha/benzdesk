@@ -5,8 +5,8 @@ import 'package:intl/intl.dart';
 import '../../data/models/session_model.dart';
 import '../../core/utils/date_utils.dart';
 import '../blocs/session/session_bloc.dart';
-import '../widgets/stats_card.dart';
-import '../widgets/app_bottom_nav_bar.dart';
+
+
 import '../widgets/post_session_expense_dialog.dart';
 
 /// Screen showing session history with distance and duration

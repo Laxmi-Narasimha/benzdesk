@@ -2,11 +2,11 @@ import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-import '../data/datasources/local/location_queue_local.dart';
-import '../data/repositories/location_repository.dart';
-import '../data/models/location_point_model.dart';
-import '../core/constants/app_constants.dart';
-import '../core/utils/distance_calculator.dart';
+import 'package:benzmobitraq_mobile/data/datasources/local/location_queue_local.dart';
+import 'package:benzmobitraq_mobile/data/repositories/location_repository.dart';
+import 'package:benzmobitraq_mobile/data/models/location_point_model.dart';
+import 'package:benzmobitraq_mobile/core/constants/app_constants.dart';
+import 'package:benzmobitraq_mobile/core/utils/distance_calculator.dart';
 
 /// Service for managing location queue and batch uploads
 class LocationQueueService {
@@ -143,17 +143,10 @@ class LocationQueueService {
   /// Upload pending locations to server
   Future<int> uploadPending() async {
     try {
-      // Check connectivity - handle both old and new API
+      // Check connectivity — new API always returns List<ConnectivityResult>
       final connectivityResult = await _connectivity.checkConnectivity();
-      
-      // New API returns List<ConnectivityResult>, old API returns single ConnectivityResult
-      bool hasNoConnection = false;
-      if (connectivityResult is List) {
-        hasNoConnection = (connectivityResult as List).isEmpty || 
-            (connectivityResult as List).contains(ConnectivityResult.none);
-      } else {
-        hasNoConnection = connectivityResult == ConnectivityResult.none;
-      }
+      final bool hasNoConnection = connectivityResult.isEmpty || 
+          connectivityResult.contains(ConnectivityResult.none);
       
       if (hasNoConnection) {
         _logger.d('Skipping upload: No connectivity');

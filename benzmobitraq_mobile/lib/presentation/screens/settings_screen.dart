@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../core/constants/app_constants.dart';
+
 import '../../data/datasources/local/preferences_local.dart';
 import '../../data/models/notification_settings.dart';
 
@@ -343,7 +343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Switch.adaptive(
                 value: enabled,
                 onChanged: onToggle,
-                activeColor: iconColor,
+                activeTrackColor: iconColor,
               ),
             ],
           ),
