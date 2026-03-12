@@ -75,10 +75,14 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
       if (_isTripExpense) {
         // Use BenzDesk request_comments/request_events/request_attachments
         final requestId = reqCheck!['id'];
+        
+        // Fetch up-to-date status
+        final reqDetails = await supabase.from('requests').select('status').eq('id', requestId).single();
+
         final results = await Future.wait([
           supabase
               .from('request_comments')
-              .select('*')
+              .select('*, author:employees(name)')
               .eq('request_id', requestId)
               .order('created_at', ascending: true),
           supabase
@@ -95,6 +99,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
 
         if (mounted) {
           setState(() {
+            _currentStatus = reqDetails['status'];
             _comments = List<Map<String, dynamic>>.from(results[0] as List);
             _events = List<Map<String, dynamic>>.from(results[1] as List);
             _attachments = List<Map<String, dynamic>>.from(results[2] as List);
@@ -102,6 +107,9 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
           });
         }
       } else {
+        // Fetch up-to-date status
+        final claimDetails = await supabase.from('expense_claims').select('status').eq('id', widget.claimId).single();
+        
         // Use expense_claim_comments for standalone claims
         final repo = getIt<ExpenseRepository>();
         final results = await Future.wait([
@@ -112,6 +120,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
 
         if (mounted) {
           setState(() {
+            _currentStatus = claimDetails['status'];
             _comments = results[0];
             _events = results[1];
             _attachments = results[2];
@@ -154,8 +163,8 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
             .single();
 
         if (mounted) {
+          await _loadData();
           setState(() {
-            _comments.add(response);
             _isSending = false;
           });
           _scrollToBottom();
@@ -170,8 +179,8 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
         );
 
         if (result != null && mounted) {
+          await _loadData();
           setState(() {
-            _comments.add(result);
             _isSending = false;
           });
           _scrollToBottom();

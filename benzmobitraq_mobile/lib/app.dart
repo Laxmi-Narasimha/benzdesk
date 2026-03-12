@@ -50,6 +50,9 @@ class BenzMobiTraqApp extends StatelessWidget {
           title: 'BenzMobiTraq',
           debugShowCheckedModeBanner: false,
           
+          // Navigation Key for background deep linking
+          navigatorKey: getIt<GlobalKey<NavigatorState>>(),
+          
           // Theme configuration
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

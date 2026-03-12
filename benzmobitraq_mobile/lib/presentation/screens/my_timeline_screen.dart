@@ -8,9 +8,10 @@ import '../../core/utils/date_utils.dart';
 import '../../data/models/session_model.dart';
 import '../../data/repositories/location_repository.dart';
 import '../../data/repositories/session_repository.dart';
+import '../widgets/app_bottom_nav_bar.dart';
+import '../widgets/post_session_expense_dialog.dart';
 
 /// My Timeline Screen - Employee's personal timeline view
-/// Shows sessions with expandable details containing stops, moves, and stats
 class MyTimelineScreen extends StatefulWidget {
   const MyTimelineScreen({super.key});
 
@@ -523,6 +524,29 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 itemCount: group.events.length,
                 itemBuilder: (context, index) => _buildTimelineEventItem(group.events[index]),
+              ),
+              
+            if (!isActive && group.totalDistanceKm > 0)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      PostSessionExpenseDialog.showIfNeeded(context, session, group.totalDistanceKm);
+                    },
+                    icon: const Icon(Icons.local_gas_station),
+                    label: const Text('Log Fuel Expense'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.primary,
+                      side: BorderSide(color: Theme.of(context).colorScheme.primary),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
               ),
           ],
         ],

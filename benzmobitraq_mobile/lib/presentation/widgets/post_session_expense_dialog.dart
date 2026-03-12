@@ -16,7 +16,7 @@ class PostSessionExpenseDialog extends StatefulWidget {
   });
 
   static Future<void> showIfNeeded(BuildContext context, SessionModel session, double distanceKm) async {
-    if (distanceKm <= 0.1) return; // Skip for negligible distance
+    if (distanceKm <= 0) return; // Skip for 0 distance
 
     await showDialog(
       context: context,
@@ -102,7 +102,9 @@ class _PostSessionExpenseDialogState extends State<PostSessionExpenseDialog> {
       final startLoc = widget.session.startAddress?.split(',').first ?? 'Start';
       final endLoc = widget.session.endAddress?.split(',').first ?? 'End';
       final vname = _vehicleType == 'car' ? 'Car' : 'Bike';
-      final description = 'Fuel expense for ${widget.distanceKm.toStringAsFixed(1)} km ($vname) - $startLoc to $endLoc';
+      final distanceStr = widget.distanceKm.toStringAsFixed(1);
+      final title = '[Session ${widget.session.id.toString().substring(0, 5)}] Fuel ($distanceStr km)';
+      final description = 'Fuel expense for $distanceStr km ($vname) - $startLoc to $endLoc. Session ID: ${widget.session.id}';
 
       // If there's an active trip, add to trip_expenses with session_id link
       if (_activeTrip != null) {
@@ -111,7 +113,7 @@ class _PostSessionExpenseDialogState extends State<PostSessionExpenseDialog> {
           'employee_id': userId,
           'category': fuelCategory,
           'amount': amount,
-          'description': description,
+          'description': title + ' - ' + description,
           'date': DateTime.now().toIso8601String().split('T').first,
           'limit_amount': amount,
           'exceeds_limit': false,
@@ -122,7 +124,7 @@ class _PostSessionExpenseDialogState extends State<PostSessionExpenseDialog> {
         final claim = await sb.from('expense_claims').insert({
           'employee_id': userId,
           'total_amount': amount,
-          'notes': description,
+          'notes': title + '] ' + description,
           'status': 'submitted',
         }).select('id').single();
 

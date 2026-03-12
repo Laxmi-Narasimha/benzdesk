@@ -13,6 +13,8 @@ import '../widgets/stats_card.dart';
 import '../widgets/app_bottom_nav_bar.dart';
 import '../widgets/post_session_expense_dialog.dart';
 import '../widgets/monthly_expense_summary.dart';
+import '../widgets/active_trip_summary.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'settings_screen.dart';
 
 /// Main home screen with session tracking
@@ -340,7 +342,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   AppRouter.navigateTo(context, AppRouter.profile);
                   break;
                 case 'history':
-                  AppRouter.navigateTo(context, AppRouter.sessionHistory);
+                  AppRouter.navigateTo(context, AppRouter.myTimeline);
                   break;
                 case 'logout':
                   context.read<AuthBloc>().add(AuthSignOutRequested());
@@ -359,8 +361,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const PopupMenuItem(
                 value: 'history',
                 child: ListTile(
-                  leading: Icon(Icons.history),
-                  title: Text('Session History'),
+                  leading: Icon(Icons.timeline),
+                  title: Text('My Timeline'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
@@ -435,8 +437,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _buildStatsSection(context, sessionState),
                   const SizedBox(height: 20),
 
-                  // Monthly Expense Summary
-                  const MonthlyExpenseSummary(),
+                  // Active Trip or Monthly Expense Summary
+                  const ActiveTripOrMonthlySummary(),
                   const SizedBox(height: 20),
                   
                   // Quick Actions
@@ -774,8 +776,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(width: 12),
-            // Placeholder for future action or leave empty
-            const Expanded(child: SizedBox()),
+            // BenzDesk Web Action
+            Expanded(
+              child: _buildActionCard(
+                context,
+                icon: Icons.open_in_browser,
+                label: 'BenzDesk Web',
+                onTap: () async {
+                  final url = Uri.parse('https://benzdesk.vercel.app');
+                  if (await canLaunchUrl(url)) {
+                    await launchUrl(url, mode: LaunchMode.externalApplication);
+                  }
+                },
+              ),
+            ),
           ],
         ),
       ],

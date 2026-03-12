@@ -144,6 +144,27 @@ class _CreateTripExpenseScreenState extends State<CreateTripExpenseScreen> {
       final userId = sb.auth.currentUser?.id;
       if (userId == null) throw Exception('Not logged in');
 
+      // Fuel duplicate check
+      if (_category == 'fuel_car' || _category == 'fuel_bike') {
+        final existingFuel = await sb
+            .from('trip_expenses')
+            .select('id')
+            .eq('trip_id', widget.trip.id)
+            .inFilter('category', ['fuel_car', 'fuel_bike'])
+            .limit(1)
+            .maybeSingle();
+
+        if (existingFuel != null) {
+          if (mounted) {
+            setState(() {
+              _error = 'Fuel expense has already been logged for this trip.';
+              _loading = false;
+            });
+          }
+          return;
+        }
+      }
+
       final effectiveLimit = _getEffectiveLimit();
       final double? limitAmount = effectiveLimit;
       final bool exceeds = limitAmount != null && amount > limitAmount;

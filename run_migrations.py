@@ -11,17 +11,11 @@ def run_migrations():
         cur = conn.cursor()
         print("Connected to Supabase via direct connection!")
         
-        with open("infra/supabase/migrations/040_trips_system.sql", "r") as f:
-            sql040 = f.read()
-            print("Running 040_trips_system.sql...")
-            cur.execute(sql040)
-            print("Successfully applied 040_trips_system.sql")
-            
-        with open("infra/supabase/migrations/041_fix_timeline_km.sql", "r") as f:
-            sql041 = f.read()
-            print("Running 041_fix_timeline_km.sql...")
-            cur.execute(sql041)
-            print("Successfully applied 041_fix_timeline_km.sql")
+        with open("infra/supabase/migrations/20260311185257_fix_item_categories.sql", "r") as f:
+            sql = f.read()
+            print("Running 20260311185257_fix_item_categories.sql...")
+            cur.execute(sql)
+            print("Successfully applied 20260311185257_fix_item_categories.sql")
             
         cur.close()
         conn.close()

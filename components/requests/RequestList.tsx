@@ -32,9 +32,10 @@ import { useAuth } from '@/lib/AuthContext';
 import type { Request, RequestStatus, Priority } from '@/types';
 import { REQUEST_STATUS_LABELS, REQUEST_CATEGORY_LABELS, FRESH_START_DATE, getDisplayName } from '@/types';
 
-// Extended type with creator email
+// Extended type with creator email and name
 interface RequestWithCreator extends Request {
     creator_email?: string | null;
+    creator_name?: string | null;
 }
 
 // ============================================================================
@@ -133,9 +134,9 @@ export function RequestList({
         async function fetchEmployeeOptions() {
             try {
                 const supabase = getSupabaseClient();
-                const { data, error: fetchError } = await supabase
+                const { data, error: fetchError } = await (supabase
                     .from('requests_with_creator')
-                    .select('creator_email')
+                    .select('creator_email, creator_name') as any)
                     .gte('created_at', FRESH_START_DATE)
                     .not('creator_email', 'is', null);
 
@@ -145,17 +146,24 @@ export function RequestList({
                 const uniqueEmployees = Array.from(
                     new Map(
                         (data || [])
-                            .map((row) => row.creator_email)
-                            .filter((email): email is string => Boolean(email))
-                            .map((email) => [
-                                email.toLowerCase(),
+                            .map((row: any) => ({
+                                email: row.creator_email as string,
+                                name: row.creator_name as string | null,
+                            }))
+                            .filter((emp: { email: string; name: string | null }): emp is { email: string; name: string | null } =>
+                                Boolean(emp.email)
+                            )
+                            .map((emp: { email: string; name: string | null }) => [
+                                emp.email.toLowerCase(),
                                 {
-                                    value: email,
-                                    label: getDisplayName(email),
+                                    value: emp.email,
+                                    label: emp.name || getDisplayName(emp.email),
                                 },
-                            ])
+                            ] as [string, { value: string; label: string }])
                     ).values()
-                ).sort((a, b) => a.label.localeCompare(b.label));
+                ) as { value: string; label: string }[];
+                
+                uniqueEmployees.sort((a, b) => a.label.localeCompare(b.label));
 
                 setEmployeeOptions([
                     { value: 'all', label: 'All Employees' },
@@ -277,8 +285,11 @@ export function RequestList({
                 REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category,
             ];
 
-            if (canFilterByEmployee && request.creator_email) {
-                searchableFields.push(request.creator_email, getDisplayName(request.creator_email));
+            if (canFilterByEmployee) {
+                if (request.creator_name) searchableFields.push(request.creator_name);
+                if (request.creator_email) {
+                    searchableFields.push(request.creator_email, getDisplayName(request.creator_email));
+                }
             }
 
             return searchableFields.some((value) => value.toLowerCase().includes(normalizedSearch));
@@ -495,22 +506,29 @@ export function RequestList({
                                         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
                                             <PriorityBadge priority={request.priority as Priority} size="sm" />
 
+                                            <span className="flex items-center gap-1 font-mono text-xs text-blue-600 font-medium">
+                                                #{request.reference_id || request.id.substring(0, 6).toUpperCase()}
+                                            </span>
+
                                             <span className="flex items-center gap-1">
                                                 <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
                                                     {REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category}
                                                 </span>
                                             </span>
 
-                                            <span className="flex items-center gap-1" suppressHydrationWarning>
+                                            <span className="flex items-center gap-1 text-gray-700 font-medium" suppressHydrationWarning>
                                                 <Clock className="w-3.5 h-3.5" />
-                                                {formatDistanceToNow(new Date(request.created_at), { addSuffix: true })}
+                                                {new Date(request.created_at).toLocaleString('en-IN', {
+                                                    day: '2-digit', month: 'short', year: 'numeric',
+                                                    hour: '2-digit', minute: '2-digit', hour12: true
+                                                })}
                                             </span>
 
                                             {/* Show requester name for admin/director */}
-                                            {(isAdmin || isDirector) && request.creator_email && (
-                                                <span className="flex items-center gap-1 text-gray-400">
+                                            {(isAdmin || isDirector) && (request.creator_name || request.creator_email) && (
+                                                <span className="flex items-center gap-1 text-gray-500 font-medium ml-1">
                                                     <User className="w-3.5 h-3.5" />
-                                                    {getDisplayName(request.creator_email)}
+                                                    {request.creator_name || getDisplayName(request.creator_email)}
                                                 </span>
                                             )}
 

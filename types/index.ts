@@ -80,6 +80,7 @@ export interface UserRole {
  */
 export interface Request {
     id: string;
+    reference_id?: string | null;
     created_at: string;
     created_by: string;
     title: string;
@@ -219,6 +220,8 @@ export interface AdminThroughput {
 export interface RequestWithUsers extends Request {
     creator?: UserProfile;
     assignee?: UserProfile;
+    creator_email?: string | null;
+    creator_name?: string | null;
 }
 
 /**

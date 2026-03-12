@@ -6,7 +6,8 @@ class EmployeeModel extends Equatable {
   final String name;
   final String? email;
   final String? phone;
-  final String role; // 'employee', 'admin', or 'super_admin'
+  final String role; // 'employee', 'admin', 'super_admin'
+  final String? band;
   final String? deviceToken;
   final bool isActive;
   final DateTime createdAt;
@@ -18,6 +19,7 @@ class EmployeeModel extends Equatable {
     this.email,
     this.phone,
     this.role = 'employee',
+    this.band,
     this.deviceToken,
     this.isActive = true,
     required this.createdAt,
@@ -44,6 +46,7 @@ class EmployeeModel extends Equatable {
       email: json['email'] as String?,
       phone: json['phone'] as String?,
       role: json['role'] as String? ?? 'employee',
+      band: json['band'] as String?,
       deviceToken: json['device_token'] as String?,
       isActive: json['is_active'] as bool? ?? true,
       createdAt: _parseDateTime(json['created_at']),
@@ -68,6 +71,7 @@ class EmployeeModel extends Equatable {
     'email': email,
     'phone': phone,
     'role': role,
+    'band': band,
     'device_token': deviceToken,
     'is_active': isActive,
     'created_at': createdAt.toIso8601String(),
@@ -81,6 +85,7 @@ class EmployeeModel extends Equatable {
     String? email,
     String? phone,
     String? role,
+    String? band,
     String? deviceToken,
     bool? isActive,
     DateTime? createdAt,
@@ -92,6 +97,7 @@ class EmployeeModel extends Equatable {
       email: email ?? this.email,
       phone: phone ?? this.phone,
       role: role ?? this.role,
+      band: band ?? this.band,
       deviceToken: deviceToken ?? this.deviceToken,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,

@@ -30,6 +30,12 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   final _descriptionController = TextEditingController();
   final _distanceController = TextEditingController(); // For fuel expenses
   
+  // New travel fields
+  final _fromController = TextEditingController();
+  final _toController = TextEditingController();
+  String _vehicleMode = 'Car';
+  final List<String> _vehicleModes = ['Car', 'Bike', 'Auto', 'Bus', 'Train', 'Flight', 'Cab'];
+  
   // Current step: 0 = type, 1 = category, 2 = details
   int _currentStep = 0;
   
@@ -131,6 +137,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     _amountController.dispose();
     _descriptionController.dispose();
     _distanceController.dispose();
+    _fromController.dispose();
+    _toController.dispose();
     super.dispose();
   }
 
@@ -657,6 +665,42 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           const SizedBox(height: 16),
         ],
 
+        // Travel-specific: To, From, Mode of Travel
+        if (_isTravelExpense) ...[
+          _buildLabel('From Location *'),
+          TextFormField(
+            controller: _fromController,
+            textCapitalization: TextCapitalization.words,
+            decoration: _inputDecoration('e.g. Office, Home...'),
+            validator: (value) => value == null || value.isEmpty ? 'Required' : null,
+          ),
+          const SizedBox(height: 16),
+          
+          _buildLabel('To Location *'),
+          TextFormField(
+            controller: _toController,
+            textCapitalization: TextCapitalization.words,
+            decoration: _inputDecoration('e.g. Client Site, Airport...'),
+            validator: (value) => value == null || value.isEmpty ? 'Required' : null,
+          ),
+          const SizedBox(height: 16),
+
+          _buildLabel('Mode of Travel *'),
+          DropdownButtonFormField<String>(
+            value: _vehicleMode,
+            decoration: _inputDecoration(''),
+            items: _vehicleModes.map((mode) => DropdownMenuItem(
+              value: mode,
+              child: Text(mode, style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
+            )).toList(),
+            onChanged: (val) {
+              if (val != null) setState(() => _vehicleMode = val);
+            },
+            dropdownColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+          ),
+          const SizedBox(height: 16),
+        ],
+
         // Title (For general requests)
         if (!_isTravelExpense) ...[
           _buildLabel('Title (Required)'),
@@ -755,17 +799,11 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         const SizedBox(height: 16),
 
         // Description
-        _buildLabel(_isTravelExpense ? 'Description (Required)' : 'Description (Optional)'),
+        _buildLabel('Description (Optional)'),
         TextFormField(
           controller: _descriptionController,
           maxLines: 2,
           decoration: _inputDecoration('Add a note about this expense...'),
-          validator: (value) {
-            if (_isTravelExpense && (value == null || value.trim().isEmpty)) {
-              return 'Description is required for travel expenses';
-            }
-            return null;
-          },
         ),
 
         const SizedBox(height: 16),
@@ -1080,12 +1118,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       );
       return;
     }
-    if (_isTravelExpense && _descriptionController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Description is required for travel expenses')),
-      );
-      return;
-    }
     
     setState(() => _isSubmitting = true);
 
@@ -1154,14 +1186,17 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     }
     
     if (!mounted) return;
-    
+    String finalDesc = _descriptionController.text.trim();
+    if (_isTravelExpense) {
+      final tripContext = '[${_fromController.text.trim()} → ${_toController.text.trim()} via $_vehicleMode]';
+      finalDesc = finalDesc.isNotEmpty ? '$tripContext $finalDesc' : tripContext;
+    }
+
     context.read<ExpenseBloc>().add(ExpenseSubmitRequested(
       amount: double.parse(_amountController.text),
       category: _selectedCategory!.name,
       expenseDate: _selectedDate,
-      description: _descriptionController.text.isNotEmpty 
-          ? _descriptionController.text 
-          : null,
+      description: finalDesc,
       receiptPath: _receiptImage?.path,
     ));
 

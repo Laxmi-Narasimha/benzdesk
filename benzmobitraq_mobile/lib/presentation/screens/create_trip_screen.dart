@@ -34,6 +34,13 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   bool _loading = false;
   String? _error;
 
+  bool _requestAdvance = false;
+  final _advHotelController = TextEditingController();
+  final _advTravelController = TextEditingController();
+  final _advFoodController = TextEditingController();
+  final _advOtherDescController = TextEditingController();
+  final _advOtherAmountController = TextEditingController();
+  
   final _vehicles = [
     {'value': 'car', 'label': 'Car', 'icon': Icons.directions_car},
     {'value': 'bike', 'label': 'Bike', 'icon': Icons.two_wheeler},
@@ -48,6 +55,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     _fromController.dispose();
     _toController.dispose();
     _reasonController.dispose();
+    _advHotelController.dispose();
+    _advTravelController.dispose();
+    _advFoodController.dispose();
+    _advOtherDescController.dispose();
+    _advOtherAmountController.dispose();
     super.dispose();
   }
 
@@ -73,7 +85,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         return;
       }
 
-      await sb.from('trips').insert({
+      final insertedTripResponse = await sb.from('trips').insert({
         'employee_id': userId,
         'from_location': from,
         'to_location': to,
@@ -81,7 +93,47 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         'vehicle_type': _vehicleType,
         'status': 'active',
         'started_at': DateTime.now().toUtc().toIso8601String(),
-      });
+      }).select('id');
+
+      if (_requestAdvance) {
+        final double hotelAmt = double.tryParse(_advHotelController.text) ?? 0;
+        final double travelAmt = double.tryParse(_advTravelController.text) ?? 0;
+        final double foodAmt = double.tryParse(_advFoodController.text) ?? 0;
+        final double otherAmt = double.tryParse(_advOtherAmountController.text) ?? 0;
+        final totalAdv = hotelAmt + travelAmt + foodAmt + otherAmt;
+
+        if (totalAdv > 0) {
+          final summaryDetails = [];
+          if (hotelAmt > 0) summaryDetails.add('Hotel: ₹$hotelAmt');
+          if (travelAmt > 0) summaryDetails.add('Travel: ₹$travelAmt');
+          if (foodAmt > 0) summaryDetails.add('Food: ₹$foodAmt');
+          if (otherAmt > 0) summaryDetails.add('Other: ₹$otherAmt (${_advOtherDescController.text})');
+          
+          final tripTitle = 'Trip Advance: $from → $to';
+          final notes = 'Advance Request details:\n${summaryDetails.join('\n')}';
+
+          final claimRes = await sb.from('expense_claims').insert({
+            'employee_id': userId,
+            'claim_date': DateTime.now().toUtc().toIso8601String().split('T')[0],
+            'total_amount': totalAdv,
+            'status': 'submitted',
+            'notes': tripTitle, // Title format often used by the system
+          }).select('id').single();
+
+          if (claimRes['id'] != null) {
+            await sb.from('expense_items').insert({
+              'claim_id': claimRes['id'],
+              'category': 'advance_request',
+              'amount': totalAdv,
+              'description': notes,
+              'expense_date': DateTime.now().toUtc().toIso8601String().split('T')[0],
+            });
+            
+            // To sync the advance with trip context, we can also put trip_id but expense_items has no trip_id.
+            // But we made the connection in the title.
+          }
+        }
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -198,6 +250,73 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               icon: Icons.notes, title: 'Purpose', subtitle: '(optional)',
               child: _buildDarkTextField(_reasonController, '', 'e.g., Client meeting, site visit...', null, maxLines: 2),
             ),
+            const SizedBox(height: 16),
+
+            // Advance Cash Request Card
+            Container(
+              decoration: BoxDecoration(
+                color: _C.card,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _C.cardBorder),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                ],
+              ),
+              child: Theme(
+                data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  initiallyExpanded: _requestAdvance,
+                  onExpansionChanged: (val) => setState(() => _requestAdvance = val),
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: Colors.amber.withOpacity(0.1), shape: BoxShape.circle),
+                    child: const Icon(Icons.money, color: Colors.amber, size: 22),
+                  ),
+                  title: Text('Request Advance Cash', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600, color: _C.textPrimary)),
+                  subtitle: Text('Apply for anticipated travel expenses', style: GoogleFonts.inter(fontSize: 12, color: _C.textSecondary)),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Divider(),
+                          const SizedBox(height: 16),
+                          Text('Expected Expenses', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: _C.textPrimary)),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildDarkTextField(_advHotelController, 'Hotel / Acc.', 'Amount', null, keyboardType: TextInputType.number),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildDarkTextField(_advTravelController, 'Travel', 'Amount', null, keyboardType: TextInputType.number),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildDarkTextField(_advFoodController, 'Food / DA', 'Amount', null, keyboardType: TextInputType.number),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildDarkTextField(_advOtherAmountController, 'Other', 'Amount', null, keyboardType: TextInputType.number),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          _buildDarkTextField(_advOtherDescController, 'Other Description', 'E.g., Client gifts, registration...', null),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
             if (_error != null) ...[
               const SizedBox(height: 16),
@@ -276,10 +395,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     );
   }
 
-  Widget _buildDarkTextField(TextEditingController controller, String label, String hint, Widget? prefixIcon, {int maxLines = 1}) {
+  Widget _buildDarkTextField(TextEditingController controller, String label, String hint, Widget? prefixIcon, {int maxLines = 1, TextInputType? keyboardType}) {
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      keyboardType: keyboardType,
       textCapitalization: TextCapitalization.words,
       style: GoogleFonts.inter(color: _C.textPrimary, fontSize: 14),
       decoration: InputDecoration(

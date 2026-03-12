@@ -242,6 +242,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               NotificationMarkReadRequested(notification.id),
             );
           }
+
+          // Navigate to the relevant request detail screen if data contains request_id
+          final requestId = notification.data['request_id'] as String?;
+          if (requestId != null) {
+            Navigator.pushNamed(
+              context,
+              AppRouter.expenseDetail,
+              arguments: ExpenseDetailArguments(
+                claimId: requestId,
+              ),
+            );
+          }
         },
       ),
     );

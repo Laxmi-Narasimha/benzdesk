@@ -1,11 +1,14 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:logger/logger.dart';
 
 import '../core/constants/app_constants.dart';
+import '../core/di/injection.dart';
+import '../core/router/app_router.dart';
 
 /// Background message handler (must be top-level function)
 @pragma('vm:entry-point')
@@ -158,23 +161,7 @@ class NotificationService {
     
     // Handle navigation based on notification type
     final data = message.data;
-    final type = data['type'] as String?;
-
-    switch (type) {
-      case 'stuck_alert':
-        // Navigate to employee details (for admin)
-        break;
-      case 'expense_submitted':
-        // Navigate to expense approval
-        break;
-      case 'expense_approved':
-      case 'expense_rejected':
-        // Navigate to expense details
-        break;
-      default:
-        // Navigate to notifications screen
-        break;
-    }
+    _handleBackgroundNavigation(data);
   }
 
   /// Handle local notification tap
@@ -184,10 +171,40 @@ class NotificationService {
     if (response.payload != null) {
       try {
         final data = jsonDecode(response.payload!) as Map<String, dynamic>;
-        // Handle navigation based on payload
+        _handleBackgroundNavigation(data);
       } catch (e) {
         _logger.e('Error parsing notification payload: $e');
       }
+    }
+  }
+
+  void _handleBackgroundNavigation(Map<String, dynamic> data) {
+    final type = data['type'] as String?;
+    final requestId = data['request_id'] as String?;
+    
+    final context = getIt<GlobalKey<NavigatorState>>().currentContext;
+    if (context == null) {
+      _logger.w('NavigatorState context is null, cannot route notification');
+      return;
+    }
+
+    if (requestId != null) {
+       Navigator.pushNamed(
+         context,
+         AppRouter.expenseDetail,
+         arguments: ExpenseDetailArguments(claimId: requestId),
+       );
+       return;
+    }
+
+    switch (type) {
+      case 'stuck_alert':
+      case 'expense_submitted':
+      case 'expense_approved':
+      case 'expense_rejected':
+      default:
+        Navigator.pushNamed(context, AppRouter.notifications);
+        break;
     }
   }
 

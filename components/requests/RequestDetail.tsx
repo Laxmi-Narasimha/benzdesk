@@ -37,6 +37,7 @@ import { RequestTimeline } from './RequestTimeline';
 import { CommentThread } from './CommentThread';
 import { AttachmentList } from './AttachmentList';
 import { TripExpenseCard } from './TripExpenseCard';
+import { FuelExpenseMap } from './FuelExpenseMap';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import type { Request, RequestComment, RequestEvent, RequestAttachment, RequestStatus, Priority } from '@/types';
@@ -574,7 +575,14 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                     <Card padding="lg">
                         <div className="flex flex-col sm:flex-row items-start justify-between gap-4 mb-4">
                             <div>
-                                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{request.title}</h1>
+                                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-3">
+                                    {request.title}
+                                    {request.reference_id && (
+                                        <span className="inline-flex items-center justify-center px-2 py-1 text-sm font-mono font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
+                                            #{request.reference_id}
+                                        </span>
+                                    )}
+                                </h1>
                                 <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
                                     <StatusBadge status={request.status} size="md" />
                                     <PriorityBadge priority={request.priority as Priority} size="md" />
@@ -602,22 +610,20 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                             <p className="text-gray-600 whitespace-pre-wrap">{request.description}</p>
                         </div>
                         
-                        {/* Session Details Link */}
+                        {/* Session Map Details */}
                         {request.description?.includes('Session ID:') && (
-                            <div className="mt-6 pt-4 border-t border-gray-100">
-                                <Button 
-                                    variant="outline" 
-                                    className="w-full sm:w-auto flex items-center gap-2 text-blue-600 border-blue-200 hover:bg-blue-50"
-                                    onClick={() => {
-                                        const match = request.description?.match(/Session ID: ([a-zA-Z0-9-]+)/);
-                                        if (match && match[1]) {
-                                            router.push(`/director/map?session=${match[1]}`);
-                                        }
-                                    }}
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-                                    View GPS Session Map
-                                </Button>
+                            <div className="mt-6 pt-0 border-t-0">
+                                {(() => {
+                                    const match = request.description?.match(/Session ID: ([a-zA-Z0-9-]+)/);
+                                    if (match && match[1]) {
+                                        return <FuelExpenseMap 
+                                            sessionId={match[1]} 
+                                            description={request.description}
+                                            employeeId={request.created_by} 
+                                        />;
+                                    }
+                                    return null;
+                                })()}
                             </div>
                         )}
                     </Card>
