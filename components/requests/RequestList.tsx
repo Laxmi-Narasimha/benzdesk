@@ -221,8 +221,14 @@ export function RequestList({
                     query = query.eq('priority', parseInt(priorityFilter));
                 }
 
-                if (canFilterByEmployee && employeeFilter !== 'all') {
-                    query = query.eq('creator_email', employeeFilter);
+                if (canFilterByEmployee) {
+                    if (employeeFilter !== 'all') {
+                        query = query.eq('creator_email', employeeFilter);
+                    }
+                } else {
+                    // Critical Privacy Guard: If not an admin/director, explicitly filter by created_by
+                    // This acts as a secondary defense-in-depth in addition to Row Level Security
+                    query = query.eq('created_by', user.id);
                 }
 
                 // Fresh start filter - only show requests after the fresh start date
