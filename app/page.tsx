@@ -12,7 +12,7 @@ import { PageLoader } from '@/components/ui';
 
 export default function HomePage() {
     const router = useRouter();
-    const { user, loading, isRequester, isAdmin, isDirector } = useAuth();
+    const { user, loading, isRequester, isAdmin, isDirector, isSalesManager } = useAuth();
 
     useEffect(() => {
         if (loading) return;
@@ -27,10 +27,12 @@ export default function HomePage() {
             router.replace('/director/dashboard');
         } else if (isAdmin) {
             router.replace('/admin/queue');
+        } else if (isSalesManager) {
+            router.replace('/sales-manager/dashboard');
         } else {
             router.replace('/app/my-requests');
         }
-    }, [user, loading, isRequester, isAdmin, isDirector, router]);
+    }, [user, loading, isRequester, isAdmin, isDirector, isSalesManager, router]);
 
     return <PageLoader message="Redirecting..." />;
 }

@@ -1,5 +1,5 @@
 name: benzmobitraq_mobile
-description: Field-force tracking app for sales team with km tracking, stuck alerts, and expense management.
+description: Benz Packaging employee field tracking and expense management tool.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -42,8 +42,8 @@ dependencies:
 
 
   # Notifications
-  firebase_core: ^2.24.2
-  firebase_messaging: ^14.7.10
+  firebase_core: ^3.3.0
+  firebase_messaging: ^15.1.0
   flutter_local_notifications: ^18.0.1
 
   # Networking & Connectivity

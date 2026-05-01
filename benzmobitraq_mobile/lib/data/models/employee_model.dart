@@ -9,6 +9,9 @@ class EmployeeModel extends Equatable {
   final String role; // 'employee', 'admin', 'super_admin'
   final String? band;
   final String? deviceToken;
+  final double? bikeRatePerKm;
+  final double? carRatePerKm;
+  final double? dailyAllowance;
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -21,6 +24,9 @@ class EmployeeModel extends Equatable {
     this.role = 'employee',
     this.band,
     this.deviceToken,
+    this.bikeRatePerKm,
+    this.carRatePerKm,
+    this.dailyAllowance,
     this.isActive = true,
     required this.createdAt,
     required this.updatedAt,
@@ -48,6 +54,9 @@ class EmployeeModel extends Equatable {
       role: json['role'] as String? ?? 'employee',
       band: json['band'] as String?,
       deviceToken: json['device_token'] as String?,
+      bikeRatePerKm: (json['bike_rate_per_km'] as num?)?.toDouble(),
+      carRatePerKm: (json['car_rate_per_km'] as num?)?.toDouble(),
+      dailyAllowance: (json['daily_allowance'] as num?)?.toDouble(),
       isActive: json['is_active'] as bool? ?? true,
       createdAt: _parseDateTime(json['created_at']),
       updatedAt: _parseDateTime(json['updated_at']),
@@ -73,6 +82,9 @@ class EmployeeModel extends Equatable {
     'role': role,
     'band': band,
     'device_token': deviceToken,
+    'bike_rate_per_km': bikeRatePerKm,
+    'car_rate_per_km': carRatePerKm,
+    'daily_allowance': dailyAllowance,
     'is_active': isActive,
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
@@ -87,6 +99,9 @@ class EmployeeModel extends Equatable {
     String? role,
     String? band,
     String? deviceToken,
+    double? bikeRatePerKm,
+    double? carRatePerKm,
+    double? dailyAllowance,
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -99,6 +114,9 @@ class EmployeeModel extends Equatable {
       role: role ?? this.role,
       band: band ?? this.band,
       deviceToken: deviceToken ?? this.deviceToken,
+      bikeRatePerKm: bikeRatePerKm ?? this.bikeRatePerKm,
+      carRatePerKm: carRatePerKm ?? this.carRatePerKm,
+      dailyAllowance: dailyAllowance ?? this.dailyAllowance,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -116,6 +134,9 @@ class EmployeeModel extends Equatable {
     phone,
     role,
     deviceToken,
+    bikeRatePerKm,
+    carRatePerKm,
+    dailyAllowance,
     isActive,
     createdAt,
     updatedAt,

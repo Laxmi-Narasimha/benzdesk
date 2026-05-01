@@ -146,7 +146,7 @@ class AuthRepository {
       return AuthResult.success(employee);
     } catch (e) {
       _logger.e('Unexpected error during Google Sign-In: $e');
-      return AuthResult.failure('An unexpected error occurred during Google Sign-In');
+      return AuthResult.failure('Google Sign-In Error: $e');
     }
   }
 
@@ -210,6 +210,14 @@ class AuthRepository {
       _logger.i('Signing out user');
       
       await _supabaseClient.auth.signOut();
+      
+      // Also sign out from Google so the user can choose a different account next time
+      try {
+        await GoogleSignIn().signOut();
+      } catch (e) {
+        _logger.w('Failed to sign out from Google (non-fatal): $e');
+      }
+
       await _preferences.clearAuthData();
       
       _logger.i('Sign out successful');

@@ -12,6 +12,7 @@ import '../data/repositories/session_repository.dart';
 import '../data/repositories/location_repository.dart';
 import '../data/repositories/expense_repository.dart';
 import '../data/datasources/local/preferences_local.dart';
+import '../core/distance_engine.dart';
 import 'tracking_service.dart';
 import 'permission_service.dart';
 import 'geocoding_service.dart';
@@ -404,13 +405,7 @@ class SessionManager {
       _startDurationTimer(session.startTime);
       _startSyncTimer();
 
-      // Step 8: Start notification scheduler if available
-      if (_notificationScheduler != null) {
-        final notifSettings = await _preferences.getNotificationSettings();
-        if (notifSettings != null) {
-          _notificationScheduler!.startMonitoring(notifSettings);
-        }
-      }
+      // Step 8: Background notifications are handled directly by TrackingService
 
       // Update state
       _updateState(ManagerSessionState(
@@ -460,17 +455,13 @@ class SessionManager {
     }
 
     _updateState(_state.copyWith(status: ManagerSessionStatus.stopping));
-
     try {
-      // Step 1: Stop tracking
-      final totalDistanceM = await TrackingService.stopTracking();
-      final totalDistanceKm = totalDistanceM / 1000;
+      // Step 1: Stop tracking service (async — do NOT trust returned distance value
+      // as it may race with the background isolate's final SharedPrefs write)
+      await TrackingService.stopTracking();
 
       // Step 2: Stop timers
       _durationTimer?.cancel();
-      // NOTE: We do NOT cancel the sync timer here anymore, because we might need it
-      // to sync the final stop event if we are offline.
-      // _syncTimer?.cancel(); 
 
       // Step 3: Get final location
       final position = await TrackingService.getCurrentLocation();
@@ -487,11 +478,61 @@ class SessionManager {
         }
       }
 
-      // Step 4: Sync any remaining points
+      // Step 4: Sync any remaining points to server
       await _syncPendingLocations();
 
-      final endTime = DateTime.now(); // Capture exact end time
+      final endTime = DateTime.now();
 
+      // ================================================================
+      // STEP 4b: AUTHORITATIVE DISTANCE CALCULATION
+      //
+      // Source of truth = local SQLite queue (always written synchronously
+      // during tracking, no race conditions, works offline).
+      //
+      // Why NOT use TrackingService.stopTracking() return value:
+      //   stopTracking() reads SharedPreferences right after telling the
+      //   background isolate to stop. The isolate is async and has NOT yet
+      //   written its final totalDistance — so you often get 0 or stale data.
+      //
+      // Why NOT use raw condition "serverKm < clientKm * 2":
+      //   When clientKm = 0 (because of the race above), the condition becomes
+      //   "serverKm < 0" which is ALWAYS false — so server distance was
+      //   never used. That's why DB stored 296 km instead of ~419 km.
+      // ================================================================
+      final sessionId = _state.session!.id;
+      double verifiedDistanceKm = 0;
+
+      // Primary: local SQLite points (offline-safe)
+      try {
+        final localPoints = await _locationRepository.getLocalSessionPoints(sessionId);
+        if (localPoints.length >= 2) {
+          final localKm = DistanceEngine.calculateTotalDistance(localPoints);
+          _logger.i('Local SQLite distance: ${localKm.toStringAsFixed(2)} km (${localPoints.length} pts)');
+          if (localKm > verifiedDistanceKm) verifiedDistanceKm = localKm;
+        }
+      } catch (e) {
+        _logger.w('Local distance calc failed: $e');
+      }
+
+      // Secondary: server points (may have more points if sync completed)
+      try {
+        final serverPoints = await _locationRepository.getSessionLocations(sessionId);
+        if (serverPoints.length >= 2) {
+          final serverKm = DistanceEngine.calculateTotalDistance(serverPoints);
+          _logger.i('Server distance: ${serverKm.toStringAsFixed(2)} km (${serverPoints.length} pts)');
+          if (serverKm > verifiedDistanceKm) verifiedDistanceKm = serverKm;
+        }
+      } catch (e) {
+        _logger.w('Server distance check failed (using local): $e');
+      }
+
+      // Ultimate fallback: persisted SharedPrefs distance
+      if (verifiedDistanceKm == 0) {
+        verifiedDistanceKm = _preferences.getSessionDistanceMeters() / 1000;
+        _logger.w('Falling back to persisted distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+      }
+
+      _logger.i('FINAL verified distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
       // Step 5: End session in backend
       SessionModel? endedSession;
       try {
@@ -499,7 +540,7 @@ class SessionManager {
           _state.session!.id,
           position?.latitude,
           position?.longitude,
-          totalDistanceKm,
+          verifiedDistanceKm,
           address: address,
           endTime: endTime,
         );
@@ -516,7 +557,7 @@ class SessionManager {
           latitude: position?.latitude ?? _state.lastLocation?.latitude,
           longitude: position?.longitude ?? _state.lastLocation?.longitude,
           address: address,
-          totalKm: totalDistanceKm,
+          totalKm: verifiedDistanceKm,
         );
         
         // Ensure sync timer is running to retry this later
@@ -525,7 +566,7 @@ class SessionManager {
         // Create artificial ended session for UI
         endedSession = _state.session!.copyWith(
           endTime: endTime,
-          totalKm: totalDistanceKm,
+          totalKm: verifiedDistanceKm,
           status: SessionStatus.completed,
         );
       }
@@ -539,7 +580,7 @@ class SessionManager {
           latitude: endLat,
           longitude: endLng,
           timestamp: endMarkerTime,
-          totalDistanceKm: totalDistanceKm,
+          totalDistanceKm: verifiedDistanceKm,
         );
       }
 
@@ -552,18 +593,12 @@ class SessionManager {
       await _preferences.clearCachedSession(); // Clear offline cache
       _backendSessionReady = false;
 
-      // Step 7: Stop notification scheduler with summary
-      if (_notificationScheduler != null) {
-        await _notificationScheduler!.stopMonitoring(
-          totalKm: totalDistanceKm,
-          totalDuration: finalDuration,
-        );
-      }
+      // Step 7: Background notification summary is handled by background service or skipped
 
       // Update state
       _updateState(const ManagerSessionState(status: ManagerSessionStatus.idle));
 
-      _logger.i('Session stopped. Distance: ${totalDistanceKm.toStringAsFixed(2)} km');
+      _logger.i('Session stopped. Distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
       return endedSession;
     } catch (e) {
       _logger.e('Error stopping session: $e');
@@ -635,13 +670,7 @@ class SessionManager {
       isMoving: update.isMoving,
     ));
 
-    // Forward to notification scheduler for distance-based notifications
-    if (_notificationScheduler != null) {
-      _notificationScheduler!.onLocationUpdate(
-        update.totalDistance / 1000, // Convert to km
-        _state.duration,
-      );
-    }
+    // Background notifications natively handled in TrackingService
 
     // Update state
     _updateState(_state.copyWith(

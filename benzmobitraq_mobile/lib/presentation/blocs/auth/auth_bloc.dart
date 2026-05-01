@@ -145,14 +145,17 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     // Guard: Don't sign out if already unauthenticated or already loading sign out
     if (state is AuthUnauthenticated) return;
-    if (state is AuthLoading) return;
-
-    emit(AuthLoading());
-
-    await _authRepository.signOut();
-    // Don't emit here - let the authStateChanges listener handle it
-    // This prevents duplicate AuthUnauthenticated emissions
+    
+    // We emit AuthUnauthenticated immediately to ensure the UI navigates to the login screen
+    // without getting stuck if the network request hangs or fails.
     emit(AuthUnauthenticated());
+
+    // Perform the actual sign out in the background
+    try {
+      await _authRepository.signOut();
+    } catch (e) {
+      // Ignore errors during background sign out
+    }
   }
 
   Future<void> _onProfileUpdateRequested(

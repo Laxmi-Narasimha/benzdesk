@@ -39,10 +39,14 @@ class _PostSessionExpenseDialogState extends State<PostSessionExpenseDialog> {
   String? _error;
   TripModel? _activeTrip;
   String _band = 'executive';
+  late double _accurateDistanceKm; // Will hold the most reliable distance
+  double _customBikeRate = 0.0;
+  double _customCarRate = 0.0;
 
   @override
   void initState() {
     super.initState();
+    _accurateDistanceKm = widget.distanceKm; // Start with passed-in value
     _loadData();
   }
 
@@ -52,9 +56,43 @@ class _PostSessionExpenseDialogState extends State<PostSessionExpenseDialog> {
       final userId = sb.auth.currentUser?.id;
       if (userId == null) return;
 
-      // Get employee band
-      final empData = await sb.from('employees').select('band').eq('id', userId).maybeSingle();
-      if (empData != null) _band = empData['band'] as String? ?? 'executive';
+      // Get employee band and custom rates
+      final empData = await sb.from('employees').select('band, bike_rate_per_km, car_rate_per_km').eq('id', userId).maybeSingle();
+      if (empData != null) {
+        _band = empData['band'] as String? ?? 'executive';
+        _customBikeRate = (empData['bike_rate_per_km'] as num?)?.toDouble() ?? 0.0;
+        _customCarRate = (empData['car_rate_per_km'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      // Fetch the ACCURATE distance from session_rollups (same source admin panel uses)
+      try {
+        final rollupData = await sb
+            .from('session_rollups')
+            .select('distance_km')
+            .eq('session_id', widget.session.id)
+            .maybeSingle();
+        if (rollupData != null) {
+          final rollupKm = (rollupData['distance_km'] as num?)?.toDouble() ?? 0;
+          if (rollupKm > 0) {
+            _accurateDistanceKm = rollupKm;
+          }
+        }
+      } catch (_) {
+        // Fallback: try shift_sessions.total_km
+        try {
+          final sessionData = await sb
+              .from('shift_sessions')
+              .select('total_km')
+              .eq('id', widget.session.id)
+              .maybeSingle();
+          if (sessionData != null) {
+            final dbKm = (sessionData['total_km'] as num?)?.toDouble() ?? 0;
+            if (dbKm > 0) {
+              _accurateDistanceKm = dbKm;
+            }
+          }
+        } catch (_) {}
+      }
 
       // Check if there's an active trip for this employee
       final tripData = await sb
@@ -87,22 +125,23 @@ class _PostSessionExpenseDialogState extends State<PostSessionExpenseDialog> {
 
       final fuelCategory = _vehicleType == 'car' ? 'fuel_car' : 'fuel_bike';
       
-      // Calculate rate backend-side logic replica
       final limitData = await sb
           .from('band_limits')
           .select('daily_limit')
           .eq('band', _band)
           .eq('category', fuelCategory)
           .maybeSingle();
-          
-      final rate = limitData != null ? (limitData['daily_limit'] as num).toDouble() : (_vehicleType == 'car' ? 7.5 : 5.0);
-      final amount = rate * widget.distanceKm;
+      
+      // Use custom rate if available, otherwise fall back to band limit, then default
+      double customRate = _vehicleType == 'car' ? _customCarRate : _customBikeRate;
+      double rate = customRate > 0 ? customRate : (limitData != null ? (limitData['daily_limit'] as num).toDouble() : (_vehicleType == 'car' ? 7.5 : 5.0));
+      final amount = rate * _accurateDistanceKm;
 
       // Clean, professional description with locations
       final startLoc = widget.session.startAddress?.split(',').first ?? 'Start';
       final endLoc = widget.session.endAddress?.split(',').first ?? 'End';
       final vname = _vehicleType == 'car' ? 'Car' : 'Bike';
-      final distanceStr = widget.distanceKm.toStringAsFixed(1);
+      final distanceStr = _accurateDistanceKm.toStringAsFixed(1);
       final title = '[Session ${widget.session.id.toString().substring(0, 5)}] Fuel ($distanceStr km)';
       final description = 'Fuel expense for $distanceStr km ($vname) - $startLoc to $endLoc. Session ID: ${widget.session.id}';
 
@@ -176,7 +215,7 @@ class _PostSessionExpenseDialogState extends State<PostSessionExpenseDialog> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Traveled ${widget.distanceKm.toStringAsFixed(1)} km.\nSelect your mode of travel to quickly log this expense.',
+                    'Traveled ${_accurateDistanceKm.toStringAsFixed(1)} km.\nSelect your mode of travel to quickly log this expense.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                   ),

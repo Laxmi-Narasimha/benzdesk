@@ -31,12 +31,14 @@ import {
     Select,
     useToast,
     Spinner,
+    Badge,
 } from '@/components/ui';
 import { CustomSelect } from '@/components/ui/Select';
 import { RequestTimeline } from './RequestTimeline';
 import { CommentThread } from './CommentThread';
 import { AttachmentList } from './AttachmentList';
 import { TripExpenseCard } from './TripExpenseCard';
+import { ExpenseClaimCard } from './ExpenseClaimCard';
 import { FuelExpenseMap } from './FuelExpenseMap';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
@@ -56,14 +58,11 @@ interface RequestDetailProps {
 // Status Options (for admin)
 // ============================================================================
 
-// Status options - admins can't set 'closed' directly, only 'pending_closure'
-// Directors can set any status including 'closed'
+// Admins and directors can set any request status directly from the detail view.
 const allStatusOptions = Object.entries(REQUEST_STATUS_LABELS).map(([value, label]) => ({
     value,
     label,
 }));
-
-const adminStatusOptions = allStatusOptions.filter(opt => opt.value !== 'closed');
 
 // ============================================================================
 // Component
@@ -77,7 +76,7 @@ interface AdminUser {
 
 export function RequestDetail({ requestId }: RequestDetailProps) {
     const router = useRouter();
-    const { user, isAdmin, isDirector, canManageRequests } = useAuth();
+    const { user, canManageRequests } = useAuth();
     const { success, error: showError } = useToast();
 
     const [request, setRequest] = useState<Request | null>(null);
@@ -89,6 +88,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
     const [loading, setLoading] = useState(true);
     const [updating, setUpdating] = useState(false);
     const [activeTab, setActiveTab] = useState<'comments' | 'timeline'>('comments');
+    const [expenseCategories, setExpenseCategories] = useState<string[]>([]);
 
     // ============================================================================
     // Fetch Data
@@ -584,16 +584,30 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                                     )}
                                 </h1>
                                 <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
+                                    {request.category === 'expense_claim' && expenseCategories.length > 0 ? (
+                                        expenseCategories.map(cat => (
+                                            <Badge key={cat} variant="outline" className="text-gray-500 bg-gray-50 flex items-center gap-1.5 py-1">
+                                                <Tag className="w-3.5 h-3.5" />
+                                                {cat}
+                                            </Badge>
+                                        ))
+                                    ) : (
+                                        <Badge variant="outline" className="text-gray-500 bg-gray-50 flex items-center gap-1.5 py-1">
+                                            <Tag className="w-3.5 h-3.5" />
+                                            {REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category}
+                                        </Badge>
+                                    )}
+                                    <div className="w-1 h-1 rounded-full bg-gray-300 hidden sm:block" />
                                     <StatusBadge status={request.status} size="md" />
                                     <PriorityBadge priority={request.priority as Priority} size="md" />
                                 </div>
                             </div>
 
                             {/* Admin status control */}
-                            {canManageRequests && request.category !== 'expense_reimbursement' && (
+                            {canManageRequests && (
                                 <div className="flex-shrink-0 w-full sm:w-auto">
                                     <Select
-                                        options={isDirector ? allStatusOptions : adminStatusOptions}
+                                        options={allStatusOptions}
                                         value={request.status}
                                         onChange={(e) => updateStatus(e.target.value as RequestStatus)}
                                         size="sm"
@@ -607,7 +621,21 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
 
                         {/* Description */}
                         <div className="prose max-w-none">
-                            <p className="text-gray-600 whitespace-pre-wrap">{request.description}</p>
+                            {request.category === 'expense_claim' && request.description.startsWith('Amount: ') ? (
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 bg-gray-50 border border-gray-100 rounded-lg p-3">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-gray-500 font-medium text-sm">Amount:</span>
+                                        <span className="text-gray-900 font-semibold">{request.description.match(/Amount: ([^\n]+)/)?.[1] || 'N/A'}</span>
+                                    </div>
+                                    <div className="hidden sm:block w-px h-5 bg-gray-200" />
+                                    <div className="flex items-start sm:items-center gap-2 flex-1">
+                                        <span className="text-gray-500 font-medium text-sm">Notes:</span>
+                                        <span className="text-gray-700 italic">{request.description.match(/Notes: ([\s\S]*)/)?.[1] || 'N/A'}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <p className="text-gray-600 whitespace-pre-wrap">{request.description}</p>
+                            )}
                         </div>
                         
                         {/* Session Map Details */}
@@ -631,6 +659,16 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                     {request.category === 'expense_reimbursement' && (
                         <TripExpenseCard 
                             requestId={request.id} 
+                            onStatusChange={() => {
+                                window.location.reload();
+                            }}
+                        />
+                    )}
+
+                    {request.category === 'expense_claim' && (
+                        <ExpenseClaimCard 
+                            requestId={request.id} 
+                            onCategoriesLoaded={setExpenseCategories}
                             onStatusChange={() => {
                                 window.location.reload();
                             }}
@@ -696,6 +734,30 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                                     {REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category}
                                 </dd>
                             </div>
+
+                            {request.amount != null && (
+                                <div className="flex items-center justify-between">
+                                    <dt className="text-sm text-dark-500 flex items-center gap-2">
+                                        <Tag className="w-4 h-4" />
+                                        Amount
+                                    </dt>
+                                    <dd className="text-sm font-semibold text-green-400">
+                                        ₹{request.amount.toLocaleString('en-IN')}
+                                    </dd>
+                                </div>
+                            )}
+
+                            {request.manager_adjusted_amount != null && (
+                                <div className="flex items-center justify-between">
+                                    <dt className="text-sm text-dark-500 flex items-center gap-2">
+                                        <Tag className="w-4 h-4" />
+                                        Adjusted Amount
+                                    </dt>
+                                    <dd className="text-sm font-semibold text-amber-400">
+                                        ₹{request.manager_adjusted_amount.toLocaleString('en-IN')}
+                                    </dd>
+                                </div>
+                            )}
 
                             {/* Assign To — Admin only */}
                             {canManageRequests && admins.length > 0 && (

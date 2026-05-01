@@ -379,12 +379,45 @@ void _onServiceStart(ServiceInstance service) async {
   int stationaryCount = 0;
   DateTime sessionStartTime = DateTime.now(); // Will be overwritten when session starts
 
+  // Background Notification Scheduler State
+  Timer? backgroundNotifTimer;
+  double lastDistanceNotifiedKm = 0;
+  DateTime lastTimeNotification = DateTime.now();
+  Map<String, dynamic>? notifSettingsMap;
+  
+  // Initialize Local Notifications for Background Use
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  try {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const DarwinInitializationSettings initializationSettingsDarwin =
+        DarwinInitializationSettings(
+            requestAlertPermission: false,
+            requestBadgePermission: false,
+            requestSoundPermission: false);
+    const InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: initializationSettingsDarwin,
+    );
+    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  } catch (e) {
+    logger.e('Failed to initialize background notifications: $e');
+  }
+
   // Load persisted state
   final prefs = await SharedPreferences.getInstance();
   totalDistance = prefs.getDouble(TrackingService._keyTotalDistance) ?? 0;
-  // Persisted last position loaded via prefs but only used for recovery check
   final savedLastLat = prefs.getDouble(TrackingService._keyLastLat);
   final savedLastLon = prefs.getDouble(TrackingService._keyLastLon);
+  
+  // CRITICAL FIX: Reconstruct lastPosition from saved coordinates.
+  // Without this, after an OS-kill + restart the first location update
+  // is treated as "first ever" and the gap distance is lost.
+  if (savedLastLat != null && savedLastLon != null) {
+    // Create a synthetic Position-like object from saved coords.
+    // We can't create a real Position, but we'll use a flag to track this.
+    logger.i('RECOVERY: Restoring last position from persisted state: $savedLastLat, $savedLastLon');
+  }
   
   // Load session start time for elapsed time calculation
   final startTimeMs = prefs.getInt(TrackingService._keySessionStartTime);
@@ -395,6 +428,10 @@ void _onServiceStart(ServiceInstance service) async {
   // ============================================================
   // LOCATION TRACKING
   // ============================================================
+
+  // Persisted anchor for gap recovery (set from prefs, cleared once used)
+  double? _recoveryLat = savedLastLat;
+  double? _recoveryLon = savedLastLon;
 
   void _onPositionReceived(Position position, {bool forceRecord = false}) async {
     final now = DateTime.now();
@@ -434,12 +471,17 @@ void _onServiceStart(ServiceInstance service) async {
 
         if (speedKmh > AppConstants.maxSpeedKmh) {
           logger.d('Rejected: teleport detected (${speedKmh.toStringAsFixed(1)} km/h)');
+          // CRITICAL: Even though we reject this point for distance,
+          // update the anchor so we don't accumulate a massive
+          // distance delta after the teleport resolves.
+          lastPosition = position;
+          lastPositionTime = now;
           return;
         }
       }
 
       // ============================================================
-      // ADAPTIVE SAMPLING (bike vs car mode)
+      // ACCURACY-WEIGHTED JITTER FILTER
       // ============================================================
       
       // Check minimum time gate first
@@ -448,11 +490,21 @@ void _onServiceStart(ServiceInstance service) async {
         return;
       }
       
-      // Determine distance threshold based on speed
+      // Accuracy-weighted distance threshold:
+      // The minimum movement must exceed max(30m, 3 * accuracy) to prevent
+      // GPS drift at rest from inflating distance. Even at 3m accuracy,
+      // this gives a 30m threshold which filters most stationary noise.
+      final accuracyWeightedThreshold = (position.accuracy * 3).clamp(30.0, 100.0);
+      
+      // Also use speed-based threshold for highway driving
       final speedMps = position.speed >= 0 ? position.speed : 0.0;
-      final distanceThreshold = speedMps <= AppConstants.bikeSpeedThresholdMps
-          ? AppConstants.bikeDistanceThreshold  // Bike mode
-          : AppConstants.carDistanceThreshold;   // Car mode
+      final speedBasedThreshold = speedMps <= AppConstants.bikeSpeedThresholdMps
+          ? 30.0   // Walking/bike: 30m minimum
+          : 50.0;  // Car/highway: 50m minimum
+      
+      final distanceThreshold = accuracyWeightedThreshold > speedBasedThreshold
+          ? accuracyWeightedThreshold
+          : speedBasedThreshold;
       
       if (distanceDelta < distanceThreshold) {
         stationaryCount++;
@@ -480,7 +532,31 @@ void _onServiceStart(ServiceInstance service) async {
       }
 
     } else {
-      // First position received
+      // CRITICAL FIX: First position after restart — check if we have a
+      // persisted anchor from before the OS killed us.
+      if (_recoveryLat != null && _recoveryLon != null) {
+        // Calculate distance from persisted anchor to current position
+        final recoveryDistance = Geolocator.distanceBetween(
+          _recoveryLat!, _recoveryLon!,
+          position.latitude, position.longitude,
+        );
+        
+        // Only accumulate if it passes basic sanity checks
+        // (not a teleport, the gap is reasonable)
+        if (recoveryDistance > 30 && recoveryDistance < 50000) {
+          // Rough speed check: assume max 30 min gap at 160 km/h = 80 km max
+          totalDistance += recoveryDistance;
+          logger.i('RECOVERY: Accumulated gap distance: +${recoveryDistance.toStringAsFixed(1)}m');
+        } else if (recoveryDistance >= 50000) {
+          logger.w('RECOVERY: Rejected gap distance as teleport: ${recoveryDistance.toStringAsFixed(1)}m');
+        }
+        
+        // Clear recovery anchor — it's consumed
+        _recoveryLat = null;
+        _recoveryLon = null;
+      }
+      
+      // Set current position as anchor
       lastPosition = position;
       lastPositionTime = now;
     }
@@ -575,10 +651,12 @@ void _onServiceStart(ServiceInstance service) async {
     );
 
     // Stationary heartbeat: force a point even when the device doesn't move.
-    // This is required for strict "5 minutes within radius" stop detection.
+    // REDUCED from 120s → 60s to minimize map gaps when OS throttles GPS stream.
+    // This is required for strict "5 minutes within radius" stop detection
+    // AND to ensure route continuity on the admin map.
     stationaryHeartbeatTimer?.cancel();
     stationaryHeartbeatTimer = Timer.periodic(
-      Duration(seconds: AppConstants.stationaryCheckInterval),
+      const Duration(seconds: 60),
       (_) async {
         if (currentSessionId == null) return;
         try {
@@ -592,12 +670,93 @@ void _onServiceStart(ServiceInstance service) async {
       },
     );
 
+    // ============================================================
+    // BACKGROUND NOTIFICATION SCHEDULER
+    // ============================================================
+    // Replaces the frontend NotificationScheduler so it works when app is killed
+    backgroundNotifTimer?.cancel();
+    
+    // Refresh settings
+    final jsonStr = prefs.getString(AppConstants.keyNotificationSettings);
+    if (jsonStr != null) {
+      try {
+        notifSettingsMap = jsonDecode(jsonStr);
+      } catch (e) {
+        logger.w('Failed to parse notification settings: $e');
+      }
+    }
+    
+    if (notifSettingsMap != null) {
+      final double targetDistanceKm = (notifSettingsMap?['distanceKm'] as num?)?.toDouble() ?? 1.0;
+      final int targetTimeMinutes = (notifSettingsMap?['timeMinutes'] as int?) ?? 10;
+      
+      backgroundNotifTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+        if (currentSessionId == null) return;
+        
+        final now = DateTime.now();
+        final currentDistanceKm = totalDistance / 1000.0;
+        
+        bool showDistance = false;
+        bool showTime = false;
+        
+        // Check distance
+        if (currentDistanceKm - lastDistanceNotifiedKm >= targetDistanceKm) {
+          showDistance = true;
+          lastDistanceNotifiedKm = currentDistanceKm;
+        }
+        
+        // Check time
+        if (now.difference(lastTimeNotification).inMinutes >= targetTimeMinutes) {
+          showTime = true;
+          lastTimeNotification = now;
+        }
+        
+        if (showDistance || showTime) {
+          final elapsed = now.difference(sessionStartTime);
+          final hours = elapsed.inHours;
+          final minutes = elapsed.inMinutes % 60;
+          
+          try {
+            const AndroidNotificationDetails androidPlatformChannelSpecifics =
+                AndroidNotificationDetails(
+              'benzmobitraq_updates',
+              'Session Updates',
+              channelDescription: 'Time and distance updates',
+              importance: Importance.high,
+              priority: Priority.high,
+            );
+            const NotificationDetails platformChannelSpecifics =
+                NotificationDetails(android: androidPlatformChannelSpecifics);
+                
+            if (showDistance) {
+              await flutterLocalNotificationsPlugin.show(
+                DateTime.now().millisecond + 100,
+                '📍 Distance Update',
+                'You\'ve traveled ${currentDistanceKm.toStringAsFixed(2)} km in ${hours}h ${minutes}m',
+                platformChannelSpecifics,
+              );
+            }
+            if (showTime) {
+              await flutterLocalNotificationsPlugin.show(
+                DateTime.now().millisecond + 200,
+                '⏱️ Time Update',
+                'Session running for ${hours}h ${minutes}m',
+                platformChannelSpecifics,
+              );
+            }
+          } catch (e) {
+            logger.e('Background notification failed: $e');
+          }
+        }
+      });
+    }
+
     try {
       service.invoke('trackingStateChanged', {'isTracking': true});
     } catch (e) {
       logger.e('Failed to invoke trackingStateChanged: $e');
     }
-    logger.i('Location updates started (30m filter, high accuracy)');
+    logger.i('Location updates started (10m filter, high accuracy, 60s heartbeat)');
   }
 
   Future<void> _stopLocationUpdates() async {
@@ -605,6 +764,8 @@ void _onServiceStart(ServiceInstance service) async {
     positionSubscription = null;
     stationaryHeartbeatTimer?.cancel();
     stationaryHeartbeatTimer = null;
+    backgroundNotifTimer?.cancel();
+    backgroundNotifTimer = null;
     
     // Persist state
     await prefs.setDouble(TrackingService._keyTotalDistance, totalDistance);
@@ -629,6 +790,8 @@ void _onServiceStart(ServiceInstance service) async {
     
     if (!isResume) {
       // Only reset for new sessions
+      lastDistanceNotifiedKm = 0;
+      lastTimeNotification = DateTime.now();
       totalDistance = 0;
       lastPosition = null;
       stationaryCount = 0;

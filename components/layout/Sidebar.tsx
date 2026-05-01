@@ -29,6 +29,7 @@ import {
     Route,
     Bell,
     PackageSearch,
+    Camera,
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { RoleBadge } from '@/components/ui';
@@ -75,6 +76,12 @@ const requesterNav: NavItem[] = [
         icon: <PackageSearch className="w-5 h-5" />,
         roles: ['requester'],
     },
+    {
+        href: '/app/po-extractor',
+        label: 'PO Extractor',
+        icon: <Camera className="w-5 h-5" />,
+        roles: ['requester'],
+    },
 ];
 
 const adminNav: NavItem[] = [
@@ -82,6 +89,12 @@ const adminNav: NavItem[] = [
         href: '/admin/queue',
         label: 'Request Queue',
         icon: <ClipboardList className="w-5 h-5" />,
+        roles: ['accounts_admin', 'director'],
+    },
+    {
+        href: '/app/po-extractor',
+        label: 'PO Extractor',
+        icon: <Camera className="w-5 h-5" />,
         roles: ['accounts_admin', 'director'],
     },
     {

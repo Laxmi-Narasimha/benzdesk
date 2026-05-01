@@ -76,7 +76,7 @@ class LocationRepository {
   // ============================================================
 
   /// Upload pending locations to server
-  /// 
+  ///
   /// Returns the number of points successfully uploaded
   Future<int> uploadPendingLocations() async {
     try {
@@ -105,8 +105,8 @@ class LocationRepository {
         // Upload failed, increment retry counter
         final ids = pendingPoints.map((p) => p.id).toList();
         await _localQueue.incrementUploadAttempts(ids);
-        
-        _logger.e('Failed to upload batch of ${pendingPoints.length} locations. First ID: ${pendingPoints.first.id}. Error: $e');
+
+        _logger.e('Failed to upload batch of ${pendingPoints.length} locations. Error: $e');
         return 0;
       }
     } catch (e) {
@@ -116,29 +116,24 @@ class LocationRepository {
   }
 
   /// Force upload all remaining points for a session
-  /// 
+  ///
   /// Used when ending a session to ensure all data is uploaded
   Future<bool> forceUploadSession(String sessionId) async {
     try {
       final sessionPoints = await _localQueue.getBySession(sessionId);
-      
+
       if (sessionPoints.isEmpty) {
         return true;
       }
 
-      // Filter to only unuploaded points
-      // Note: This is a simplified check - in production you'd want to
-      // track uploaded status per point in the local query
-      
       _logger.i('Force uploading ${sessionPoints.length} points for session $sessionId');
 
       // Upload in batches
       for (int i = 0; i < sessionPoints.length; i += AppConstants.maxPointsPerBatch) {
         final batch = sessionPoints.skip(i).take(AppConstants.maxPointsPerBatch).toList();
-        
+
         try {
           await _dataSource.uploadLocationBatch(batch);
-          
           final ids = batch.map((p) => p.id).toList();
           await _localQueue.markAsUploaded(ids);
         } catch (e) {
@@ -155,10 +150,24 @@ class LocationRepository {
   }
 
   // ============================================================
-  // REMOTE READ OPERATIONS
+  // READ OPERATIONS
   // ============================================================
 
-  /// Get location points for a session from server
+  /// Get location points for a session from LOCAL SQLite database.
+  ///
+  /// This is the AUTHORITATIVE, offline-safe source for distance calculation.
+  /// Points are written synchronously during tracking — no race conditions,
+  /// no dependency on internet, always up-to-date when stopSession() runs.
+  Future<List<LocationPointModel>> getLocalSessionPoints(String sessionId) async {
+    try {
+      return await _localQueue.getBySession(sessionId);
+    } catch (e) {
+      _logger.e('Error getting local session points: $e');
+      return [];
+    }
+  }
+
+  /// Get location points for a session from the remote server
   Future<List<LocationPointModel>> getSessionLocations(String sessionId) async {
     try {
       return await _dataSource.getSessionLocations(sessionId);
@@ -200,7 +209,7 @@ class LocationRepository {
         _logger.e('No logged in user');
         return [];
       }
-      
+
       return await _dataSource.getPointsByEmployeeAndDateRange(
         employeeId: userId,
         startDate: startDate,
@@ -211,7 +220,6 @@ class LocationRepository {
       return [];
     }
   }
-
 
   // ============================================================
   // EMPLOYEE STATE

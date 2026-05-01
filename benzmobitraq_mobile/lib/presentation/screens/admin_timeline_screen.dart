@@ -140,20 +140,26 @@ class _AdminTimelineScreenState extends State<AdminTimelineScreen> {
       Duration dayDuration = Duration.zero;
 
       for (final sessionId in sessionIds) {
-        final points = sessionPointsMap[sessionId]!;
-        points.sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
-
         // Try to get session model
         final session = await _sessionRepo.getSession(sessionId);
         if (session == null) continue;
+
+        // Fetch ALL points for this session, not just the ones from today's 24h window.
+        // This is critical for sessions that span across midnight (started yesterday, ended today).
+        final points = await _locationRepo.getSessionLocations(sessionId);
+        points.sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
 
         // Generate timeline events
         final events = TimelineEngine.generateTimeline(points);
 
         // Calculate stats
-        final distance = session.totalKm > 0 
-            ? session.totalKm 
-            : DistanceEngine.calculateTotalDistance(points);
+        // ALWAYS recalculate from actual points using filtered algorithm.
+        // The DB total_km may be stale (e.g. background service was killed,
+        // lost in-memory counter). DistanceEngine applies jitter + speed
+        // filtering for an accurate result.
+        final recalculatedDistance = DistanceEngine.calculateTotalDistance(points);
+        // Use the better of DB value and recalculated (handles edge cases)
+        final distance = recalculatedDistance > 0 ? recalculatedDistance : session.totalKm;
         final stopsCount = events.where((e) => e.type == TimelineEventType.stop).length;
         
         // Calculate average speed (km/h)

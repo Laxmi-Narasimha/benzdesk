@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Send, Paperclip, X, FileText, CheckCircle2, PackageSearch, ArrowRight } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
@@ -14,6 +14,7 @@ import { useToast, DateTimePicker, Modal, Button } from '@/components/ui';
 import Link from 'next/link';
 import type { CreateRequestInput, RequestCategory, Priority } from '@/types';
 import { REQUEST_CATEGORY_LABELS, PRIORITY_LABELS } from '@/types';
+import { notifyNewRequest, notifyManagerOfNewRequest } from '@/lib/notificationTrigger';
 
 // ============================================================================
 // Types
@@ -108,7 +109,24 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
         category: 'other' as RequestCategory,
         priority: 3 as Priority,
         deadline: null,
+        amount: null,
     });
+
+    // Check if user has a manager (sales team member)
+    const [managerId, setManagerId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!user) return;
+        const supabase = getSupabaseClient();
+        supabase
+            .from('manager_team')
+            .select('manager_user_id')
+            .eq('member_user_id', user.id)
+            .single()
+            .then(({ data }) => {
+                if (data?.manager_user_id) setManagerId(data.manager_user_id);
+            });
+    }, [user]);
 
     // ============================================================================
     // Validation
@@ -208,6 +226,9 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
                     priority: formData.priority,
                     deadline: formData.deadline || null,
                     created_by: user.id,
+                    amount: formData.amount || null,
+                    // If user has a manager, route to pending_manager_approval
+                    status: managerId ? 'pending_manager_approval' : 'open',
                 })
                 .select()
                 .single();
@@ -251,23 +272,21 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
                 onSuccess(request.id);
             }
 
-            // Send push notification to admins
-            // We don't await this to avoid blocking the UI
-            import('@/lib/notificationTrigger').then(({ notifyNewRequest }) => {
-                console.log('[Push Trigger] Notifying admins of new request:', request.id);
-                notifyNewRequest(
+            // Send push notification
+            if (managerId) {
+                // User has a sales manager → notify manager
+                notifyManagerOfNewRequest(
+                    managerId,
                     request.id,
                     request.title,
-                    request.category,
                     user.email || 'Employee'
-                ).then(() => {
-                    console.log('[Push Trigger] Notification sent successfully');
-                }).catch((err) => {
-                    console.error('[Push Trigger] Failed to send notification:', err);
-                });
-            }).catch((err) => {
-                console.error('[Push Trigger] Failed to import notification module:', err);
-            });
+                ).catch(console.error);
+            } else {
+                // Normal flow → notify admins
+                import('@/lib/notificationTrigger').then(({ notifyNewRequest: notifyAdmins }) => {
+                    notifyAdmins(request.id, request.title, request.category, user.email || 'Employee');
+                }).catch(console.error);
+            }
         } catch (err: any) {
             console.error('Error creating request:', err);
             setErrors({ general: err.message || 'Failed to create request' });
@@ -344,12 +363,34 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
                     )}
                 </div>
 
-                {/* Step 4: Attachments - Supporting documents */}
+                {/* Step 3.5: Amount — shown for expense/financial categories */}
+                <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+                    <label className="block text-sm font-semibold text-gray-900 mb-1">
+                        4. Amount / Value (₹)
+                        <span className="ml-1 text-gray-400 font-normal text-xs">(optional)</span>
+                    </label>
+                    <p className="text-xs text-gray-500 mb-3">Enter the total amount being claimed or requested, if applicable.</p>
+                    <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-semibold text-lg">₹</span>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={formData.amount ?? ''}
+                            onChange={(e) => setFormData({ ...formData, amount: e.target.value ? parseFloat(e.target.value) : null })}
+                            className="w-full pl-9 pr-4 py-3 bg-gray-50 border border-gray-300 rounded-lg text-gray-900 text-base placeholder-gray-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none"
+                            disabled={isSubmitting}
+                        />
+                    </div>
+                </div>
+
+                {/* Step 5 (was 4): Attachments */}
                 <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
                     <label className="block text-sm font-semibold text-gray-900 mb-3">
                         <span className="flex items-center gap-2">
                             <Paperclip className="w-4 h-4" />
-                            4. Attach supporting documents (optional)
+                            5. Attach supporting documents (optional)
                         </span>
                     </label>
 
@@ -413,10 +454,10 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
                     )}
                 </div>
 
-                {/* Step 5: Priority/Urgency */}
+                {/* Step 6 (was 5): Priority/Urgency */}
                 <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
                     <label className="block text-sm font-semibold text-gray-900 mb-3">
-                        5. How urgent is this?
+                        6. How urgent is this?
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {priorityOptions.map((option) => (
@@ -442,10 +483,10 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
                     </div>
                 </div>
 
-                {/* Step 6: Deadline */}
+                {/* Step 7 (was 6): Deadline */}
                 <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
                     <label className="block text-sm font-semibold text-gray-900 mb-3">
-                        6. Set a deadline (optional)
+                        7. Set a deadline (optional)
                     </label>
                     <DateTimePicker
                         value={formData.deadline ?? null}
@@ -484,7 +525,7 @@ export function RequestForm({ onSuccess }: RequestFormProps) {
                             <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         ) : (
                             <>
-                                Submit Request
+                                {managerId ? 'Submit for Manager Approval' : 'Submit Request'}
                                 <Send className="w-4 h-4" />
                             </>
                         )}

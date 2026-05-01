@@ -434,7 +434,9 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                           Icon(Icons.calendar_today_rounded, size: 14, color: Colors.grey.shade400),
                           const SizedBox(width: 4),
                           Text(
-                            DateTimeUtils.formatDate(expense.expenseDate),
+                            expense.createdAt != null 
+                                ? DateTimeUtils.formatDateTime(expense.createdAt!)
+                                : DateTimeUtils.formatDate(expense.expenseDate),
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.grey.shade500,

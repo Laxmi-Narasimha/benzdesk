@@ -1,4 +1,4 @@
-package com.example.benzmobitraq_mobile
+package com.benzpackaging.employee
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

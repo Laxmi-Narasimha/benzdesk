@@ -34,7 +34,7 @@
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
 
     <application
-        android:label="Benztraq"
+        android:label="Benz Packaging: Employee"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon"
         android:enableOnBackInvokedCallback="true">

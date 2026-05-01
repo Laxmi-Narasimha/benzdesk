@@ -156,7 +156,7 @@ class SessionRepository {
 
       final updatedSession = await _dataSource.endSession(
         sessionId: sessionId,
-        totalKm: 0, // CRITICAL FIX: Send 0 or ignore. Let Backpack Trigger calculate true distance.
+        totalKm: totalKm, // Send actual precision-tracked distance from client
         endLatitude: latitude,
         endLongitude: longitude,
         endAddress: address,

@@ -20,6 +20,9 @@ interface Employee {
     band: string | null;
     created_at: string;
     mobitraq_enrolled_at: string | null;
+    bike_rate_per_km?: number;
+    car_rate_per_km?: number;
+    daily_allowance?: number;
 }
 
 const BANDS = [
@@ -63,7 +66,7 @@ export default function EmployeeManagementPage() {
     const [search, setSearch] = useState('');
     const [bandFilter, setBandFilter] = useState('all');
     const [editing, setEditing] = useState<string | null>(null);
-    const [form, setForm] = useState({ name: '', phone: '', band: '', role: '' });
+    const [form, setForm] = useState({ name: '', phone: '', band: '', role: '', bike_rate: '0', car_rate: '0', allowance: '0' });
     const [deleting, setDeleting] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -81,7 +84,7 @@ export default function EmployeeManagementPage() {
             const sb = getSupabaseClient();
             // Only show employees who have enrolled in MobiTraq (logged in via the app)
             let query = sb.from('employees')
-                .select('id, name, phone, email, role, band, created_at, mobitraq_enrolled_at')
+                .select('id, name, phone, email, role, band, created_at, mobitraq_enrolled_at, bike_rate_per_km, car_rate_per_km, daily_allowance')
                 .not('mobitraq_enrolled_at', 'is', null)
                 .order('name', { ascending: true });
 
@@ -114,7 +117,15 @@ export default function EmployeeManagementPage() {
     // ── Edit ───────────────────────────────────────────────────────────
     const startEdit = (e: Employee) => {
         setEditing(e.id);
-        setForm({ name: e.name, phone: e.phone || '', band: e.band || 'executive', role: e.role || 'employee' });
+        setForm({ 
+            name: e.name, 
+            phone: e.phone || '', 
+            band: e.band || 'executive', 
+            role: e.role || 'employee',
+            bike_rate: (e.bike_rate_per_km || 0).toString(),
+            car_rate: (e.car_rate_per_km || 0).toString(),
+            allowance: (e.daily_allowance || 0).toString()
+        });
     };
 
     const saveEdit = async () => {
@@ -123,7 +134,15 @@ export default function EmployeeManagementPage() {
         try {
             const sb = getSupabaseClient();
             const { error } = await sb.from('employees')
-                .update({ name: form.name.trim(), phone: form.phone || null, band: form.band, role: form.role })
+                .update({ 
+                    name: form.name.trim(), 
+                    phone: form.phone || null, 
+                    band: form.band, 
+                    role: form.role,
+                    bike_rate_per_km: parseFloat(form.bike_rate) || 0,
+                    car_rate_per_km: parseFloat(form.car_rate) || 0,
+                    daily_allowance: parseFloat(form.allowance) || 0
+                })
                 .eq('id', editing);
             if (error) throw error;
             flash('Saved ✓', true);
@@ -219,11 +238,30 @@ export default function EmployeeManagementPage() {
 
                                     <div className="flex-1 min-w-0">
                                         {isEd ? (
-                                            <div className="flex flex-col sm:flex-row gap-2">
-                                                <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Name"
-                                                    className="px-2 py-1 border border-gray-300 rounded text-sm flex-1 focus:ring-1 focus:ring-primary-500 outline-none" />
-                                                <input type="text" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="Phone"
-                                                    className="px-2 py-1 border border-gray-300 rounded text-sm w-36 focus:ring-1 focus:ring-primary-500 outline-none" />
+                                            <div className="flex flex-col gap-2">
+                                                <div className="flex flex-col sm:flex-row gap-2">
+                                                    <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Name"
+                                                        className="px-2 py-1 border border-gray-300 rounded text-sm flex-1 focus:ring-1 focus:ring-primary-500 outline-none" />
+                                                    <input type="text" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="Phone"
+                                                        className="px-2 py-1 border border-gray-300 rounded text-sm w-36 focus:ring-1 focus:ring-primary-500 outline-none" />
+                                                </div>
+                                                <div className="flex flex-col sm:flex-row gap-2">
+                                                    <div className="flex items-center gap-1 border border-gray-300 rounded overflow-hidden">
+                                                        <span className="px-2 py-1 bg-gray-50 text-xs text-gray-500 border-r border-gray-300">Bike/km</span>
+                                                        <input type="number" step="0.5" value={form.bike_rate} onChange={e => setForm(f => ({ ...f, bike_rate: e.target.value }))} placeholder="₹"
+                                                            className="px-2 py-1 text-sm w-20 focus:ring-1 focus:ring-primary-500 outline-none" />
+                                                    </div>
+                                                    <div className="flex items-center gap-1 border border-gray-300 rounded overflow-hidden">
+                                                        <span className="px-2 py-1 bg-gray-50 text-xs text-gray-500 border-r border-gray-300">Car/km</span>
+                                                        <input type="number" step="0.5" value={form.car_rate} onChange={e => setForm(f => ({ ...f, car_rate: e.target.value }))} placeholder="₹"
+                                                            className="px-2 py-1 text-sm w-20 focus:ring-1 focus:ring-primary-500 outline-none" />
+                                                    </div>
+                                                    <div className="flex items-center gap-1 border border-gray-300 rounded overflow-hidden">
+                                                        <span className="px-2 py-1 bg-gray-50 text-xs text-gray-500 border-r border-gray-300">Allowance/Day</span>
+                                                        <input type="number" step="1" value={form.allowance} onChange={e => setForm(f => ({ ...f, allowance: e.target.value }))} placeholder="₹"
+                                                            className="px-2 py-1 text-sm w-24 focus:ring-1 focus:ring-primary-500 outline-none" />
+                                                    </div>
+                                                </div>
                                             </div>
                                         ) : (
                                             <>
@@ -244,6 +282,11 @@ export default function EmployeeManagementPage() {
                                                             <Phone className="w-3 h-3" /> {emp.phone}
                                                         </span>
                                                     )}
+                                                    <div className="flex gap-2 ml-2">
+                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">Bike: ₹{emp.bike_rate_per_km || 0}/km</span>
+                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">Car: ₹{emp.car_rate_per_km || 0}/km</span>
+                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">Allowance: ₹{emp.daily_allowance || 0}/day</span>
+                                                    </div>
                                                 </div>
                                             </>
                                         )}

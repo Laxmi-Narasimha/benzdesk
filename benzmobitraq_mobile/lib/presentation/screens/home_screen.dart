@@ -433,15 +433,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _buildSessionCard(sessionState),
                   const SizedBox(height: 20),
                   
-                  // Stats Cards
-                  _buildStatsSection(context, sessionState),
-                  const SizedBox(height: 20),
-
-                  // Active Trip or Monthly Expense Summary
-                  const ActiveTripOrMonthlySummary(),
-                  const SizedBox(height: 20),
-                  
-                  // Quick Actions
+                  // Quick Actions Grid
                   _buildQuickActions(context),
                 ],
               ),
@@ -707,7 +699,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ),
         const SizedBox(height: 12),
-        // First row - Live Location and My Timeline
+        // First row - Live Location and How to Use
         Row(
           children: [
             Expanded(
@@ -722,19 +714,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Expanded(
               child: _buildActionCard(
                 context,
-                icon: Icons.timeline_rounded,
-                label: 'My Timeline',
+                icon: Icons.help_outline_rounded,
+                label: 'How to Use',
                 onTap: () {
-                  AppRouter.navigateTo(context, AppRouter.myTimeline);
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      title: const Row(
+                        children: [
+                          Icon(Icons.help_outline_rounded, color: Color(0xFF1976D2)),
+                          SizedBox(width: 8),
+                          Text('How to Use'),
+                        ],
+                      ),
+                      content: const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('1. Tap "Present" to start your day', style: TextStyle(fontSize: 14)),
+                          SizedBox(height: 8),
+                          Text('2. The app tracks your location & distance', style: TextStyle(fontSize: 14)),
+                          SizedBox(height: 8),
+                          Text('3. Use "Add Expense" to log expenses', style: TextStyle(fontSize: 14)),
+                          SizedBox(height: 8),
+                          Text('4. Check "My Timeline" for daily summary', style: TextStyle(fontSize: 14)),
+                          SizedBox(height: 8),
+                          Text('5. Tap "Work Done" when you finish', style: TextStyle(fontSize: 14)),
+                          SizedBox(height: 12),
+                          Text('💡 Keep location ON & battery optimization OFF for accurate tracking.',
+                              style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        ],
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('Got it!'),
+                        ),
+                      ],
+                    ),
+                  );
                 },
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
-        // Second row - Expenses and History
+        // Second row - BenzDesk Web and Add Expense
         Row(
           children: [
+            Expanded(
+              child: _buildActionCard(
+                context,
+                icon: Icons.open_in_browser,
+                label: 'BenzDesk Web',
+                onTap: () async {
+                  final url = Uri.parse('https://benzdesk.pages.dev');
+                  if (await canLaunchUrl(url)) {
+                    await launchUrl(url, mode: LaunchMode.externalApplication);
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: _buildActionCard(
                 context,
@@ -745,23 +787,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 },
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildActionCard(
-                context,
-                icon: Icons.history,
-                label: 'View History',
-                onTap: () {
-                  AppRouter.navigateTo(context, AppRouter.sessionHistory);
-                },
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 12),
-        // Third row - Settings (single button, full width would look awkward)
+        // Third row - Timeline and Settings
         Row(
           children: [
+            Expanded(
+              child: _buildActionCard(
+                context,
+                icon: Icons.timeline_rounded,
+                label: 'My Timeline',
+                onTap: () {
+                  AppRouter.navigateTo(context, AppRouter.myTimeline);
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: _buildActionCard(
                 context,
@@ -772,21 +814,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     context,
                     MaterialPageRoute(builder: (_) => const SettingsScreen()),
                   );
-                },
-              ),
-            ),
-            const SizedBox(width: 12),
-            // BenzDesk Web Action
-            Expanded(
-              child: _buildActionCard(
-                context,
-                icon: Icons.open_in_browser,
-                label: 'BenzDesk Web',
-                onTap: () async {
-                  final url = Uri.parse('https://benzdesk.vercel.app');
-                  if (await canLaunchUrl(url)) {
-                    await launchUrl(url, mode: LaunchMode.externalApplication);
-                  }
                 },
               ),
             ),

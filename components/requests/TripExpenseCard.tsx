@@ -170,7 +170,32 @@ export function TripExpenseCard({ requestId, onStatusChange }: TripExpenseCardPr
                                     MobiTraq
                                 </span>
                             </div>
-                            <p className="text-sm text-gray-500 font-medium">{expense.description || 'Expense Claim'}</p>
+                            {/* Parse [From → To via Mode] format from mobile app */}
+                            {expense.description && /^\[.+→.+via .+\]/.test(expense.description) ? (
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                                        <MapPin className="w-3 h-3 text-blue-500" />
+                                        {expense.description.match(/\[(.+?)→/)?.[1]?.trim()}
+                                    </span>
+                                    <span className="text-gray-400 text-xs">→</span>
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                                        <MapPin className="w-3 h-3 text-green-500" />
+                                        {expense.description.match(/→(.+?)via/)?.[1]?.trim()}
+                                    </span>
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                                        <Route className="w-3 h-3" />
+                                        {expense.description.match(/via (.+?)\]/)?.[1]?.trim()}
+                                    </span>
+                                    {/* Show any extra notes after the bracket */}
+                                    {expense.description.replace(/\[.+?\]\s*/, '').trim() && (
+                                        <span className="text-xs text-gray-500 ml-1">
+                                            {expense.description.replace(/\[.+?\]\s*/, '').trim()}
+                                        </span>
+                                    )}
+                                </div>
+                            ) : (
+                                <p className="text-sm text-gray-500 font-medium">{expense.description || 'Expense Claim'}</p>
+                            )}
                         </div>
                     </div>
                     

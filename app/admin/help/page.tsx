@@ -96,19 +96,23 @@ export default function AdminHelpPage() {
                                 3. Job Done? (Important!)
                             </h3>
                             <p className="text-gray-900 mt-2 font-medium">
-                                When you have finished the work (payment made, booking done, etc.), you MUST change status to:
+                                When you have finished the work (payment made, booking done, etc.), you can change status to:
                             </p>
                             <div className="my-3 text-center">
-                                <span className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold shadow-sm">
-                                    Pending Closure
-                                </span>
+                                <div className="flex flex-wrap items-center justify-center gap-2">
+                                    <span className="px-4 py-2 bg-green-600 text-white rounded-lg font-bold shadow-sm">
+                                        Pending Closure
+                                    </span>
+                                    <span className="px-4 py-2 bg-slate-700 text-white rounded-lg font-bold shadow-sm">
+                                        Closed
+                                    </span>
+                                </div>
                             </div>
-                            <p className="text-red-600 font-bold bg-white p-3 rounded-lg border border-red-100">
+                            <p className="hidden">
                                 ✋ STOP! You cannot click &quot;Closed&quot;. Only the Employee can close it.
                             </p>
                             <p className="text-gray-700 mt-2 text-sm">
-                                You set it to <strong>Pending Closure</strong>. This sends a message to the employee:
-                                <em>&quot;I have done my part, please check and close.&quot;</em>
+                                Use <strong>Pending Closure</strong> when you want the employee to confirm the outcome. Use <strong>Closed</strong> when Accounts has fully finished the request and no requester confirmation is needed.
                             </p>
                         </div>
                     </div>

@@ -52,7 +52,11 @@ class DistanceEngine {
   }
 
   /// Check if distance is jitter (should be treated as 0)
-  /// Jitter: delta_distance_m < max(10, 2*accuracy_m)
+  /// Jitter: delta_distance_m < max(25, 3*avg_accuracy_m)
+  /// 
+  /// Tightened from max(10, 2x) to max(25, 3x) because real-world GPS at
+  /// 3-10m accuracy still drifts 10-20m when stationary, which was being
+  /// counted as real movement and inflating session distances by ~8%.
   static bool isJitter({
     required double distanceMeters,
     required double? accuracy1,
@@ -60,7 +64,8 @@ class DistanceEngine {
   }) {
     final accuracy = (accuracy1 ?? 0) + (accuracy2 ?? 0);
     final avgAccuracy = accuracy / 2;
-    final threshold = max(jitterBaseM, jitterMultiplier * avgAccuracy);
+    // Use 25m base and 3x multiplier for tighter noise rejection
+    final threshold = max(25.0, 3.0 * avgAccuracy);
     return distanceMeters < threshold;
   }
 
@@ -146,6 +151,11 @@ class DistanceEngine {
   }
 
   /// Calculate total distance from a list of points with filtering
+  /// 
+  /// Applies three-layer filtering:
+  /// 1. Accuracy check (>50m rejected)
+  /// 2. Jitter check (small movements = GPS noise)
+  /// 3. Speed check (implied speed >140 km/h = noise, not teleport)
   static double calculateTotalDistance(List<LocationPointModel> points) {
     if (points.length < 2) return 0;
 
@@ -155,7 +165,17 @@ class DistanceEngine {
         point1: points[i - 1],
         point2: points[i],
       );
-      if (result.accepted) {
+      if (result.accepted && !result.isTeleport) {
+        // Secondary speed check: catch noise that passes basic filters
+        // but implies unrealistic speed (<160 km/h threshold catches
+        // obvious teleports, but 140 km/h catches subtle noise too)
+        final timeDelta = points[i].recordedAt.difference(points[i - 1].recordedAt);
+        if (timeDelta.inSeconds > 0) {
+          final impliedSpeedKmh = result.distanceKm / (timeDelta.inSeconds / 3600.0);
+          if (impliedSpeedKmh > 140.0) {
+            continue; // Skip this noisy segment
+          }
+        }
         totalKm += result.distanceKm;
       }
     }

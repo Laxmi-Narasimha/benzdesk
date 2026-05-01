@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/distance_engine.dart';
 import '../../core/timeline_engine.dart';
 import '../../core/utils/date_utils.dart';
 import '../../data/models/session_model.dart';
@@ -68,8 +70,18 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
           : await _sessionRepo.getSessionHistory(limit: 50);
       
       // Filter sessions for selected date (for non-today)
+      // Including cross-day logic: show session if it started on selected date,
+      // ended on selected date, or spans across the selected date.
       final filteredSessions = sessions.where((s) {
-        return DateTimeUtils.isSameDay(s.startTime, _selectedDate);
+        final startSameDay = DateTimeUtils.isSameDay(s.startTime, _selectedDate);
+        final endSameDay = s.endTime != null && DateTimeUtils.isSameDay(s.endTime!, _selectedDate);
+        final spansDay = s.endTime != null && 
+            s.startTime.isBefore(_selectedDate) && 
+            s.endTime!.isAfter(_selectedDate.add(const Duration(days: 1)));
+        final isActiveAndStartedBefore = s.status == SessionStatus.active && 
+            s.startTime.isBefore(_selectedDate.add(const Duration(days: 1)));
+            
+        return startSameDay || endSameDay || spansDay || isActiveAndStartedBefore;
       }).toList();
 
       // Sort by start time (earliest first)
@@ -115,8 +127,31 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
           }
         }
 
-        // Use session's stored totalKm if available (calculated by database trigger)
-        final actualDistance = session.totalKm > 0 ? session.totalKm : sessionDistance;
+        // Fetch the accurate distance from session_rollups (same source as admin panel)
+        double actualDistance = sessionDistance;
+        try {
+          final rollupData = await Supabase.instance.client
+              .from('session_rollups')
+              .select('distance_km')
+              .eq('session_id', session.id)
+              .maybeSingle();
+          if (rollupData != null && (rollupData['distance_km'] as num?) != null) {
+            final rollupKm = (rollupData['distance_km'] as num).toDouble();
+            if (rollupKm > 0) {
+              actualDistance = rollupKm;
+            }
+          }
+        } catch (_) {
+          // Fallback: recalculate from location points using filtered algorithm
+          if (points.length >= 2) {
+            final recalculated = DistanceEngine.calculateTotalDistance(points);
+            if (recalculated > 0) {
+              actualDistance = recalculated;
+            }
+          } else if (session.totalKm > 0) {
+            actualDistance = session.totalKm;
+          }
+        }
 
         groups.add(SessionTimelineGroup(
           session: session,

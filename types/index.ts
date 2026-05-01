@@ -13,7 +13,7 @@
  * - accounts_admin: Can manage all requests, assign, update status
  * - director: Full access + metrics and oversight capabilities
  */
-export type AppRole = 'requester' | 'accounts_admin' | 'director';
+export type AppRole = 'requester' | 'accounts_admin' | 'director' | 'sales_manager';
 
 /**
  * Request lifecycle statuses
@@ -22,7 +22,7 @@ export type AppRole = 'requester' | 'accounts_admin' | 'director';
  * - waiting_on_requester: Admin needs more info from requester
  * - closed: Request completed or resolved
  */
-export type RequestStatus = 'open' | 'in_progress' | 'waiting_on_requester' | 'pending_closure' | 'closed';
+export type RequestStatus = 'open' | 'in_progress' | 'waiting_on_requester' | 'pending_closure' | 'closed' | 'pending_manager_approval';
 
 /**
  * Audit event types for complete request history
@@ -53,6 +53,7 @@ export type RequestCategory =
     | 'bank_account_update'
     | 'advance_request'
     | 'petty_cash'
+    | 'expense_claim'
     | 'other';
 
 /**
@@ -99,6 +100,12 @@ export interface Request {
     first_admin_response_at: string | null;
     first_admin_response_by: string | null;
     row_version: number;
+    // Amount / expense tracking
+    amount: number | null;
+    // Manager approval fields
+    manager_approved_at: string | null;
+    manager_approved_by: string | null;
+    manager_adjusted_amount: number | null;
 }
 
 /**
@@ -243,6 +250,7 @@ export interface CreateRequestInput {
     category: RequestCategory;
     priority: Priority;
     deadline?: string | null;
+    amount?: number | null;
 }
 
 /**
@@ -357,6 +365,7 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
     waiting_on_requester: 'Waiting on Requester',
     pending_closure: 'Pending Closure',
     closed: 'Closed',
+    pending_manager_approval: 'Pending Manager Approval',
 };
 
 export const REQUEST_CATEGORY_LABELS: Record<RequestCategory, string> = {
@@ -372,6 +381,7 @@ export const REQUEST_CATEGORY_LABELS: Record<RequestCategory, string> = {
     bank_account_update: 'Bank Account Update',
     advance_request: 'Advance Request',
     petty_cash: 'Petty Cash',
+    expense_claim: 'Expense Claim',
     other: 'Other',
 };
 
@@ -387,6 +397,7 @@ export const ROLE_LABELS: Record<AppRole, string> = {
     requester: 'Requester',
     accounts_admin: 'Accounts Admin',
     director: 'Director',
+    sales_manager: 'Sales Manager',
 };
 
 // SLA thresholds in hours

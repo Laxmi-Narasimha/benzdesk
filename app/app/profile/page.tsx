@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/AuthContext';
-import { supabase } from '@/lib/supabaseClient';
+import { getSupabaseClient } from '@/lib/supabaseClient';
 import { Button, Card, useToast } from '@/components/ui';
 import { User, Shield, Loader2, Save, Map, Receipt, Fuel } from 'lucide-react';
 
@@ -41,6 +41,7 @@ export default function ProfilePage() {
 
         async function loadProfile() {
             try {
+                const supabase = getSupabaseClient();
                 // 1. Fetch employee
                 const { data: empData, error: empError } = await supabase
                     .from('employees')
@@ -82,6 +83,7 @@ export default function ProfilePage() {
 
         setIsSaving(true);
         try {
+            const supabase = getSupabaseClient();
             const { error } = await supabase
                 .from('employees')
                 .update({ name: name.trim() })

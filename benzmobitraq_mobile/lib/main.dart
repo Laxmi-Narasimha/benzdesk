@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -98,20 +99,32 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
       
       debugPrint('STEP 1: Orientation lock requested');
 
-      // Step 2: Supabase (30%) - This is the ONLY critical service
-      setState(() { _statusMessage = 'Connecting to Server...'; _progress = 0.3; });
-      debugPrint('STEP 2: Initializing Supabase...');
+      // Step 2: Firebase (30%) — must be BEFORE Supabase
+      // FCM background handler runs in a separate isolate that also calls
+      // Firebase.initializeApp(). Having it initialized here ensures the
+      // main isolate is also ready for foreground messages.
+      setState(() { _statusMessage = 'Initializing Notifications...'; _progress = 0.25; });
+      try {
+        await Firebase.initializeApp().timeout(const Duration(seconds: 5));
+        debugPrint('STEP 2: Firebase initialized');
+      } catch (e) {
+        debugPrint('Firebase Init Warning (non-fatal): $e');
+        // Firebase is optional — FCM won't work but app will still run
+      }
+
+      // Step 3: Supabase (50%) — The critical data service
+      setState(() { _statusMessage = 'Connecting to Server...'; _progress = 0.45; });
+      debugPrint('STEP 3: Initializing Supabase...');
       try {
         await Supabase.initialize(
           url: AppConstants.supabaseUrl,
           anonKey: AppConstants.supabaseAnonKey,
-        ).timeout(const Duration(seconds: 15)); // 15s timeout for slow networks
+        ).timeout(const Duration(seconds: 15));
       } catch (e) {
         debugPrint('Supabase Init Error: $e');
-        // This is critical - if Supabase fails, show error
         throw 'Could not connect to server. Please check your internet connection.';
       }
-      debugPrint('STEP 2: Supabase initialized');
+      debugPrint('STEP 3: Supabase initialized');
 
       // Step 3: Tracking Service (50%) - Optional, don't block on failure
       setState(() { _statusMessage = 'Initializing GPS...'; _progress = 0.5; });

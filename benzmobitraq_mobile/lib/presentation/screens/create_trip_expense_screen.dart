@@ -38,6 +38,8 @@ class _CreateTripExpenseScreenState extends State<CreateTripExpenseScreen> {
   List<BandLimit> _limits = [];
   bool _limitsLoaded = false;
   File? _receiptImage;
+  String _employeeBand = 'executive'; // Actual band from DB
+  bool _showPolicyDetails = false;
 
   final _categories = [
     {'value': 'food_da', 'label': 'Food DA', 'icon': Icons.restaurant},
@@ -59,10 +61,33 @@ class _CreateTripExpenseScreenState extends State<CreateTripExpenseScreen> {
       final sb = Supabase.instance.client;
       final userId = sb.auth.currentUser?.id;
       if (userId == null) return;
-      final empData = await sb.from('employees').select('band').eq('id', userId).maybeSingle();
+      final empData = await sb.from('employees').select('band, bike_rate_per_km, car_rate_per_km, daily_allowance').eq('id', userId).maybeSingle();
       final band = empData?['band'] as String? ?? 'executive';
+      _employeeBand = band;
       final limitsData = await sb.from('band_limits').select().eq('band', band);
-      if (mounted) setState(() { _limits = (limitsData as List).map((j) => BandLimit.fromJson(j)).toList(); _limitsLoaded = true; });
+      
+      List<BandLimit> parsedLimits = (limitsData as List).map((j) => BandLimit.fromJson(j)).toList();
+
+      if (empData != null) {
+        final double bikeRate = (empData['bike_rate_per_km'] as num?)?.toDouble() ?? 0.0;
+        final double carRate = (empData['car_rate_per_km'] as num?)?.toDouble() ?? 0.0;
+        final double dailyDA = (empData['daily_allowance'] as num?)?.toDouble() ?? 0.0;
+
+        if (bikeRate > 0) {
+          parsedLimits.removeWhere((l) => l.category == 'fuel_bike');
+          parsedLimits.add(BandLimit(band: band, category: 'fuel_bike', dailyLimit: bikeRate, unit: 'per_km'));
+        }
+        if (carRate > 0) {
+          parsedLimits.removeWhere((l) => l.category == 'fuel_car');
+          parsedLimits.add(BandLimit(band: band, category: 'fuel_car', dailyLimit: carRate, unit: 'per_km'));
+        }
+        if (dailyDA > 0) {
+          parsedLimits.removeWhere((l) => l.category == 'food_da');
+          parsedLimits.add(BandLimit(band: band, category: 'food_da', dailyLimit: dailyDA, unit: 'per_day'));
+        }
+      }
+
+      if (mounted) setState(() { _limits = parsedLimits; _limitsLoaded = true; });
     } catch (e) {
       if (mounted) setState(() => _limitsLoaded = true);
     }
@@ -243,6 +268,106 @@ class _CreateTripExpenseScreenState extends State<CreateTripExpenseScreen> {
                     style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: const Color(0xFF1D4ED8), fontSize: 13))),
               ]),
             ),
+            const SizedBox(height: 16),
+
+            // Your Band & Current Limits Info
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFFF8E1), Color(0xFFFFF3E0)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFFFCC02).withOpacity(0.4)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.badge, color: Color(0xFFE65100), size: 20),
+                    const SizedBox(width: 8),
+                    Text('Your Band: ${_employeeBand.toUpperCase()}',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: const Color(0xFFE65100))),
+                  ]),
+                  const SizedBox(height: 8),
+                  Text(_getLimitText(),
+                      style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: const Color(0xFF795548))),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Collapsible Travel Policy Reference
+            GestureDetector(
+              onTap: () => setState(() => _showPolicyDetails = !_showPolicyDetails),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE0E0E0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Icon(Icons.policy, size: 18, color: Color(0xFF546E7A)),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text('Travel Policy Reference',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13, color: const Color(0xFF37474F)))),
+                      Icon(_showPolicyDetails ? Icons.expand_less : Icons.expand_more, color: const Color(0xFF546E7A)),
+                    ]),
+                    if (_showPolicyDetails) ...[
+                      const SizedBox(height: 16),
+                      // Local Travel Entitlements
+                      _policySection('Local Travel (Within City)', [
+                        _policyRow('Executives / Operators', 'Auto, Bus, Shared Cab', '₹300/day'),
+                        _policyRow('Sr. Executives / Assistants', 'Auto, Cab (Ola/Uber), Bus', '₹500/day'),
+                        _policyRow('Assistant Managers', 'Cab (Ola/Uber)', '₹700/day'),
+                        _policyRow('Managers / Sr. Managers', 'Cab, Personal Car (₹7.5/km, Bike ₹5/km)', '₹1,000/day'),
+                        _policyRow('AGM / GM / Plant Head / VP', 'Cab / Personal Car', 'Actuals'),
+                      ]),
+                      const SizedBox(height: 12),
+                      // Hotel
+                      _policySection('Hotel Stay (Book via CMMT)', [
+                        _policyRow('Executives / Sr. Executives', 'Budget (3-Star, Standard)', '₹2,000/night'),
+                        _policyRow('Assistant Managers', '3-Star / Business Hotels', '₹3,000/night'),
+                        _policyRow('Managers / Sr. Managers', '3-4 Star Hotels', '₹3,500/night'),
+                        _policyRow('AGM / GM / VP / CXO', '4-5 Star Hotels', '₹4,000/night'),
+                      ]),
+                      const SizedBox(height: 12),
+                      // Food DA
+                      _policySection('Food / DA (Outstation >50km)', [
+                        _policyRow('Executives / Sr. Executives', 'No alcohol reimbursed', '₹600/day'),
+                        _policyRow('Assistant Managers', 'Bills mandatory', '₹800/day'),
+                        _policyRow('Managers / Sr. Managers', '', '₹1,000/day'),
+                        _policyRow('AGM / GM / VP', '', '₹1,500/day'),
+                      ]),
+                      const SizedBox(height: 12),
+                      // Misc
+                      _policySection('Miscellaneous Allowances', [
+                        _policyRow('Laundry', 'If stay > 3 nights', 'Max ₹300/day'),
+                        _policyRow('Internet / Connectivity', 'Actuals with bill', ''),
+                        _policyRow('Toll / Parking', 'Actuals', ''),
+                        _policyRow('Local SIM (Intl travel)', 'Pre-approved by FH', ''),
+                      ]),
+                      const SizedBox(height: 12),
+                      // Outstation Travel Mode
+                      _policySection('Outstation Travel Mode (Flight/Train/Road)', [
+                        _policyRow('Executives / Sr. Executives', 'Sleeper/3AC Train, Bus (Volvo)', 'Flight if >800km & urgent'),
+                        _policyRow('Assistant Managers', '3AC Train, Volvo, Economy Flight (case-to-case)', 'Manager approval mandatory'),
+                        _policyRow('Managers / Sr. Managers', 'Economy Flight / 2AC', 'Must book via TOC'),
+                        _policyRow('AGM / GM / VP', 'Economy Flight, 2AC', 'Need FH approval'),
+                      ]),
+                    ],
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 24),
 
             // Category
@@ -411,6 +536,50 @@ class _CreateTripExpenseScreenState extends State<CreateTripExpenseScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _policySection(String title, List<Widget> rows) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE8EAF6),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(title, style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12, color: const Color(0xFF283593))),
+        ),
+        const SizedBox(height: 8),
+        ...rows,
+      ],
+    );
+  }
+
+  Widget _policyRow(String band, String mode, String limit) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 3,
+            child: Text(band, style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: _C.textPrimary)),
+          ),
+          if (mode.isNotEmpty)
+            Expanded(
+              flex: 4,
+              child: Text(mode, style: GoogleFonts.inter(fontSize: 11, color: _C.textSecondary)),
+            ),
+          if (limit.isNotEmpty)
+            Expanded(
+              flex: 2,
+              child: Text(limit, style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700, color: const Color(0xFF2E7D32)), textAlign: TextAlign.right),
+            ),
+        ],
       ),
     );
   }

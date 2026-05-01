@@ -1,8 +1,8 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:logger/logger.dart';
 
@@ -10,14 +10,48 @@ import '../core/constants/app_constants.dart';
 import '../core/di/injection.dart';
 import '../core/router/app_router.dart';
 
-/// Background message handler (must be top-level function)
+/// Background message handler — MUST be a top-level function (not a closure).
+/// This runs in a SEPARATE isolate when the app is killed/backgrounded.
+/// It must re-initialize any plugins it needs (Firebase + local_notifications).
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Re-initialize Firebase in the background isolate
   try {
     await Firebase.initializeApp();
-  } catch (e) {
-    // Firebase not configured, ignore
-  }
+  } catch (_) {}
+
+  // Show a local notification so the user sees it even when app is closed.
+  // We must initialize the plugin fresh in this isolate.
+  final plugin = FlutterLocalNotificationsPlugin();
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  await plugin.initialize(const InitializationSettings(android: androidInit));
+
+  final title = message.notification?.title
+      ?? message.data['title'] as String?
+      ?? 'BenzMobiTraq';
+  final body = message.notification?.body
+      ?? message.data['body'] as String?
+      ?? message.data['message'] as String?
+      ?? '';
+
+  if (body.isEmpty) return; // Nothing to show
+
+  await plugin.show(
+    DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    title,
+    body,
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'benzmobitraq_notifications',
+        'BenzMobiTraq Notifications',
+        channelDescription: 'Notifications for BenzMobiTraq app',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      ),
+    ),
+    payload: jsonEncode(message.data),
+  );
 }
 
 /// Service for handling push notifications via FCM
@@ -188,7 +222,8 @@ class NotificationService {
       return;
     }
 
-    if (requestId != null) {
+    // Only navigate to expense detail for expense-related types with a valid request_id
+    if (requestId != null && (type == 'expense_submitted' || type == 'expense_approved' || type == 'expense_rejected')) {
        Navigator.pushNamed(
          context,
          AppRouter.expenseDetail,
@@ -197,15 +232,20 @@ class NotificationService {
        return;
     }
 
-    switch (type) {
-      case 'stuck_alert':
-      case 'expense_submitted':
-      case 'expense_approved':
-      case 'expense_rejected':
-      default:
-        Navigator.pushNamed(context, AppRouter.notifications);
-        break;
+    // For chat messages, navigate to the chat screen
+    if (type == 'chat_message' || type == 'new_message') {
+      Navigator.pushNamed(context, AppRouter.notifications);
+      return;
     }
+
+    // For session notifications, go to timeline
+    if (type == 'session_started' || type == 'session_ended') {
+      Navigator.pushNamed(context, AppRouter.myTimeline);
+      return;
+    }
+
+    // Default: go to notifications list
+    Navigator.pushNamed(context, AppRouter.notifications);
   }
 
   /// Get FCM token
