@@ -181,11 +181,13 @@ function ManagerRequestDetailInner() {
         setComments(prev => [...prev, data]);
         success('Comment Added', '');
 
-        // Notify the sales person
-        notifyNewComment(
-            request.created_by, '', user.email || 'Manager',
-            request.id, request.title, body, true
-        ).catch(console.error);
+        // Notify the sales person (but not if manager is the creator)
+        if (request.created_by !== user.id) {
+            notifyNewComment(
+                request.created_by, '', user.email || 'Manager',
+                request.id, request.title, body, true
+            ).catch(console.error);
+        }
     };
 
     if (loading) {

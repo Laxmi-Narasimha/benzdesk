@@ -21,6 +21,7 @@ import {
     CheckCircle2,
     XCircle,
     AlertCircle,
+    Bell,
 } from 'lucide-react';
 import {
     Card,
@@ -394,17 +395,21 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
             console.log(`[RequestDetail] Comment added. isAdmin: ${isUserAdmin}, requestCreator: ${request.created_by}`);
 
             if (isUserAdmin) {
-                // Admin replying -> Notify Creator
-                console.log(`[RequestDetail] ADMIN commenting -> Calling notifyNewComment for creator ${request.created_by}`);
-                notifyNewComment(
-                    request.created_by,
-                    '', // Email not available here easily, fallback used
-                    user.email || 'Admin',
-                    request.id,
-                    request.title,
-                    body,
-                    true
-                );
+                // Admin replying -> Notify Creator (but not if admin is the creator)
+                if (request.created_by !== user.id) {
+                    console.log(`[RequestDetail] ADMIN commenting -> Calling notifyNewComment for creator ${request.created_by}`);
+                    notifyNewComment(
+                        request.created_by,
+                        '', // Email not available here easily, fallback used
+                        user.email || 'Admin',
+                        request.id,
+                        request.title,
+                        body,
+                        true
+                    );
+                } else {
+                    console.log(`[RequestDetail] ADMIN commenting on own request -> Skipping self-notification`);
+                }
             } else {
                 // User replying -> Notify ALL Admins
                 console.log(`[RequestDetail] USER commenting -> Calling notifyAdminsOfNewComment`);
@@ -605,7 +610,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
 
                             {/* Admin status control */}
                             {canManageRequests && (
-                                <div className="flex-shrink-0 w-full sm:w-auto">
+                                <div className="flex-shrink-0 w-full sm:w-auto space-y-2">
                                     <Select
                                         options={allStatusOptions}
                                         value={request.status}
@@ -615,6 +620,31 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                                         className="w-full sm:w-48"
                                         disabled={updating}
                                     />
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={async () => {
+                                            if (!request?.created_by) return;
+                                            try {
+                                                const supabase = getSupabaseClient();
+                                                const { error } = await supabase.rpc('send_manual_notification', {
+                                                    p_recipient_id: request.created_by,
+                                                    p_title: `Reminder: ${request.title}`,
+                                                    p_body: 'Admin has sent you a notification regarding this request.',
+                                                    p_request_id: request.id
+                                                });
+                                                if (error) throw error;
+                                                success('Notification Sent', 'Manual notification sent to employee');
+                                            } catch (err: any) {
+                                                console.error('Error sending notification:', err);
+                                                showError('Error', err?.message || 'Failed to send notification');
+                                            }
+                                        }}
+                                        className="w-full sm:w-48 text-xs"
+                                    >
+                                        <Bell className="w-3 h-3 mr-1" />
+                                        Send Notification
+                                    </Button>
                                 </div>
                             )}
                         </div>
