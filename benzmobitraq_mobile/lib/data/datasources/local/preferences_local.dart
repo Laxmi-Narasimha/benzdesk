@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../core/constants/app_constants.dart';
-import '../../models/notification_settings.dart';
+import 'package:benzmobitraq_mobile/core/constants/app_constants.dart';
+import 'package:benzmobitraq_mobile/data/models/notification_settings.dart';
 
 /// Local data source for storing preferences using SharedPreferences
 class PreferencesLocal {
@@ -20,6 +20,16 @@ class PreferencesLocal {
       throw Exception('PreferencesLocal not initialized. Call init() first.');
     }
     return _prefs!;
+  }
+
+  /// Reload SharedPreferences from disk.
+  ///
+  /// CRITICAL: Flutter's SharedPreferences caches all values in memory.
+  /// When the background isolate writes new data (e.g. tracking_total_distance),
+  /// the main isolate's cache is STALE and will return old values.
+  /// Call this before reading any key written by the background isolate.
+  Future<void> reload() async {
+    await prefs.reload();
   }
 
   // ============================================================
@@ -84,7 +94,8 @@ class PreferencesLocal {
   // ============================================================
 
   /// Get active session ID (if tracking is in progress)
-  String? get activeSessionId => prefs.getString(AppConstants.keyActiveSessionId);
+  String? get activeSessionId =>
+      prefs.getString(AppConstants.keyActiveSessionId);
 
   /// Get active session ID (method form for SessionManager)
   Future<String?> getActiveSessionId() async {
@@ -143,6 +154,19 @@ class PreferencesLocal {
     return prefs.remove('session_distance_meters');
   }
 
+  /// Get the background service's directly-written distance (meters).
+  ///
+  /// The background isolate writes to 'tracking_total_distance' on every
+  /// accepted GPS fix. This key keeps updating even when the main isolate
+  /// is throttled (screen off). The main isolate's 'session_distance_meters'
+  /// only updates when _onLocationUpdate fires, which stops when the OS
+  /// throttles inter-isolate communication.
+  ///
+  /// By reading this key, the UI can always show the latest distance.
+  double getBackgroundServiceDistance() {
+    return prefs.getDouble('tracking_total_distance') ?? 0.0;
+  }
+
   /// Check if there's an active session
   bool get hasActiveSession => activeSessionId != null;
 
@@ -157,6 +181,37 @@ class PreferencesLocal {
   /// Clear cached session model
   Future<bool> clearCachedSession() {
     return prefs.remove('cached_session_json');
+  }
+
+  // ============================================================
+  // PENDING SESSION START (Offline support)
+  // ============================================================
+
+  /// Store a session that needs to be created on the server when internet
+  /// returns. The JSON is {sessionJson, latitude, longitude}.
+  Future<bool> setPendingSessionStart(String sessionJson, double lat, double lng) {
+    return prefs.setString('pending_session_start', jsonEncode({
+      'sessionJson': sessionJson,
+      'latitude': lat,
+      'longitude': lng,
+      'queuedAt': DateTime.now().toIso8601String(),
+    }));
+  }
+
+  /// Get the pending session start, or null if none.
+  Map<String, dynamic>? getPendingSessionStart() {
+    final raw = prefs.getString('pending_session_start');
+    if (raw == null) return null;
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Clear pending session start after successful sync.
+  Future<bool> clearPendingSessionStart() {
+    return prefs.remove('pending_session_start');
   }
 
   // ============================================================
@@ -188,7 +243,7 @@ class PreferencesLocal {
   // ============================================================
 
   /// Get notification settings JSON
-  String? get notificationSettingsJson => 
+  String? get notificationSettingsJson =>
       prefs.getString(AppConstants.keyNotificationSettings);
 
   /// Set notification settings JSON
@@ -214,7 +269,7 @@ class PreferencesLocal {
   // ============================================================
 
   /// Get last known address
-  String? get lastKnownAddress => 
+  String? get lastKnownAddress =>
       prefs.getString(AppConstants.keyLastKnownAddress);
 
   /// Set last known address
@@ -262,6 +317,7 @@ class PreferencesLocal {
     required double? longitude,
     required String? address,
     required double totalKm,
+    int? totalPausedSeconds,
   }) {
     final data = {
       'sessionId': sessionId,
@@ -270,6 +326,7 @@ class PreferencesLocal {
       'longitude': longitude,
       'address': address,
       'totalKm': totalKm,
+      'totalPausedSeconds': totalPausedSeconds,
     };
     return prefs.setString('pending_session_end', jsonEncode(data));
   }
@@ -284,7 +341,8 @@ class PreferencesLocal {
   // ============================================================
 
   /// Get cached employee profile JSON
-  String? get cachedEmployeeProfileJson => prefs.getString('cached_employee_profile');
+  String? get cachedEmployeeProfileJson =>
+      prefs.getString('cached_employee_profile');
 
   /// Save cached employee profile
   Future<bool> setCachedEmployeeProfileJson(String json) {
@@ -296,4 +354,3 @@ class PreferencesLocal {
     return prefs.remove('cached_employee_profile');
   }
 }
-

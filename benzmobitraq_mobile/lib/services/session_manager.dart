@@ -73,7 +73,7 @@ class ManagerSessionState {
           currentDistanceMeters ?? this.currentDistanceMeters,
       duration: duration ?? this.duration,
       lastLocation: lastLocation ?? this.lastLocation,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage: errorMessage,
       warnings: warnings ?? this.warnings,
       isPaused: isPaused ?? this.isPaused,
     );
@@ -423,27 +423,36 @@ class SessionManager {
       // Cache session immediately for offline recovery
       await _preferences.setCachedSessionJson(jsonEncode(session.toJson()));
 
-      final success = await _sessionRepository.startSession(
-        session,
-        position.latitude,
-        position.longitude,
-      );
-
-      if (!success) {
-        // Rollback tracking if DB fails
-        await TrackingService.stopTracking();
-        await _locationRepository.deleteLocalSessionPoints(sessionId);
-        await _preferences.setSessionDistanceMeters(0);
-        await _preferences.clearActiveSession();
-
-        _updateState(_state.copyWith(
-          status: ManagerSessionStatus.error,
-          errorMessage:
-              'Failed to create session. Please check your connection.',
-        ));
-        return false;
+      // Try to create session on server, but NEVER fail locally.
+      // Offline mode is fully supported: GPS points queue to SQLite,
+      // distance accumulates in SharedPreferences, and everything
+      // syncs when internet returns.
+      bool serverCreated = false;
+      try {
+        serverCreated = await _sessionRepository.startSession(
+          session,
+          position.latitude,
+          position.longitude,
+        );
+      } catch (e) {
+        _logger.w('Session server creation failed (offline?): $e');
       }
 
+      if (!serverCreated) {
+        // OFFLINE MODE: Queue session for later sync. Do NOT rollback.
+        _logger.i('OFFLINE: Session started locally. Will sync to server when internet returns.');
+        await _preferences.setPendingSessionStart(
+          jsonEncode(session.toJson()),
+          position.latitude,
+          position.longitude,
+        );
+        warnings.add('You are offline. Session is being tracked locally and will sync automatically when internet returns.');
+      } else {
+        _logger.i('Session created on server: $sessionId');
+        await _preferences.clearPendingSessionStart();
+      }
+
+      // Local tracking is always ready — server or not.
       _backendSessionReady = true;
 
       // Timeline marker: start point
@@ -635,22 +644,25 @@ class SessionManager {
 
       // Ultimate fallback: persisted SharedPrefs distance
       if (verifiedDistanceKm == 0) {
+        // CRITICAL: Reload SharedPreferences from disk to pick up the
+        // background isolate's latest writes before reading.
+        try {
+          await _preferences.reload();
+        } catch (_) {}
+
         // The background service writes to 'tracking_total_distance' directly.
         // The main isolate writes to 'session_distance_meters' via _onLocationUpdate.
         // When the app is backgrounded, the main isolate may not receive updates,
-        // so 'session_distance_meters' is stale. Check both keys.
+        // so 'session_distance_meters' is stale. Check both keys — take the max.
         double fallbackM = _preferences.getSessionDistanceMeters();
-        if (fallbackM == 0) {
-          // Try the background service's key directly
-          try {
-            final prefs = await SharedPreferences.getInstance();
-            fallbackM = prefs.getDouble('tracking_total_distance') ?? 0;
-            if (fallbackM > 0) {
-              _logger.i('Recovered distance from background service prefs: ${fallbackM.toStringAsFixed(0)}m');
-            }
-          } catch (e) {
-            _logger.w('Failed to read background service distance: $e');
+        try {
+          final bgFallback = _preferences.getBackgroundServiceDistance();
+          if (bgFallback > fallbackM) {
+            fallbackM = bgFallback;
+            _logger.i('Recovered distance from background service prefs: ${fallbackM.toStringAsFixed(0)}m');
           }
+        } catch (e) {
+          _logger.w('Failed to read background service distance: $e');
         }
         verifiedDistanceKm = fallbackM / 1000;
         if (verifiedDistanceKm > 0) {
@@ -872,11 +884,21 @@ class SessionManager {
       final persistedStart = _preferences.getSessionStartTime();
       final startTime = persistedStart ?? session.startTime;
 
-      // Get persisted distance (more accurate than database value)
-      // Fall back to database value only if nothing persisted
+      // CRITICAL: Reload SharedPreferences to pick up any writes from the
+      // background isolate that may have occurred while the main isolate was dead.
+      try {
+        await _preferences.reload();
+      } catch (_) {}
+
       final persistedDistanceM = _preferences.getSessionDistanceMeters();
+      // Also check the background service's direct key (may be higher)
+      double bgDistM = 0;
+      try {
+        bgDistM = _preferences.getBackgroundServiceDistance();
+      } catch (_) {}
+      final bestDistanceM = persistedDistanceM > bgDistM ? persistedDistanceM : bgDistM;
       final distanceMeters =
-          persistedDistanceM > 0 ? persistedDistanceM : session.totalKm * 1000;
+          bestDistanceM > 0 ? bestDistanceM : session.totalKm * 1000;
 
       // Check if session was paused before app restart
       final isPausedNow = session.isPaused;
@@ -1108,6 +1130,33 @@ class SessionManager {
     }
   }
 
+  Future<void> _syncPendingSessionStart() async {
+    final pending = _preferences.getPendingSessionStart();
+    if (pending == null) return;
+
+    if (await _sessionRepository.resolveCurrentUserId() == null) return;
+
+    try {
+      _logger.i('Syncing pending session start');
+      final session = SessionModel.fromJson(
+        jsonDecode(pending['sessionJson']) as Map<String, dynamic>,
+      );
+
+      final success = await _sessionRepository.startSession(
+        session,
+        (pending['latitude'] as num).toDouble(),
+        (pending['longitude'] as num).toDouble(),
+      );
+
+      if (success) {
+        await _preferences.clearPendingSessionStart();
+        _logger.i('Pending session start synced successfully: ' + session.id);
+      }
+    } catch (e) {
+      _logger.e('Failed to sync pending session start: $e');
+    }
+  }
+
   Future<void> _syncPendingSessionStop() async {
     final pending = _preferences.getPendingSessionEnd();
     if (pending == null) return;
@@ -1140,9 +1189,15 @@ class SessionManager {
   // TIMERS
   // ============================================================
 
+  // Counter used to rate-limit expensive SharedPreferences reads inside the
+  // 1-second duration timer. We only hit disk every _prefReadIntervalSec ticks.
+  int _durationTimerTick = 0;
+  static const int _prefReadIntervalSec = 3;
+
   void _startDurationTimer(DateTime startTime) {
     _durationTimer?.cancel();
-    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _durationTimerTick = 0;
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_state.status == ManagerSessionStatus.active) {
         final now = DateTime.now();
         final rawDuration = now.difference(startTime);
@@ -1165,17 +1220,47 @@ class SessionManager {
             paused > rawDuration ? Duration.zero : rawDuration - paused;
 
         // SAFETY NET: re-read latest distance from persistent prefs.
-        // This ensures the UI continues updating even if a locationUpdate
-        // event from the background isolate is delayed or dropped
-        // (which can happen on long trips when the OS throttles main
-        // isolate while the app is backgrounded).
+        //
+        // CRITICAL FIX: We read TWO keys:
+        //   1. 'session_distance_meters' — written by main isolate's _onLocationUpdate
+        //   2. 'tracking_total_distance' — written by background isolate directly
+        // When the screen is off, the main isolate stops receiving events so
+        // key #1 goes stale. Key #2 keeps updating. We take the max of both.
+        //
+        // CRITICAL FIX #2: We MUST call _preferences.reload() before reading
+        // because Flutter's SharedPreferences caches all values in memory.
+        // Without reload(), the main isolate's cache NEVER sees the background
+        // isolate's writes — getBackgroundServiceDistance() returns the same
+        // stale value forever, completely defeating the sync fix.
+        //
+        // Rate-limited to every 3 seconds to avoid hammering disk I/O.
         double distanceM = _state.currentDistanceMeters;
-        try {
-          final persisted = _preferences.getSessionDistanceMeters();
-          if (persisted > distanceM) {
-            distanceM = persisted;
-          }
-        } catch (_) {}
+        _durationTimerTick++;
+        if (_durationTimerTick % _prefReadIntervalSec == 0) {
+          // Reload SharedPreferences from disk to pick up background writes
+          try {
+            await _preferences.reload();
+          } catch (_) {}
+
+          try {
+            final persisted = _preferences.getSessionDistanceMeters();
+            if (persisted > distanceM) {
+              distanceM = persisted;
+            }
+          } catch (_) {}
+
+          // Also read the background service's direct key.
+          // This is what keeps updating when the screen is off.
+          try {
+            final bgDistance =
+                _preferences.getBackgroundServiceDistance();
+            if (bgDistance > distanceM) {
+              distanceM = bgDistance;
+              // Also update session_distance_meters so both keys stay in sync
+              _preferences.setSessionDistanceMeters(bgDistance);
+            }
+          } catch (_) {}
+        }
 
         _updateState(_state.copyWith(
           duration: activeDuration,
@@ -1188,6 +1273,7 @@ class SessionManager {
   void _startSyncTimer() {
     _syncTimer?.cancel();
     _syncTimer = Timer.periodic(_syncInterval, (_) async {
+      await _syncPendingSessionStart(); // Sync pending Start commands FIRST
       await _syncPendingSessionStop(); // Sync pending Stop commands
       await _syncPendingLocations(); // Sync location points
 
@@ -1246,55 +1332,80 @@ class SessionManager {
       if (_state.isPaused) return;
       if (_lastLocationUpdateAt == null) return;
 
-      final since = DateTime.now().difference(_lastLocationUpdateAt!);
-      if (since < _stallThreshold) return;
+      final now = DateTime.now();
 
       // Cooldown: don't spam the user every 30s.
-      final now = DateTime.now();
       if (_lastWatchdogAlertAt != null &&
           now.difference(_lastWatchdogAlertAt!) < _watchdogCooldown) {
         return;
       }
-      _lastWatchdogAlertAt = now;
 
-      final secs = since.inSeconds;
-      _logger.w('WATCHDOG: No GPS update for ${secs}s - alerting user');
+      // ============================================================
+      // CHECK 1: GPS SILENCE — no location updates at all
+      // ============================================================
+      final since = now.difference(_lastLocationUpdateAt!);
+      if (since >= _stallThreshold) {
+        _lastWatchdogAlertAt = now;
+        final secs = since.inSeconds;
+        _logger.w('WATCHDOG: No GPS update for ${secs}s - alerting user');
 
-      // EXTRA CHECK: GPS is updating but distance hasn't moved for 3+ min
-      // (user is moving but threshold is too high / GPS is stuck)
+        // Surface a visible warning in the UI as well.
+        final w = List<String>.from(_state.warnings)
+          ..removeWhere((s) => s.startsWith('GPS stalled') || s.startsWith('Distance not'))
+          ..add('GPS stalled ${secs}s ago - distance may not be updating');
+        _updateState(_state.copyWith(warnings: w));
+
+        // Fire the 3x vibration alert via notification service.
+        try {
+          await _notificationService?.showCriticalTrackingAlert(
+            title: 'Tracking issue detected',
+            body: 'GPS has not updated for ${(secs / 60).toStringAsFixed(0)} min. '
+                'Open the app, check location permissions, and move outdoors if possible.',
+          );
+        } catch (e) {
+          _logger.e('Watchdog alert failed: $e');
+        }
+
+        // Attempt automatic recovery: try restarting tracking once.
+        try {
+          if (_state.session != null) {
+            await TrackingService.startTracking(_state.session!.id,
+                isResume: true);
+            _logger.i('Watchdog: attempted tracking restart');
+          }
+        } catch (e) {
+          _logger.e('Watchdog restart failed: $e');
+        }
+        return; // Don't also fire distance stall — GPS is already stalled
+      }
+
+      // ============================================================
+      // CHECK 2: DISTANCE STALL — GPS IS updating but distance isn't
+      // ============================================================
+      // This catches the case where GPS is alive but accuracy is so
+      // poor that all points are rejected by the anti-jitter filter.
+      // The user sees GPS working but distance frozen.
       if (_lastDistanceIncreasedAt != null) {
-        final distStall = DateTime.now().difference(_lastDistanceIncreasedAt!).inSeconds;
+        final distStall = now.difference(_lastDistanceIncreasedAt!).inSeconds;
         if (distStall >= 180) {
+          _lastWatchdogAlertAt = now;
           _logger.w('WATCHDOG: Distance stalled for ${distStall}s despite GPS updates');
+
+          final w = List<String>.from(_state.warnings)
+            ..removeWhere((s) => s.startsWith('GPS stalled') || s.startsWith('Distance not'))
+            ..add('Distance not counting for ${(distStall / 60).toStringAsFixed(0)} min - GPS signal may be weak');
+          _updateState(_state.copyWith(warnings: w));
+
+          try {
+            await _notificationService?.showCriticalTrackingAlert(
+              title: '⚠️ Distance not counting',
+              body: 'GPS signal is weak (accuracy too low). '
+                  'Move to an open area for better signal.',
+            );
+          } catch (e) {
+            _logger.e('Watchdog distance-stall alert failed: $e');
+          }
         }
-      }
-
-      // Surface a visible warning in the UI as well.
-      final w = List<String>.from(_state.warnings)
-        ..removeWhere((s) => s.startsWith('GPS stalled'))
-        ..add('GPS stalled ${secs}s ago - distance may not be updating');
-      _updateState(_state.copyWith(warnings: w));
-
-      // Fire the 3x vibration alert via notification service.
-      try {
-        await _notificationService?.showCriticalTrackingAlert(
-          title: 'Tracking issue detected',
-          body: 'GPS has not updated for ${(secs / 60).toStringAsFixed(0)} min. '
-              'Open the app, check location permissions, and move outdoors if possible.',
-        );
-      } catch (e) {
-        _logger.e('Watchdog alert failed: $e');
-      }
-
-      // Attempt automatic recovery: try restarting tracking once.
-      try {
-        if (_state.session != null) {
-          await TrackingService.startTracking(_state.session!.id,
-              isResume: true);
-          _logger.i('Watchdog: attempted tracking restart');
-        }
-      } catch (e) {
-        _logger.e('Watchdog restart failed: $e');
       }
     } catch (e) {
       _logger.e('Watchdog tick error: $e');
@@ -1307,5 +1418,6 @@ class SessionManager {
     _watchdogTimer?.cancel();
     _timelineRecorder.dispose();
     _stateController.close();
+    _stationarySpotController.close();
   }
 }
