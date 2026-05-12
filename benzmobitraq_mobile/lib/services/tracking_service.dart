@@ -115,6 +115,7 @@ class TrackingService {
   static const String _keyAutoPauseAt = 'tracking_auto_pause_at';
   static const String _keySessionDay = 'tracking_session_day';
   static const String _keyLastSpeedKmh = 'tracking_last_speed_kmh';
+  static const String _keyLastPositionTime = 'tracking_last_pos_time';
 
   // ============================================================
   // INITIALIZATION
@@ -317,6 +318,7 @@ class TrackingService {
       await prefs.remove(_keyTotalDistance);
       await prefs.remove(_keyLastLat);
       await prefs.remove(_keyLastLon);
+      await prefs.remove(_keyLastPositionTime);
       await prefs.setBool(_keyIsTracking, false);
       await prefs.setBool(_keyIsPaused, false);
       await prefs.remove(_keyPausedDistance);
@@ -696,15 +698,18 @@ void _onServiceStart(ServiceInstance service) async {
   totalDistance = prefs.getDouble(TrackingService._keyTotalDistance) ?? 0;
   final savedLastLat = prefs.getDouble(TrackingService._keyLastLat);
   final savedLastLon = prefs.getDouble(TrackingService._keyLastLon);
+  final savedLastTimeMs = prefs.getInt(TrackingService._keyLastPositionTime);
 
-  // CRITICAL FIX: Reconstruct lastPosition from saved coordinates.
+  // CRITICAL FIX: Reconstruct lastPosition AND lastPositionTime from saved state.
   // Without this, after an OS-kill + restart the first location update
-  // is treated as "first ever" and the gap distance is lost.
+  // is treated as "first ever" and the gap distance is lost because
+  // timeSinceLastSec becomes 0, skipping the recovery distance calculation.
   if (savedLastLat != null && savedLastLon != null) {
-    // Create a synthetic Position-like object from saved coords.
-    // We can't create a real Position, but we'll use a flag to track this.
+    lastPositionTime = savedLastTimeMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(savedLastTimeMs)
+        : DateTime.now().subtract(const Duration(seconds: 5));
     logger.i(
-        'RECOVERY: Restoring last position from persisted state: $savedLastLat, $savedLastLon');
+        'RECOVERY: Restoring last position from persisted state: $savedLastLat, $savedLastLon @ ${lastPositionTime!.toIso8601String()}');
   }
 
   // Load session start time for elapsed time calculation
@@ -1133,12 +1138,16 @@ void _onServiceStart(ServiceInstance service) async {
       lastPositionTime = now;
     }
 
-    // Persist for recovery
+    // Persist for recovery (CRITICAL: lastPositionTime too!)
     if (lastPosition != null) {
       await prefs.setDouble(
           TrackingService._keyLastLat, lastPosition!.latitude);
       await prefs.setDouble(
           TrackingService._keyLastLon, lastPosition!.longitude);
+    }
+    if (lastPositionTime != null) {
+      await prefs.setInt(TrackingService._keyLastPositionTime,
+          lastPositionTime!.millisecondsSinceEpoch);
     }
     await prefs.setDouble(TrackingService._keyTotalDistance, totalDistance);
     await prefs.setDouble(TrackingService._keyLastSpeedKmh, calculatedSpeedKmh);

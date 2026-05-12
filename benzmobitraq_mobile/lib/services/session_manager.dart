@@ -635,9 +635,28 @@ class SessionManager {
 
       // Ultimate fallback: persisted SharedPrefs distance
       if (verifiedDistanceKm == 0) {
-        verifiedDistanceKm = _preferences.getSessionDistanceMeters() / 1000;
-        _logger.w(
-            'Falling back to persisted distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+        // The background service writes to 'tracking_total_distance' directly.
+        // The main isolate writes to 'session_distance_meters' via _onLocationUpdate.
+        // When the app is backgrounded, the main isolate may not receive updates,
+        // so 'session_distance_meters' is stale. Check both keys.
+        double fallbackM = _preferences.getSessionDistanceMeters();
+        if (fallbackM == 0) {
+          // Try the background service's key directly
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            fallbackM = prefs.getDouble('tracking_total_distance') ?? 0;
+            if (fallbackM > 0) {
+              _logger.i('Recovered distance from background service prefs: ${fallbackM.toStringAsFixed(0)}m');
+            }
+          } catch (e) {
+            _logger.w('Failed to read background service distance: $e');
+          }
+        }
+        verifiedDistanceKm = fallbackM / 1000;
+        if (verifiedDistanceKm > 0) {
+          _logger.w(
+              'Falling back to persisted distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+        }
       }
 
       _logger.i(
@@ -999,7 +1018,7 @@ class SessionManager {
       await Future.delayed(const Duration(seconds: 2));
 
       if (_state.status == ManagerSessionStatus.active) {
-        final started = await TrackingService.startTracking(_state.session!.id);
+        final started = await TrackingService.startTracking(_state.session!.id, isResume: true);
         if (started) {
           _logger.i('Tracking restarted successfully');
         } else {
