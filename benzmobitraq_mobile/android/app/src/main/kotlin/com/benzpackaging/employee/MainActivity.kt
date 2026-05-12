@@ -33,9 +33,22 @@ class MainActivity : FlutterActivity() {
                 description = "Important alerts and push notifications"
             }
 
+            // Tracking alerts (3x vibration for GPS/distance failures)
+            val trackingAlertChannel = NotificationChannel(
+                "benzmobitraq_tracking_alerts",
+                "Tracking Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Critical alerts when GPS or tracking is not working correctly"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 200, 150, 200, 150, 200)
+                setShowBadge(true)
+            }
+
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(trackingChannel)
             notificationManager.createNotificationChannel(alertChannel)
+            notificationManager.createNotificationChannel(trackingAlertChannel)
         }
     }
 }

@@ -6,10 +6,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'app.dart';
-import 'core/constants/app_constants.dart';
-import 'core/di/injection.dart';
-import 'services/tracking_service.dart';
+import 'package:benzmobitraq_mobile/app.dart';
+import 'package:benzmobitraq_mobile/core/constants/app_constants.dart';
+import 'package:benzmobitraq_mobile/core/di/injection.dart';
+import 'package:benzmobitraq_mobile/services/connectivity_service.dart';
+import 'package:benzmobitraq_mobile/services/notification_service.dart';
+import 'package:benzmobitraq_mobile/services/tracking_service.dart';
+import 'package:workmanager/workmanager.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 
 /// BLoC observer for debugging state changes
 class AppBlocObserver extends BlocObserver {
@@ -39,6 +43,25 @@ class AppBlocObserver extends BlocObserver {
     super.onClose(bloc);
     debugPrint('🔴 Bloc Closed: ${bloc.runtimeType}');
   }
+}
+
+/// WorkManager callback - runs even when app is killed.
+/// Checks if the tracking service is alive and restarts it if needed.
+@pragma('vm:entry-point')
+void _workManagerCallbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      final isRunning = await FlutterBackgroundService().isRunning();
+      if (!isRunning) {
+        debugPrint('WorkManager: tracking service was killed, restarting...');
+        await TrackingService.initialize();
+        await TrackingService.resumeIfNeeded();
+      }
+    } catch (e) {
+      debugPrint('WorkManager watchdog error: $e');
+    }
+    return Future.value(true);
+  });
 }
 
 /// Application entry point
@@ -126,6 +149,39 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
       }
       debugPrint('STEP 3: Supabase initialized');
 
+      // Step 3a: Load app settings (API keys) from Supabase
+      try {
+        final settings = await Supabase.instance.client
+            .from('app_settings')
+            .select('key, value')
+            .timeout(const Duration(seconds: 5));
+        for (final row in settings as List) {
+          final key = row['key'] as String;
+          final value = row['value']?.toString() ?? '';
+          if (key == 'google_places_api_key' && value.isNotEmpty) {
+            AppConstants.googlePlacesApiKey = value;
+          }
+          if (key == 'openai_api_key' && value.isNotEmpty) {
+            AppConstants.openAiApiKey = value;
+          }
+        }
+        debugPrint('STEP 3a: API keys loaded from app_settings');
+      } catch (e) {
+        debugPrint('STEP 3a: Failed to load app_settings: $e');
+      }
+
+      // Step 3b: Connectivity monitoring — used for network-aware sync
+      setState(() { _statusMessage = 'Checking Network...'; _progress = 0.48; });
+      try {
+        await ConnectivityService.initialize().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => debugPrint('Connectivity Init Timeout'),
+        );
+        debugPrint('STEP 3b: Connectivity monitoring initialized');
+      } catch (e) {
+        debugPrint('Connectivity Init Warning (non-fatal): $e');
+      }
+
       // Step 3: Tracking Service (50%) - Optional, don't block on failure
       setState(() { _statusMessage = 'Initializing GPS...'; _progress = 0.5; });
       try {
@@ -145,15 +201,37 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
       await configureDependencies();
       debugPrint('STEP 4: Dependencies configured');
 
+      // Step 4b: Initialize Notification Service (local channels MUST exist before use)
+      setState(() { _statusMessage = 'Initializing Notifications...'; _progress = 0.75; });
+      try {
+        final notificationService = getIt<NotificationService>();
+        await notificationService.initialize().timeout(const Duration(seconds: 3));
+        debugPrint('STEP 4b: Notification service initialized');
+      } catch (e) {
+        debugPrint('Notification Init Warning (non-fatal): $e');
+      }
+
       // Step 5: Resume Tracking (85%) - Optional
       setState(() { _statusMessage = 'Checking Status...'; _progress = 0.85; });
       try {
         await TrackingService.resumeIfNeeded();
       } catch (e) { /* ignore */ }
       debugPrint('STEP 5: Resume check complete');
-      
-      // Note: Firebase/Notifications will be initialized lazily when needed
-      // This keeps startup fast and prevents crashes if Firebase isn't configured
+
+      // Step 5b: Register WorkManager watchdog (restarts service if OS kills it)
+      try {
+        await Workmanager().initialize(_workManagerCallbackDispatcher);
+        await Workmanager().registerPeriodicTask(
+          'tracking-watchdog',
+          'trackingWatchdog',
+          frequency: const Duration(minutes: 15),
+          existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
+          constraints: Constraints(networkType: NetworkType.notRequired),
+        );
+        debugPrint('STEP 5b: WorkManager watchdog registered (15min)');
+      } catch (e) {
+        debugPrint('WorkManager init warning: $e');
+      }
 
       // Step 6: Finalize (100%)
       setState(() { _statusMessage = 'Ready!'; _progress = 1.0; });

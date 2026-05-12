@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../blocs/session/session_bloc.dart';
-import 'loading_button.dart';
+import 'package:benzmobitraq_mobile/presentation/blocs/session/session_bloc.dart';
+import 'package:benzmobitraq_mobile/presentation/widgets/loading_button.dart';
 
 /// Card widget for displaying session status and controls
 class SessionCard extends StatelessWidget {
@@ -43,7 +43,7 @@ class SessionCard extends StatelessWidget {
             color: (isActive
                     ? const Color(0xFF10B981)
                     : Theme.of(context).colorScheme.primary)
-                .withOpacity(0.3),
+                .withValues(alpha: 0.3),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -64,7 +64,7 @@ class SessionCard extends StatelessWidget {
                   boxShadow: isActive
                       ? [
                           BoxShadow(
-                            color: Colors.greenAccent.withOpacity(0.5),
+                            color: Colors.greenAccent.withValues(alpha: 0.5),
                             blurRadius: 10,
                             spreadRadius: 2,
                           ),
@@ -98,7 +98,7 @@ class SessionCard extends StatelessWidget {
             Text(
               'Distance Traveled',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.8),
+                color: Colors.white.withValues(alpha: 0.8),
                 fontSize: 14,
               ),
             ),
@@ -128,7 +128,7 @@ class SessionCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            // Duration
+            // Duration + GPS Accuracy
             Row(
               children: [
                 const Icon(Icons.timer_outlined, color: Colors.white70, size: 16),
@@ -140,6 +140,8 @@ class SessionCard extends StatelessWidget {
                     fontSize: 14,
                   ),
                 ),
+                const Spacer(),
+                _buildGpsAccuracyChip(sessionState.gpsAccuracyMeters),
               ],
             ),
           ] else ...[
@@ -151,13 +153,13 @@ class SessionCard extends StatelessWidget {
                   Icon(
                     Icons.location_off_outlined,
                     size: 48,
-                    color: Colors.white.withOpacity(0.6),
+                    color: Colors.white.withValues(alpha: 0.6),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Tap Present to start tracking',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
+                      color: Colors.white.withValues(alpha: 0.8),
                       fontSize: 14,
                     ),
                   ),
@@ -190,6 +192,41 @@ class SessionCard extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildGpsAccuracyChip(double? accuracyMeters) {
+    if (accuracyMeters == null) {
+      return const SizedBox.shrink();
+    }
+    final color = accuracyMeters <= 10
+        ? Colors.greenAccent
+        : accuracyMeters <= 30
+            ? Colors.orangeAccent
+            : Colors.redAccent;
+    final label = accuracyMeters <= 10
+        ? 'Good GPS'
+        : accuracyMeters <= 30
+            ? 'Fair GPS'
+            : 'Poor GPS';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.satellite_alt,
+          color: color,
+          size: 14,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          '${accuracyMeters.toStringAsFixed(0)}m · $label',
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     );
   }
 

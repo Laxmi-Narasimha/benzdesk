@@ -2,34 +2,36 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:logger/logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:benzmobitraq_mobile/data/models/session_model.dart';
+import 'package:benzmobitraq_mobile/data/models/location_point_model.dart';
+import 'package:benzmobitraq_mobile/data/models/notification_settings.dart';
 
-import '../data/models/session_model.dart';
-import '../data/models/location_point_model.dart';
-
-import '../data/repositories/session_repository.dart';
-import '../data/repositories/location_repository.dart';
-import '../data/repositories/expense_repository.dart';
-import '../data/datasources/local/preferences_local.dart';
-import '../core/distance_engine.dart';
-import 'tracking_service.dart';
-import 'permission_service.dart';
-import 'geocoding_service.dart';
-import 'notification_scheduler.dart';
-import 'timeline_recorder.dart';
+import 'package:benzmobitraq_mobile/data/repositories/session_repository.dart';
+import 'package:benzmobitraq_mobile/data/repositories/location_repository.dart';
+import 'package:benzmobitraq_mobile/data/repositories/expense_repository.dart';
+import 'package:benzmobitraq_mobile/data/datasources/local/preferences_local.dart';
+import 'package:benzmobitraq_mobile/core/distance_engine.dart';
+import 'package:benzmobitraq_mobile/services/tracking_service.dart';
+import 'package:benzmobitraq_mobile/services/permission_service.dart';
+import 'package:benzmobitraq_mobile/services/geocoding_service.dart';
+import 'package:benzmobitraq_mobile/services/notification_scheduler.dart';
+import 'package:benzmobitraq_mobile/services/timeline_recorder.dart';
+import 'package:benzmobitraq_mobile/services/notification_service.dart';
 
 /// Session status for UI feedback
 enum ManagerSessionStatus {
-  idle,           // No active session
-  starting,       // Starting session
-  active,         // Session running, tracking active
-  stopping,       // Stopping session
-  error,          // Error occurred
+  idle, // No active session
+  starting, // Starting session
+  active, // Session running, tracking active
+  stopping, // Stopping session
+  error, // Error occurred
 }
 
 /// Current session state with all relevant data
-/// 
+///
 /// Named ManagerSessionState to avoid conflict with BLoC's SessionState
 class ManagerSessionState {
   final ManagerSessionStatus status;
@@ -39,6 +41,7 @@ class ManagerSessionState {
   final LocationUpdate? lastLocation;
   final String? errorMessage;
   final List<String> warnings;
+  final bool isPaused;
 
   const ManagerSessionState({
     this.status = ManagerSessionStatus.idle,
@@ -48,6 +51,7 @@ class ManagerSessionState {
     this.lastLocation,
     this.errorMessage,
     this.warnings = const [],
+    this.isPaused = false,
   });
 
   double get currentDistanceKm => currentDistanceMeters / 1000;
@@ -60,39 +64,42 @@ class ManagerSessionState {
     LocationUpdate? lastLocation,
     String? errorMessage,
     List<String>? warnings,
+    bool? isPaused,
   }) {
     return ManagerSessionState(
       status: status ?? this.status,
       session: session ?? this.session,
-      currentDistanceMeters: currentDistanceMeters ?? this.currentDistanceMeters,
+      currentDistanceMeters:
+          currentDistanceMeters ?? this.currentDistanceMeters,
       duration: duration ?? this.duration,
       lastLocation: lastLocation ?? this.lastLocation,
       errorMessage: errorMessage ?? this.errorMessage,
       warnings: warnings ?? this.warnings,
+      isPaused: isPaused ?? this.isPaused,
     );
   }
 }
 
 /// Session Manager - Orchestrates the entire tracking workflow
-/// 
+///
 /// This is the main controller that ties together:
 /// - Session lifecycle (Present → Work Done)
 /// - Location tracking service
 /// - Local queue for offline storage
 /// - Sync to backend
-/// 
+///
 /// Usage:
 /// ```dart
 /// final manager = SessionManager(...);
 /// await manager.initialize();
-/// 
+///
 /// // Start work
 /// await manager.startSession();
-/// 
+///
 /// // Listen to updates
 /// manager.stateStream.listen((state) => updateUI(state));
-/// 
-/// // End work  
+///
+/// // End work
 /// await manager.stopSession();
 /// ```
 class SessionManager {
@@ -102,6 +109,7 @@ class SessionManager {
   final PreferencesLocal _preferences;
   final PermissionService _permissionService;
   final NotificationScheduler? _notificationScheduler;
+  final NotificationService? _notificationService;
   final Logger _logger = Logger();
   final Uuid _uuid = const Uuid();
 
@@ -112,6 +120,18 @@ class SessionManager {
   // Timers
   Timer? _durationTimer;
   Timer? _syncTimer;
+  Timer? _watchdogTimer;
+
+  // Tracking health
+  DateTime? _lastLocationUpdateAt;
+  DateTime? _lastWatchdogAlertAt;
+  DateTime? _lastDistanceIncreasedAt;
+  double _lastWatchdogDistanceM = 0;
+  // Stall threshold: if no location update arrives in this window while
+  // the session is active and not paused, fire a 3x-vibration alert.
+  static const Duration _stallThreshold = Duration(seconds: 90);
+  static const Duration _watchdogInterval = Duration(seconds: 30);
+  static const Duration _watchdogCooldown = Duration(minutes: 3);
 
   // Sync coordination (prevents overlapping uploads)
   bool _syncInProgress = false;
@@ -132,14 +152,17 @@ class SessionManager {
     required PreferencesLocal preferences,
     PermissionService? permissionService,
     NotificationScheduler? notificationScheduler,
+    NotificationService? notificationService,
     ExpenseRepository? expenseRepository,
   })  : _sessionRepository = sessionRepository,
         _locationRepository = locationRepository,
         _expenseRepository = expenseRepository,
         _preferences = preferences,
         _permissionService = permissionService ?? PermissionService(),
-        _notificationScheduler = notificationScheduler {
-    _timelineRecorder = TimelineRecorder(locationRepository: _locationRepository);
+        _notificationScheduler = notificationScheduler,
+        _notificationService = notificationService {
+    _timelineRecorder =
+        TimelineRecorder(locationRepository: _locationRepository);
   }
 
   /// Stream of session state updates
@@ -148,15 +171,18 @@ class SessionManager {
   /// Current session state
   ManagerSessionState get currentState => _state;
 
-  /// Whether a session is currently active
+  /// Whether a session is currently active (includes paused)
   bool get isSessionActive => _state.status == ManagerSessionStatus.active;
+
+  /// Whether a session is currently paused
+  bool get isSessionPaused => _state.isPaused;
 
   // ============================================================
   // INITIALIZATION
   // ============================================================
 
   /// Initialize the session manager
-  /// 
+  ///
   /// Must be called before using any other methods.
   /// This checks for any active session from a previous app run.
   Future<void> initialize() async {
@@ -165,12 +191,16 @@ class SessionManager {
       TrackingService.onLocationUpdate = _onLocationUpdate;
       TrackingService.onError = _onTrackingError;
       TrackingService.onTrackingStateChanged = _onTrackingStateChanged;
+      // Listen for auto-pause and stationary spot from background service
+      TrackingService.onAutoPaused = _onAutoPaused;
+      TrackingService.onAutoResumed = _onAutoResumed;
+      TrackingService.onStationarySpotDetected = _onStationarySpotDetected;
 
       // Check if there was an active session
       final activeSessionId = await _preferences.getActiveSessionId();
       if (activeSessionId != null) {
         _logger.i('Found active session: $activeSessionId');
-        
+
         // Try to resume
         SessionModel? session;
         try {
@@ -184,16 +214,16 @@ class SessionManager {
         if (session == null) {
           final cachedJson = _preferences.cachedSessionJson;
           if (cachedJson != null) {
-             try {
-               final raw = jsonDecode(cachedJson);
-               // Verify it matches the ID we expect
-               if (raw['id'] == activeSessionId) {
-                 session = SessionModel.fromJson(raw);
-                 _logger.i('OFFLINE: Recovered session from local cache');
-               }
-             } catch (e) {
-               _logger.e('Failed to parse cached session: $e');
-             }
+            try {
+              final raw = jsonDecode(cachedJson);
+              // Verify it matches the ID we expect
+              if (raw['id'] == activeSessionId) {
+                session = SessionModel.fromJson(raw);
+                _logger.i('OFFLINE: Recovered session from local cache');
+              }
+            } catch (e) {
+              _logger.e('Failed to parse cached session: $e');
+            }
           }
         }
 
@@ -203,7 +233,8 @@ class SessionManager {
           // Session ended or invalid, clean up
           // Only clear if we are SURE it's gone (e.g. online check failed and no cache)
           // For now, if we can't recover it, we have to clear it to unblock the user
-          _logger.w('Could not recover session $activeSessionId. Clearing local state.');
+          _logger.w(
+              'Could not recover session $activeSessionId. Clearing local state.');
           await _preferences.clearActiveSession();
           await _preferences.clearCachedSession();
         }
@@ -216,9 +247,10 @@ class SessionManager {
       // Even if we are not in an active session, we might have pending data to sync
       final pendingStop = _preferences.getPendingSessionEnd();
       final pendingLocCount = await _locationRepository.getPendingCount();
-      
+
       if (pendingStop != null || pendingLocCount > 0) {
-        _logger.i('Found pending offline data (Stop: ${pendingStop != null}, Locs: $pendingLocCount). Starting sync timer.');
+        _logger.i(
+            'Found pending offline data (Stop: ${pendingStop != null}, Locs: $pendingLocCount). Starting sync timer.');
         _startSyncTimer();
       }
 
@@ -238,7 +270,7 @@ class SessionManager {
   // ============================================================
 
   /// Start a new work session
-  /// 
+  ///
   /// This will:
   /// 1. Check permissions
   /// 2. Get current location for session start point
@@ -263,10 +295,12 @@ class SessionManager {
       // A. Check local persistence first
       var existingSessionId = await _preferences.getActiveSessionId();
       if (existingSessionId != null) {
-        _logger.w('Cannot start new session: Already have active session $existingSessionId');
+        _logger.w(
+            'Cannot start new session: Already have active session $existingSessionId');
         _updateState(_state.copyWith(
           status: ManagerSessionStatus.error,
-          errorMessage: 'You already have an active session running. Please end it first.',
+          errorMessage:
+              'You already have an active session running. Please end it first.',
         ));
         return false;
       }
@@ -276,18 +310,19 @@ class SessionManager {
       try {
         final serverSession = await _sessionRepository.getActiveSession();
         if (serverSession != null) {
-           _logger.w('Found existing session on server: ${serverSession.id}');
-           
-           // Auto-recover this session instead of erroring?
-           // The user experience is better if we just "find" it.
-           // However, startSession() expects to START a NEW one. 
-           // Let's return false with a specific message.
-           
-           _updateState(_state.copyWith(
-             status: ManagerSessionStatus.error,
-             errorMessage: 'Found an active session on the server. Please restart the app to sync.',
-           ));
-           return false;
+          _logger.w('Found existing session on server: ${serverSession.id}');
+
+          // Auto-recover this session instead of erroring?
+          // The user experience is better if we just "find" it.
+          // However, startSession() expects to START a NEW one.
+          // Let's return false with a specific message.
+
+          _updateState(_state.copyWith(
+            status: ManagerSessionStatus.error,
+            errorMessage:
+                'Found an active session on the server. Please restart the app to sync.',
+          ));
+          return false;
         }
       } catch (e) {
         _logger.w('Failed to check server for active session (offline?): $e');
@@ -341,11 +376,31 @@ class SessionManager {
       // Step 4: Generate Session ID
       final sessionId = _uuid.v4();
 
+      // CRITICAL: Wipe ALL stale tracking state from any prior session that
+      // might still be lingering in SharedPreferences. Without this, a rapid
+      // Stop -> Start can inherit the old session's totalDistance, last lat/lon,
+      // pause flag, etc., producing wrong km on the new session.
+      try {
+        final sp = await SharedPreferences.getInstance();
+        await sp.remove('tracking_total_distance');
+        await sp.remove('tracking_last_lat');
+        await sp.remove('tracking_last_lon');
+        await sp.remove('tracking_is_paused');
+        await sp.remove('tracking_paused_distance');
+        await sp.remove('tracking_auto_pause_at');
+        await sp.remove('tracking_session_day');
+        await sp.remove('tracking_last_speed_kmh');
+        await sp.remove('tracking_point_buffer');
+        await _preferences.setSessionDistanceMeters(0);
+      } catch (e) {
+        _logger.w('Failed to clear stale tracking prefs: $e');
+      }
+
       // CRITICAL FIX: Start tracking FIRST to allow rollback
       // Step 5: Start tracking
       // Save session ID locally temporarily for the service
       await _preferences.saveActiveSession(sessionId);
-      
+
       final trackingStarted = await TrackingService.startTracking(sessionId);
       if (!trackingStarted) {
         await _preferences.clearActiveSession(); // Rollback
@@ -380,10 +435,11 @@ class SessionManager {
         await _locationRepository.deleteLocalSessionPoints(sessionId);
         await _preferences.setSessionDistanceMeters(0);
         await _preferences.clearActiveSession();
-        
+
         _updateState(_state.copyWith(
           status: ManagerSessionStatus.error,
-          errorMessage: 'Failed to create session. Please check your connection.',
+          errorMessage:
+              'Failed to create session. Please check your connection.',
         ));
         return false;
       }
@@ -405,6 +461,17 @@ class SessionManager {
       _startDurationTimer(session.startTime);
       _startSyncTimer();
 
+      // Step 7b: Start notification scheduler with user settings
+      try {
+        final notifJson = _preferences.notificationSettingsJson;
+        if (notifJson != null) {
+          final settings = NotificationSettings.fromJson(jsonDecode(notifJson));
+          _notificationScheduler?.startMonitoring(settings);
+        }
+      } catch (e) {
+        _logger.w('Failed to load notification settings: $e');
+      }
+
       // Step 8: Background notifications are handled directly by TrackingService
 
       // Update state
@@ -417,6 +484,7 @@ class SessionManager {
       ));
 
       _logger.i('Session started: $sessionId');
+      _startWatchdog();
       return true;
     } catch (e) {
       _logger.e('Error starting session: $e');
@@ -428,7 +496,7 @@ class SessionManager {
         await _locationRepository.deleteLocalSessionPoints(maybeSessionId);
       }
       await _preferences.clearActiveSession();
-      
+
       _updateState(_state.copyWith(
         status: ManagerSessionStatus.error,
         errorMessage: 'Error starting session: $e',
@@ -442,7 +510,7 @@ class SessionManager {
   // ============================================================
 
   /// Stop the current work session
-  /// 
+  ///
   /// This will:
   /// 1. Stop background tracking
   /// 2. Get final location
@@ -465,7 +533,7 @@ class SessionManager {
 
       // Step 3: Get final location
       final position = await TrackingService.getCurrentLocation();
-      
+
       String? address;
       if (position != null) {
         try {
@@ -482,6 +550,14 @@ class SessionManager {
       await _syncPendingLocations();
 
       final endTime = DateTime.now();
+      var finalTotalPausedSeconds = _state.session?.totalPausedSeconds ?? 0;
+      if (_state.isPaused && _state.session?.pausedAt != null) {
+        final inProgressPauseSeconds =
+            endTime.difference(_state.session!.pausedAt!).inSeconds;
+        if (inProgressPauseSeconds > 0) {
+          finalTotalPausedSeconds += inProgressPauseSeconds;
+        }
+      }
 
       // ================================================================
       // STEP 4b: AUTHORITATIVE DISTANCE CALCULATION
@@ -502,37 +578,70 @@ class SessionManager {
       final sessionId = _state.session!.id;
       double verifiedDistanceKm = 0;
 
-      // Primary: local SQLite points (offline-safe)
+      // ================================================================
+      // AUTHORITATIVE DISTANCE CALCULATION
+      // Combine ALL points (local + server), deduplicate by hash,
+      // apply rolling median smoothing, and calculate with
+      // mode-aware teleport detection + gap interpolation.
+      // ================================================================
+      final allPoints = <LocationPointModel>[];
+
+      // Load server first, then local SQLite. Local points contain the newest
+      // accepted-distance flags even if the server schema is not migrated yet.
       try {
-        final localPoints = await _locationRepository.getLocalSessionPoints(sessionId);
-        if (localPoints.length >= 2) {
-          final localKm = DistanceEngine.calculateTotalDistance(localPoints);
-          _logger.i('Local SQLite distance: ${localKm.toStringAsFixed(2)} km (${localPoints.length} pts)');
-          if (localKm > verifiedDistanceKm) verifiedDistanceKm = localKm;
+        final serverPoints =
+            await _locationRepository.getSessionLocations(sessionId);
+        if (serverPoints.isNotEmpty) {
+          allPoints.addAll(serverPoints);
+          _logger.i('Server points: ${serverPoints.length}');
+        }
+      } catch (e) {
+        _logger.w('Server distance check failed: $e');
+      }
+
+      try {
+        final localPoints =
+            await _locationRepository.getLocalSessionPoints(sessionId);
+        if (localPoints.isNotEmpty) {
+          allPoints.addAll(localPoints);
+          _logger.i('Local SQLite points: ${localPoints.length}');
         }
       } catch (e) {
         _logger.w('Local distance calc failed: $e');
       }
 
-      // Secondary: server points (may have more points if sync completed)
-      try {
-        final serverPoints = await _locationRepository.getSessionLocations(sessionId);
-        if (serverPoints.length >= 2) {
-          final serverKm = DistanceEngine.calculateTotalDistance(serverPoints);
-          _logger.i('Server distance: ${serverKm.toStringAsFixed(2)} km (${serverPoints.length} pts)');
-          if (serverKm > verifiedDistanceKm) verifiedDistanceKm = serverKm;
+      if (allPoints.length >= 2) {
+        // Deduplicate by hash, sort by time, calculate authoritative distance
+        final uniquePoints = <String, LocationPointModel>{};
+        for (final p in allPoints) {
+          if (p.hash != null) uniquePoints[p.hash!] = p;
         }
-      } catch (e) {
-        _logger.w('Server distance check failed (using local): $e');
+        final combined = uniquePoints.values.toList();
+        combined.sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+
+        final authResult = DistanceEngine.calculateAuthoritativeDistance(
+            combined,
+            applySmoothing: true);
+        verifiedDistanceKm = authResult.totalKm;
+
+        final integrity = DistanceEngine.verifyChainIntegrity(combined);
+        _logger.i(
+            'Authoritative distance: ${verifiedDistanceKm.toStringAsFixed(3)} km | '
+            '${authResult.pointCount} pts, ${authResult.segments} valid segments, '
+            '${authResult.noiseSegments} noise, ${authResult.teleportSegments} teleports, '
+            '${authResult.gapInterpolations} interpolated gaps | '
+            'Chain valid: ${authResult.chainValid}, Coverage: ${integrity.coveragePercent}%');
       }
 
       // Ultimate fallback: persisted SharedPrefs distance
       if (verifiedDistanceKm == 0) {
         verifiedDistanceKm = _preferences.getSessionDistanceMeters() / 1000;
-        _logger.w('Falling back to persisted distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+        _logger.w(
+            'Falling back to persisted distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
       }
 
-      _logger.i('FINAL verified distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+      _logger.i(
+          'FINAL verified distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
       // Step 5: End session in backend
       SessionModel? endedSession;
       try {
@@ -543,6 +652,7 @@ class SessionManager {
           verifiedDistanceKm,
           address: address,
           endTime: endTime,
+          totalPausedSeconds: finalTotalPausedSeconds,
         );
       } catch (e) {
         _logger.w('Failed to stop session online: $e');
@@ -558,16 +668,18 @@ class SessionManager {
           longitude: position?.longitude ?? _state.lastLocation?.longitude,
           address: address,
           totalKm: verifiedDistanceKm,
+          totalPausedSeconds: finalTotalPausedSeconds,
         );
-        
+
         // Ensure sync timer is running to retry this later
         _startSyncTimer();
-        
+
         // Create artificial ended session for UI
         endedSession = _state.session!.copyWith(
           endTime: endTime,
           totalKm: verifiedDistanceKm,
           status: SessionStatus.completed,
+          totalPausedSeconds: finalTotalPausedSeconds,
         );
       }
 
@@ -585,9 +697,6 @@ class SessionManager {
       }
 
       // Calculate final duration from start time to ensure accuracy
-      final startTime = _preferences.getSessionStartTime() ?? _state.session?.startTime ?? DateTime.now();
-      final finalDuration = endTime.difference(startTime);
-
       // Step 6: Clear local session
       await _preferences.clearActiveSession();
       await _preferences.clearCachedSession(); // Clear offline cache
@@ -595,10 +704,14 @@ class SessionManager {
 
       // Step 7: Background notification summary is handled by background service or skipped
 
-      // Update state
-      _updateState(const ManagerSessionState(status: ManagerSessionStatus.idle));
+      _stopWatchdog();
 
-      _logger.i('Session stopped. Distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+      // Update state
+      _updateState(
+          const ManagerSessionState(status: ManagerSessionStatus.idle));
+
+      _logger.i(
+          'Session stopped. Distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
       return endedSession;
     } catch (e) {
       _logger.e('Error stopping session: $e');
@@ -614,36 +727,161 @@ class SessionManager {
   // RESUME SESSION (after app restart)
   // ============================================================
 
+  // ============================================================
+  // PAUSE / RESUME
+  // ============================================================
+
+  /// Pause the current session (manual or auto)
+  Future<bool> pauseSession({bool isAutoPause = false}) async {
+    if (_state.session == null || _state.isPaused) {
+      _logger.w('Cannot pause: no session or already paused');
+      return false;
+    }
+
+    try {
+      final pausedAt = DateTime.now();
+      final updatedSession = _state.session!.copyWith(
+        status: SessionStatus.paused,
+        pausedAt: pausedAt,
+      );
+
+      // Pause tracking (GPS continues but distance stops)
+      await TrackingService.pauseTracking();
+
+      // Record break_start timeline event
+      if (_state.lastLocation != null) {
+        await _timelineRecorder.recordEvent(
+          eventType: 'break_start',
+          latitude: _state.lastLocation!.latitude,
+          longitude: _state.lastLocation!.longitude,
+          timestamp: pausedAt,
+        );
+      }
+
+      // Update backend session status
+      try {
+        await _sessionRepository.updateSessionStatus(
+          updatedSession.id,
+          SessionStatus.paused,
+          pausedAt: pausedAt,
+        );
+      } catch (e) {
+        _logger.w('Failed to update session status on server: $e');
+      }
+
+      _updateState(_state.copyWith(
+        session: updatedSession,
+        isPaused: true,
+      ));
+
+      _logger.i(
+          'Session paused at ${pausedAt.toIso8601String()} (${isAutoPause ? "auto" : "manual"})');
+      return true;
+    } catch (e) {
+      _logger.e('Error pausing session: $e');
+      return false;
+    }
+  }
+
+  /// Resume a paused session
+  Future<bool> resumeSession() async {
+    if (_state.session == null || !_state.isPaused) {
+      _logger.w('Cannot resume: no session or not paused');
+      return false;
+    }
+
+    try {
+      final resumedAt = DateTime.now();
+      final previousPausedAt = _state.session!.pausedAt ?? resumedAt;
+      final pauseDurationSec = resumedAt.difference(previousPausedAt).inSeconds;
+      final totalPausedSeconds =
+          _state.session!.totalPausedSeconds + pauseDurationSec;
+
+      final updatedSession = _state.session!.copyWith(
+        status: SessionStatus.active,
+        resumedAt: resumedAt,
+        totalPausedSeconds: totalPausedSeconds,
+      );
+
+      // Resume tracking
+      await TrackingService.resumeTracking();
+
+      // Record break_end timeline event
+      if (_state.lastLocation != null) {
+        await _timelineRecorder.recordEvent(
+          eventType: 'break_end',
+          latitude: _state.lastLocation!.latitude,
+          longitude: _state.lastLocation!.longitude,
+          timestamp: resumedAt,
+          durationSec: pauseDurationSec,
+        );
+      }
+
+      // Update backend session status
+      try {
+        await _sessionRepository.updateSessionStatus(
+          updatedSession.id,
+          SessionStatus.active,
+          resumedAt: resumedAt,
+          totalPausedSeconds: totalPausedSeconds,
+        );
+      } catch (e) {
+        _logger.w('Failed to update session status on server: $e');
+      }
+
+      _updateState(_state.copyWith(
+        session: updatedSession,
+        isPaused: false,
+      ));
+
+      _logger.i(
+          'Session resumed at ${resumedAt.toIso8601String()}, total paused: ${Duration(seconds: totalPausedSeconds).inMinutes} min');
+      return true;
+    } catch (e) {
+      _logger.e('Error resuming session: $e');
+      return false;
+    }
+  }
+
+  // ============================================================
+  // RESUME SESSION (after app restart)
+  // ============================================================
+
   Future<void> _resumeSession(SessionModel session) async {
     try {
       // Get persisted start time (more accurate for timer)
       final persistedStart = _preferences.getSessionStartTime();
       final startTime = persistedStart ?? session.startTime;
-      
+
       // Get persisted distance (more accurate than database value)
       // Fall back to database value only if nothing persisted
       final persistedDistanceM = _preferences.getSessionDistanceMeters();
-      final distanceMeters = persistedDistanceM > 0 
-          ? persistedDistanceM 
-          : session.totalKm * 1000;
-      
+      final distanceMeters =
+          persistedDistanceM > 0 ? persistedDistanceM : session.totalKm * 1000;
+
+      // Check if session was paused before app restart
+      final isPausedNow = session.isPaused;
+
       _updateState(ManagerSessionState(
         status: ManagerSessionStatus.active,
         session: session,
         currentDistanceMeters: distanceMeters,
-        duration: DateTime.now().difference(startTime),
+        duration: session.activeDuration,
+        isPaused: isPausedNow,
       ));
 
       _startDurationTimer(startTime);
       _startSyncTimer();
-      
+      _startWatchdog();
+
       // Attempt to restart tracking
       await TrackingService.resumeIfNeeded();
 
       // Session exists on server (we fetched it), so uploads are safe
       _backendSessionReady = true;
 
-      _logger.i('Session resumed: ${session.id}, distance: ${distanceMeters / 1000} km');
+      _logger.i(
+          'Session resumed: ${session.id}, distance: ${distanceMeters / 1000} km, paused: $isPausedNow');
     } catch (e) {
       _logger.e('Error resuming session: $e');
     }
@@ -654,34 +892,87 @@ class SessionManager {
   // ============================================================
 
   void _onLocationUpdate(LocationUpdate update) {
-    if (_state.status != ManagerSessionStatus.active) return;
+    // CRITICAL FIX: Do NOT drop updates during the 'stopping' transition.
+    // The background isolate may deliver a final fix while the main isolate
+    // is mid-stopSession() - if we drop it, the distance from that last
+    // segment is permanently lost. Only ignore if there is truly no session.
+    final st = _state.status;
+    if (st != ManagerSessionStatus.active && st != ManagerSessionStatus.stopping) {
+      return;
+    }
+    if (_state.session == null) return;
+    // Ignore points belonging to a different (older) session id.
+    if (update.sessionId != null && update.sessionId != _state.session!.id) {
+      _logger.w('Ignoring location update for old session ${update.sessionId}');
+      return;
+    }
 
-    // Queue location for sync
+    // Watchdog: mark when we last received GPS data.
+    _lastLocationUpdateAt = DateTime.now();
+    // Watchdog: mark when distance actually increased.
+    if (update.totalDistance > _lastWatchdogDistanceM) {
+      _lastDistanceIncreasedAt = DateTime.now();
+      _lastWatchdogDistanceM = update.totalDistance;
+    }
+
+    // ALWAYS queue location for sync (even when paused) for chain-of-custody
     _queueLocation(update);
 
     // Persist distance for app restart recovery
     _preferences.setSessionDistanceMeters(update.totalDistance);
 
-    // Stop Detection via TimelineRecorder
-    unawaited(_timelineRecorder.processLocation(
-      latitude: update.latitude,
-      longitude: update.longitude,
-      timestamp: update.timestamp,
-      isMoving: update.isMoving,
-    ));
+    // Only process stops and update distance UI when not paused
+    if (!_state.isPaused) {
+      // Stop Detection via TimelineRecorder
+      unawaited(_timelineRecorder.processLocation(
+        latitude: update.latitude,
+        longitude: update.longitude,
+        timestamp: update.timestamp,
+        isMoving: update.isMoving,
+      ));
 
-    // Background notifications natively handled in TrackingService
+      // Update distance state
+      _updateState(_state.copyWith(
+        currentDistanceMeters: update.totalDistance,
+        lastLocation: update,
+      ));
+    } else {
+      // Still update last location so UI shows current position
+      _updateState(_state.copyWith(
+        lastLocation: update,
+      ));
+    }
+  }
 
-    // Update state
-    _updateState(_state.copyWith(
-      currentDistanceMeters: update.totalDistance,
-      lastLocation: update,
-    ));
+  void _onAutoPaused(Map<String, dynamic> data) {
+    _logger.i('Auto-pause received from background service');
+    if (_state.session != null && !_state.isPaused) {
+      unawaited(pauseSession(isAutoPause: true));
+    }
+  }
+
+  void _onAutoResumed(Map<String, dynamic> data) {
+    _logger.i(
+        'Auto-resume received from background service: ${data['distanceFromAnchor']}m moved');
+    if (_state.session != null && _state.isPaused) {
+      unawaited(resumeSession());
+    }
+  }
+
+  final _stationarySpotController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get stationarySpotStream =>
+      _stationarySpotController.stream;
+
+  void _onStationarySpotDetected(Map<String, dynamic> data) {
+    _logger.i(
+        'Stationary spot detected: lat=${data['lat']}, lng=${data['lng']}, duration=${data['durationSec']}s');
+    _stationarySpotController.add(data);
   }
 
   void _onTrackingError(String error) {
     _logger.e('Tracking error: $error');
-    
+
     if (_state.status == ManagerSessionStatus.active) {
       _updateState(_state.copyWith(
         warnings: [..._state.warnings, error],
@@ -691,8 +982,10 @@ class SessionManager {
 
   void _onTrackingStateChanged(bool isTracking) {
     _logger.i('Tracking state changed: $isTracking');
-    
-    if (!isTracking && _state.status == ManagerSessionStatus.active) {
+
+    if (!isTracking &&
+        _state.status == ManagerSessionStatus.active &&
+        !_state.isPaused) {
       // Tracking stopped unexpectedly - try to restart
       _logger.w('Tracking stopped unexpectedly, attempting restart...');
       _attemptTrackingRestart();
@@ -704,7 +997,7 @@ class SessionManager {
 
     try {
       await Future.delayed(const Duration(seconds: 2));
-      
+
       if (_state.status == ManagerSessionStatus.active) {
         final started = await TrackingService.startTracking(_state.session!.id);
         if (started) {
@@ -735,16 +1028,18 @@ class SessionManager {
         altitude: update.altitude,
         heading: update.heading,
         isMoving: update.isMoving,
+        countsForDistance: update.countsForDistance,
+        distanceDeltaM: update.distanceDeltaM,
         recordedAt: update.timestamp,
       );
 
       await _locationRepository.queueLocation(point);
       _logger.i('DIAGNOSTIC: Point queued: ${point.id}');
-      
+
       // CRITICAL FIX: Sync more aggressively - every 5 points instead of waiting for timer
       final pendingCount = await _locationRepository.getPendingCount();
       _logger.d('Queued location point. Pending: $pendingCount');
-      
+
       if (_backendSessionReady && pendingCount >= 3) {
         _logger.i('Triggering immediate sync (3+ points pending)');
         unawaited(_syncPendingLocations());
@@ -766,12 +1061,14 @@ class SessionManager {
       final uploadedCount = await _locationRepository.uploadPendingLocations();
       _logger.i('Location sync completed. Uploaded $uploadedCount points.');
 
-      // Sync pending expenses  
+      // Sync pending expenses
       if (_expenseRepository != null) {
         try {
-          final expenseSyncCount = await _expenseRepository!.syncPendingExpenses();
+          final expenseSyncCount =
+              await _expenseRepository.syncPendingExpenses();
           if (expenseSyncCount > 0) {
-            _logger.i('Expense sync completed. Synced $expenseSyncCount items.');
+            _logger
+                .i('Expense sync completed. Synced $expenseSyncCount items.');
           }
         } catch (e) {
           _logger.e('Error syncing expenses: $e');
@@ -795,14 +1092,14 @@ class SessionManager {
   Future<void> _syncPendingSessionStop() async {
     final pending = _preferences.getPendingSessionEnd();
     if (pending == null) return;
-    
+
     // Only sync if we have "internet" (aka backend access)
     // We can infer this if `_backendSessionReady` OR if we can fetch user id
     if (await _sessionRepository.resolveCurrentUserId() == null) return;
 
     try {
       _logger.i('Syncing pending session stop for ${pending['sessionId']}');
-      
+
       await _sessionRepository.stopSession(
         pending['sessionId'],
         pending['latitude'],
@@ -810,8 +1107,9 @@ class SessionManager {
         pending['totalKm'],
         address: pending['address'],
         endTime: DateTime.parse(pending['endTime']),
+        totalPausedSeconds: (pending['totalPausedSeconds'] as num?)?.toInt(),
       );
-      
+
       await _preferences.clearPendingSessionEnd();
       _logger.i('Pending session stop synced successfully');
     } catch (e) {
@@ -827,8 +1125,42 @@ class SessionManager {
     _durationTimer?.cancel();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_state.status == ManagerSessionStatus.active) {
+        final now = DateTime.now();
+        final rawDuration = now.difference(startTime);
+
+        // Base paused seconds from completed pauses
+        int totalPausedSec = _state.session?.totalPausedSeconds ?? 0;
+
+        // If currently paused, add the in-progress pause duration so the
+        // displayed duration FREEZES during pause (doesn't keep counting).
+        if (_state.isPaused && _state.session?.pausedAt != null) {
+          final currentPauseSec =
+              now.difference(_state.session!.pausedAt!).inSeconds;
+          if (currentPauseSec > 0) {
+            totalPausedSec += currentPauseSec;
+          }
+        }
+
+        final paused = Duration(seconds: totalPausedSec);
+        final activeDuration =
+            paused > rawDuration ? Duration.zero : rawDuration - paused;
+
+        // SAFETY NET: re-read latest distance from persistent prefs.
+        // This ensures the UI continues updating even if a locationUpdate
+        // event from the background isolate is delayed or dropped
+        // (which can happen on long trips when the OS throttles main
+        // isolate while the app is backgrounded).
+        double distanceM = _state.currentDistanceMeters;
+        try {
+          final persisted = _preferences.getSessionDistanceMeters();
+          if (persisted > distanceM) {
+            distanceM = persisted;
+          }
+        } catch (_) {}
+
         _updateState(_state.copyWith(
-          duration: DateTime.now().difference(startTime),
+          duration: activeDuration,
+          currentDistanceMeters: distanceM,
         ));
       }
     });
@@ -838,13 +1170,13 @@ class SessionManager {
     _syncTimer?.cancel();
     _syncTimer = Timer.periodic(_syncInterval, (_) async {
       await _syncPendingSessionStop(); // Sync pending Stop commands
-      await _syncPendingLocations();   // Sync location points
-      
+      await _syncPendingLocations(); // Sync location points
+
       // Self-cancellation: If no active session AND no pending data, stop the timer
       if (_state.status != ManagerSessionStatus.active) {
         final pendingStop = _preferences.getPendingSessionEnd();
         final pendingLocCount = await _locationRepository.getPendingCount();
-        
+
         if (pendingStop == null && pendingLocCount == 0) {
           _logger.i('Sync timer auto-cancelled (No session, no pending data)');
           _syncTimer?.cancel();
@@ -867,9 +1199,93 @@ class SessionManager {
   // CLEANUP
   // ============================================================
 
+  // ============================================================
+  // TRACKING HEALTH WATCHDOG
+  // ============================================================
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _lastLocationUpdateAt = DateTime.now();
+    _lastDistanceIncreasedAt = DateTime.now();
+    _lastWatchdogDistanceM = 0;
+    _lastWatchdogAlertAt = null;
+    _watchdogTimer = Timer.periodic(_watchdogInterval, (_) => _watchdogTick());
+    _logger.i('Tracking watchdog started');
+  }
+
+  void _stopWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+    _lastLocationUpdateAt = null;
+    _lastWatchdogAlertAt = null;
+  }
+
+  Future<void> _watchdogTick() async {
+    try {
+      // Only alert during an actively-running session that is not paused.
+      if (_state.status != ManagerSessionStatus.active) return;
+      if (_state.isPaused) return;
+      if (_lastLocationUpdateAt == null) return;
+
+      final since = DateTime.now().difference(_lastLocationUpdateAt!);
+      if (since < _stallThreshold) return;
+
+      // Cooldown: don't spam the user every 30s.
+      final now = DateTime.now();
+      if (_lastWatchdogAlertAt != null &&
+          now.difference(_lastWatchdogAlertAt!) < _watchdogCooldown) {
+        return;
+      }
+      _lastWatchdogAlertAt = now;
+
+      final secs = since.inSeconds;
+      _logger.w('WATCHDOG: No GPS update for ${secs}s - alerting user');
+
+      // EXTRA CHECK: GPS is updating but distance hasn't moved for 3+ min
+      // (user is moving but threshold is too high / GPS is stuck)
+      if (_lastDistanceIncreasedAt != null) {
+        final distStall = DateTime.now().difference(_lastDistanceIncreasedAt!).inSeconds;
+        if (distStall >= 180) {
+          _logger.w('WATCHDOG: Distance stalled for ${distStall}s despite GPS updates');
+        }
+      }
+
+      // Surface a visible warning in the UI as well.
+      final w = List<String>.from(_state.warnings)
+        ..removeWhere((s) => s.startsWith('GPS stalled'))
+        ..add('GPS stalled ${secs}s ago - distance may not be updating');
+      _updateState(_state.copyWith(warnings: w));
+
+      // Fire the 3x vibration alert via notification service.
+      try {
+        await _notificationService?.showCriticalTrackingAlert(
+          title: 'Tracking issue detected',
+          body: 'GPS has not updated for ${(secs / 60).toStringAsFixed(0)} min. '
+              'Open the app, check location permissions, and move outdoors if possible.',
+        );
+      } catch (e) {
+        _logger.e('Watchdog alert failed: $e');
+      }
+
+      // Attempt automatic recovery: try restarting tracking once.
+      try {
+        if (_state.session != null) {
+          await TrackingService.startTracking(_state.session!.id,
+              isResume: true);
+          _logger.i('Watchdog: attempted tracking restart');
+        }
+      } catch (e) {
+        _logger.e('Watchdog restart failed: $e');
+      }
+    } catch (e) {
+      _logger.e('Watchdog tick error: $e');
+    }
+  }
+
   void dispose() {
     _durationTimer?.cancel();
     _syncTimer?.cancel();
+    _watchdogTimer?.cancel();
     _timelineRecorder.dispose();
     _stateController.close();
   }
