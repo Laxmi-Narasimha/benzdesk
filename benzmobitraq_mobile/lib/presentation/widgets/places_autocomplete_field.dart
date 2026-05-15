@@ -85,6 +85,14 @@ class _PlacesAutocompleteFieldState extends State<PlacesAutocompleteField> {
   bool _loading = false;
   String? _sessionToken;
   OverlayEntry? _overlay;
+  /// Human-readable last error so the user actually sees WHY no
+  /// suggestions are showing instead of staring at an empty box.
+  /// Cleared on a successful request. Common values:
+  ///   - 'Places API not enabled on this Google Cloud project'
+  ///   - 'API key invalid or restricted to a different package/SHA-1'
+  ///   - 'Daily quota exceeded'
+  ///   - 'No internet'
+  String? _lastError;
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 6),
     receiveTimeout: const Duration(seconds: 6),
@@ -128,14 +136,24 @@ class _PlacesAutocompleteFieldState extends State<PlacesAutocompleteField> {
 
   Future<void> _fetchPredictions(String input) async {
     if (input.trim().length < 2) {
-      setState(() => _predictions = const []);
+      setState(() {
+        _predictions = const [];
+        _lastError = null;
+      });
       _removeOverlay();
       return;
     }
     final key = _apiKey();
-    if (key == null) return; // graceful fallback to plain text input
+    if (key == null) {
+      setState(() => _lastError = 'No API key configured');
+      _showOverlay();
+      return;
+    }
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _lastError = null;
+    });
     try {
       final params = <String, String>{
         'input': input,
@@ -154,24 +172,69 @@ class _PlacesAutocompleteFieldState extends State<PlacesAutocompleteField> {
       );
       if (res.statusCode != 200 || res.data == null) {
         _logger.w('Places Autocomplete HTTP ${res.statusCode}');
+        if (mounted) {
+          setState(() =>
+              _lastError = 'Network error (HTTP ${res.statusCode})');
+          _showOverlay();
+        }
         return;
       }
       final body = res.data!;
+      // Google ALWAYS returns a `status` field. We MUST surface it —
+      // 'REQUEST_DENIED' / 'OVER_QUERY_LIMIT' / 'INVALID_REQUEST' all
+      // come back with HTTP 200 + an empty predictions array, which
+      // looks exactly like "no matches" if we don't read the status.
+      final status = body['status'] as String?;
+      final errorMsg = body['error_message'] as String?;
+      _logger.i(
+          'Places Autocomplete: status=$status results=${(body['predictions'] as List?)?.length ?? 0} input="$input"');
+      if (status != null && status != 'OK' && status != 'ZERO_RESULTS') {
+        final msg = _humanError(status, errorMsg);
+        _logger.w('Places Autocomplete: $status — $errorMsg');
+        if (mounted) {
+          setState(() => _lastError = msg);
+          _showOverlay();
+        }
+        return;
+      }
       final preds = (body['predictions'] as List? ?? [])
           .cast<Map<String, dynamic>>()
           .map(_Prediction.fromJson)
           .toList(growable: false);
       if (!mounted) return;
       setState(() => _predictions = preds);
-      if (_predictions.isNotEmpty && _focus.hasFocus) {
+      if (_focus.hasFocus) {
         _showOverlay();
       } else {
         _removeOverlay();
       }
     } catch (e) {
       _logger.w('Places Autocomplete error: $e');
+      if (mounted) {
+        setState(() => _lastError = 'No internet or request failed');
+        _showOverlay();
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _humanError(String status, String? googleMessage) {
+    switch (status) {
+      case 'REQUEST_DENIED':
+        // Most common: Places API not enabled on the Google Cloud
+        // project, OR the API key has Application restrictions that
+        // exclude this APK's package/SHA-1.
+        return 'Search unavailable: API key issue. '
+            '${googleMessage ?? "Enable Places API and check key restrictions."}';
+      case 'OVER_QUERY_LIMIT':
+        return 'Daily search quota reached. Try again tomorrow.';
+      case 'INVALID_REQUEST':
+        return 'Search failed: invalid request.';
+      case 'UNKNOWN_ERROR':
+        return 'Search service temporarily unavailable. Try again.';
+      default:
+        return 'Search failed ($status).';
     }
   }
 
@@ -255,6 +318,7 @@ class _PlacesAutocompleteFieldState extends State<PlacesAutocompleteField> {
             showWhenUnlinked: false,
             child: _SuggestionList(
               predictions: _predictions,
+              errorMessage: _lastError,
               onTap: _selectPrediction,
             ),
           ),
@@ -339,12 +403,46 @@ class _Prediction {
 class _SuggestionList extends StatelessWidget {
   final List<_Prediction> predictions;
   final ValueChanged<_Prediction> onTap;
-  const _SuggestionList({required this.predictions, required this.onTap});
+  final String? errorMessage;
+  const _SuggestionList({
+    required this.predictions,
+    required this.onTap,
+    this.errorMessage,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (predictions.isEmpty) return const SizedBox.shrink();
+    if (predictions.isEmpty && (errorMessage == null || errorMessage!.isEmpty)) {
+      return const SizedBox.shrink();
+    }
     final scheme = Theme.of(context).colorScheme;
+    // No results AND there is an error → render the error message.
+    if (predictions.isEmpty) {
+      return Material(
+        elevation: 6,
+        borderRadius: BorderRadius.circular(12),
+        color: scheme.surface,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Icon(Icons.error_outline,
+                  size: 18, color: Colors.orange.shade700),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  errorMessage!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurface.withValues(alpha: 0.85),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Material(
       elevation: 6,
       borderRadius: BorderRadius.circular(12),
