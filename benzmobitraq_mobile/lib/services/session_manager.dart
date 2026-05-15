@@ -355,6 +355,7 @@ class SessionManager {
       TrackingService.onServiceStatusChanged = _onServiceStatusChanged;
       TrackingService.onStationaryAlarm = _onStationaryAlarm;
       TrackingService.onMovementAutoResumed = _onMovementAutoResumed;
+      TrackingService.onWatchdogGrace = _onWatchdogGrace;
       TrackingService.onMapsGapRecovery = _onMapsGapRecovery;
 
       // Listen for connectivity changes. When the device goes from
@@ -707,9 +708,10 @@ class SessionManager {
 
       // Step 8: Background notifications are handled directly by TrackingService
 
-      // Reset stop detector for the fresh session — prior session's
-      // candidate / last-confirmed state must not leak.
+      // Reset stop detector and polyline-jitter cache for the fresh
+      // session — prior session's state must not leak.
       _stopDetector = StopDetector();
+      _lastQueuedPoint = null;
 
       // Update state
       _updateState(ManagerSessionState(
@@ -1603,6 +1605,20 @@ class SessionManager {
     }
   }
 
+  /// BG isolate signalled that we just resumed (manual or auto). Give
+  /// the position stream a grace period before the watchdog screams
+  /// "GPS not updated for 12 min" — that was Bug 5 from the user
+  /// report.
+  void _onWatchdogGrace(Map<String, dynamic> data) {
+    final secs = (data['durationSec'] as int?) ?? 90;
+    _watchdogGraceUntil =
+        DateTime.now().add(Duration(seconds: secs));
+    _lastLocationUpdateAt = DateTime.now();
+    _lastDistanceIncreasedAt = DateTime.now();
+    _lastWatchdogAlertAt = DateTime.now();
+    _logger.i('WATCHDOG: grace period $secs s applied');
+  }
+
   void _onMovementAutoResumed(Map<String, dynamic> data) {
     _logger.i('MOVEMENT-AUTO-RESUMED: $data');
     // The bg-isolate has already called resumeActiveTracking(). Our
@@ -1749,8 +1765,54 @@ class SessionManager {
   // LOCATION QUEUE & SYNC
   // ============================================================
 
+  /// Cache of the most-recently-queued point for this session. Used by
+  /// the polyline-jitter filter below so we can reject teleport spikes
+  /// at upload time instead of letting them through and rendering a
+  /// zigzag route on the admin map.
+  LocationPointModel? _lastQueuedPoint;
+
   Future<void> _queueLocation(LocationUpdate update) async {
     try {
+      // POLYLINE-JITTER FILTER (Bug 1 from user report).
+      //
+      // We reject a point at *upload time* if:
+      //   (a) accuracy is worse than 80 m (loose enough to keep noisy
+      //       indoor fixes for stop detection, but tight enough to
+      //       drop the worst urban-canyon spikes), OR
+      //   (b) it implies a physically-impossible speed jump from the
+      //       previous queued point (teleport).
+      //
+      // Distance accumulation is unaffected — the BG isolate already
+      // computed `update.distanceDeltaM` from the *filtered* chain,
+      // and rejecting a raw point from the queue doesn't subtract any
+      // already-accepted distance. We're just cleaning the polyline.
+      if (update.accuracy > 0 && update.accuracy > 80.0) {
+        _logger.d(
+            'QUEUE-FILTER: skipping point, accuracy ${update.accuracy.toStringAsFixed(1)}m');
+        return;
+      }
+      final prev = _lastQueuedPoint;
+      if (prev != null) {
+        final dt = update.timestamp.difference(prev.recordedAt);
+        final distMeters = Geolocator.distanceBetween(
+          prev.latitude,
+          prev.longitude,
+          update.latitude,
+          update.longitude,
+        );
+        // Use the same mode-aware teleport check the DistanceEngine
+        // uses — keeps behaviour consistent.
+        if (DistanceEngine.isTeleport(
+          distanceKm: distMeters / 1000.0,
+          timeDelta: dt,
+          recentSpeedKmh: update.speed * 3.6,
+        )) {
+          _logger.d(
+              'QUEUE-FILTER: skipping teleport point, ${distMeters.toStringAsFixed(0)}m in ${dt.inSeconds}s');
+          return;
+        }
+      }
+
       final point = LocationPointModel.create(
         id: _uuid.v4(),
         sessionId: update.sessionId ?? _state.session?.id ?? '',
@@ -1767,6 +1829,7 @@ class SessionManager {
         recordedAt: update.timestamp,
       );
 
+      _lastQueuedPoint = point;
       await _locationRepository.queueLocation(point);
       _logger.i('DIAGNOSTIC: Point queued: ${point.id}');
 
@@ -2422,6 +2485,35 @@ class SessionManager {
       if (_lastWatchdogAlertAt != null &&
           now.difference(_lastWatchdogAlertAt!) < _watchdogCooldown) {
         return;
+      }
+
+      // Suppression #3: the user is genuinely stationary.
+      // If the most recent fix reported zero speed AND wasn't moving
+      // (or the last fix is very fresh), don't bother them with
+      // "GPS has not updated, move outdoors" — they're sitting still
+      // on purpose. The watchdog still runs; it just stays silent.
+      // This is Bug 4 from the user report ("notifications spam while
+      // I'm stationary").
+      final last = _state.lastLocation;
+      if (last != null) {
+        final speedKmh = last.speed * 3.6;
+        final isReallyStationary = !last.isMoving && speedKmh < 2.0;
+        if (isReallyStationary) {
+          // Clear any pre-existing "distance not counting" / "GPS
+          // stalled" warning banners — the user is intentionally
+          // still, and an old warning telling them their GPS is
+          // dying is just confusing.
+          if (_state.warnings.any((w) =>
+              w.startsWith('GPS stalled') ||
+              w.startsWith('Distance not'))) {
+            final cleaned = List<String>.from(_state.warnings)
+              ..removeWhere((w) =>
+                  w.startsWith('GPS stalled') ||
+                  w.startsWith('Distance not'));
+            _updateState(_state.copyWith(warnings: cleaned));
+          }
+          return;
+        }
       }
 
       // ============================================================

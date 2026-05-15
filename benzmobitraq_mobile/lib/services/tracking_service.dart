@@ -121,6 +121,10 @@ class TrackingService {
   /// Continue Tracking buttons — the resume has already happened, so
   /// the dialog is informational, not gating.
   static Function(Map<String, dynamic>)? onMovementAutoResumed;
+  /// Fired by BG isolate after a resume; main isolate should silence
+  /// the watchdog for the supplied number of seconds so a freshly
+  /// re-subscribed position stream isn't penalised as a stall.
+  static Function(Map<String, dynamic>)? onWatchdogGrace;
 
   /// Fires when the bg isolate sees a large gap between two
   /// consecutive GPS fixes (>= 60 seconds + >= 200 m straight-line).
@@ -260,6 +264,16 @@ class TrackingService {
     _service.on('mapsGapRecovery').listen((event) {
       if (event != null) {
         onMapsGapRecovery?.call(Map<String, dynamic>.from(event));
+      }
+    });
+
+    // BG isolate is signalling that the watchdog should give the
+    // freshly-resubscribed position stream a grace period before
+    // crying "GPS stalled" or "Distance not counting". Fired on every
+    // manual resume and every auto-resume.
+    _service.on('watchdogGrace').listen((event) {
+      if (event != null) {
+        onWatchdogGrace?.call(Map<String, dynamic>.from(event));
       }
     });
 
@@ -588,6 +602,16 @@ void _onServiceStart(ServiceInstance service) async {
   /// main isolate was alive — that was the bug).
   bool pausedAlarmFired = false;
 
+  /// Consecutive GPS fixes (while paused) showing ≥6 km/h driving.
+  /// Used together with distance-from-pause-anchor to confirm the user
+  /// has actually resumed driving rather than walking out of a parking
+  /// lot or GPS drifting. Reset whenever we leave paused mode OR when
+  /// a single fix breaks the streak.
+  int autoResumeFastFixHits = 0;
+  const int autoResumeFastFixThreshold = 3;
+  const double autoResumeSpeedKmh = 6.0;
+  const double autoResumeDistanceM = 100.0;
+
   // Stationary spot detection (for nearby companies feature)
   double stationarySpotSeconds = 0;
   double? stationarySpotAnchorLat;
@@ -651,6 +675,7 @@ void _onServiceStart(ServiceInstance service) async {
     firstStationaryAt = null;
     stationaryAlarmFired = false;
     pausedAlarmFired = false;
+    autoResumeFastFixHits = 0;
     autoPauseAnchorLat = null;
     autoPauseAnchorLng = null;
     autoPauseNotified = false;
@@ -660,6 +685,15 @@ void _onServiceStart(ServiceInstance service) async {
     // Dismiss any pending pause alarm UI now that we're resuming.
     try {
       await flutterLocalNotificationsPlugin.cancel(90201);
+    } catch (_) {}
+    // Tell the main isolate to suppress watchdog "GPS stalled" alerts
+    // for the next 90 seconds — the freshly-resubscribed position
+    // stream needs a moment to deliver its first fix after resume.
+    try {
+      service.invoke('watchdogGrace', {
+        'durationSec': 90,
+        'at': DateTime.now().millisecondsSinceEpoch,
+      });
     } catch (_) {}
 
     // Re-anchor at current position so distance travelled during pause is not counted.
@@ -1365,14 +1399,36 @@ void _onServiceStart(ServiceInstance service) async {
             position.latitude,
             position.longitude,
           );
-          if (distanceFromPauseAnchor > 60.0) {
+
+          // Track sustained driving speed across fixes. We use the EMA-
+          // smoothed calculatedSpeedKmh (computed below in the same tick)
+          // so a single noisy GPS fix can't trip us. If a fix falls
+          // BELOW the threshold the counter resets — we need a
+          // continuous run.
+          final speedKmh = segmentSpeedKmh > 0
+              ? segmentSpeedKmh
+              : (position.speed.isFinite ? position.speed * 3.6 : 0);
+          if (speedKmh >= autoResumeSpeedKmh) {
+            autoResumeFastFixHits++;
+          } else {
+            autoResumeFastFixHits = 0;
+          }
+
+          final distanceOk =
+              distanceFromPauseAnchor >= autoResumeDistanceM;
+          final speedOk =
+              autoResumeFastFixHits >= autoResumeFastFixThreshold;
+
+          if (distanceOk && speedOk) {
             logger.i(
-                'AUTO-RESUME: Movement detected ${distanceFromPauseAnchor.toStringAsFixed(0)}m from pause anchor - resuming session');
+                'AUTO-RESUME: ${distanceFromPauseAnchor.toStringAsFixed(0)}m from anchor + '
+                '$autoResumeFastFixHits fast fixes (>=${autoResumeSpeedKmh}km/h) - resuming');
             isPaused = false;
             stationaryCount = 0;
             firstStationaryAt = null;
-    stationaryAlarmFired = false;
+            stationaryAlarmFired = false;
             pausedAlarmFired = false;
+            autoResumeFastFixHits = 0;
             resetMovementCandidate();
             await prefs.setBool(TrackingService._keyIsPaused, false);
             await prefs.remove(TrackingService._keyAutoPauseAt);
@@ -1383,34 +1439,56 @@ void _onServiceStart(ServiceInstance service) async {
             autoPauseAnchorLng = null;
             autoPauseNotified = false;
 
-            // Fire 3x vibration notification so user knows tracking auto-resumed
+            // Full-screen-intent alarm so it wakes the screen even if
+            // the app is closed. Payload 'auto_resumed' tells the main
+            // isolate's tap handler to navigate to the home screen
+            // with the Pause/Stop card visible.
             try {
               await flutterLocalNotificationsPlugin.show(
                 10002,
-                '▶️ Tracking Resumed!',
-                'Movement detected (${distanceFromPauseAnchor.toStringAsFixed(0)}m). Session is tracking again.',
+                'Tracking resumed automatically',
+                'Movement detected (${distanceFromPauseAnchor.toStringAsFixed(0)}m, '
+                    '${speedKmh.toStringAsFixed(0)} km/h). '
+                    'Tap to open the app and confirm.',
                 NotificationDetails(
                   android: AndroidNotificationDetails(
-                    'benzmobitraq_tracking_alerts',
-                    'Tracking Alerts',
-                    channelDescription: 'Critical alerts when tracking state changes',
+                    'benzmobitraq_stationary_alarm',
+                    'Session Alarm',
+                    channelDescription:
+                        'Sounds when your session has been stationary, paused too long, or resumed automatically.',
                     importance: Importance.max,
                     priority: Priority.max,
+                    category: AndroidNotificationCategory.alarm,
+                    fullScreenIntent: true,
                     icon: '@mipmap/ic_launcher',
                     enableVibration: true,
-                    vibrationPattern: Int64List.fromList([0, 200, 150, 200, 150, 200]),
+                    vibrationPattern:
+                        Int64List.fromList([0, 400, 150, 400, 150, 400]),
+                    playSound: true,
+                    visibility: NotificationVisibility.public,
+                  ),
+                  iOS: const DarwinNotificationDetails(
+                    presentAlert: true,
+                    presentSound: true,
+                    interruptionLevel: InterruptionLevel.timeSensitive,
                   ),
                 ),
+                payload: 'auto_resumed',
               );
             } catch (e) {
-              logger.w('Failed to show inline auto-resume notification: $e');
+              logger.w('Failed to show auto-resume alarm: $e');
             }
 
             service.invoke('autoResumed', {
               'resumedAt': now.millisecondsSinceEpoch,
               'distanceFromAnchor': distanceFromPauseAnchor,
+              'speedKmh': speedKmh,
             });
           }
+        } else if (!isPaused) {
+          // Not paused → keep the counter clean so a future pause
+          // starts from zero.
+          autoResumeFastFixHits = 0;
         }
 
         if (!isPaused && shouldRecord && distanceDelta >= effectiveThreshold) {
@@ -1512,6 +1590,7 @@ void _onServiceStart(ServiceInstance service) async {
                       interruptionLevel: InterruptionLevel.timeSensitive,
                     ),
                   ),
+                  payload: 'paused_too_long',
                 );
               } catch (e) {
                 logger.w('BG-PAUSED-ALARM: notification failed: $e');
@@ -1578,6 +1657,7 @@ void _onServiceStart(ServiceInstance service) async {
                 interruptionLevel: InterruptionLevel.timeSensitive,
               ),
             ),
+            payload: 'stationary_alarm',
           );
         } catch (e) {
           logger.w('BG-ALARM: Failed to show alarm notification: $e');
@@ -2113,6 +2193,7 @@ void _onServiceStart(ServiceInstance service) async {
     firstStationaryAt = null;
     stationaryAlarmFired = false;
     pausedAlarmFired = false;
+    autoResumeFastFixHits = 0;
     try {
       await flutterLocalNotificationsPlugin.cancel(90201);
     } catch (_) {}
