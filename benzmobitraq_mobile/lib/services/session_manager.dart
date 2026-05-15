@@ -15,6 +15,7 @@ import 'package:benzmobitraq_mobile/data/repositories/expense_repository.dart';
 import 'package:benzmobitraq_mobile/data/datasources/local/preferences_local.dart';
 import 'package:benzmobitraq_mobile/core/confidence_scorer.dart';
 import 'package:benzmobitraq_mobile/core/distance_engine.dart';
+import 'package:benzmobitraq_mobile/services/stop_detector.dart';
 import 'package:geolocator/geolocator.dart';
 
 import 'package:benzmobitraq_mobile/services/google_maps_directions_service.dart';
@@ -129,6 +130,11 @@ class SessionManager {
   final NotificationService? _notificationService;
   final Logger _logger = Logger();
   final Uuid _uuid = const Uuid();
+
+  /// Detects "stop" / "indoor_walking" segments inside a session and
+  /// persists them to session_stops. Does NOT pause the session. Reset
+  /// on every new session via _resetStopDetector().
+  StopDetector _stopDetector = StopDetector();
 
   // Current state
   ManagerSessionState _state = const ManagerSessionState();
@@ -701,6 +707,10 @@ class SessionManager {
 
       // Step 8: Background notifications are handled directly by TrackingService
 
+      // Reset stop detector for the fresh session — prior session's
+      // candidate / last-confirmed state must not leak.
+      _stopDetector = StopDetector();
+
       // Update state
       _updateState(ManagerSessionState(
         status: ManagerSessionStatus.active,
@@ -974,6 +984,17 @@ class SessionManager {
         );
       }
 
+      // Close any in-progress stop candidate. Persists it iff it
+      // crossed the 5-min threshold; otherwise discards.
+      try {
+        await _stopDetector.finalize(
+          sessionId: _state.session!.id,
+          employeeId: _state.session!.employeeId,
+        );
+      } catch (e) {
+        _logger.w('StopDetector.finalize failed (non-fatal): $e');
+      }
+
       // Step 5: End session in backend
       SessionModel? endedSession;
       try {
@@ -1120,14 +1141,14 @@ class SessionManager {
         pausedAt: pausedAt,
       );
 
-      // Schedule the pause-expired alarm. We use a Dart timer for
-      // simplicity — it survives bg/fg transitions while the app
-      // process is alive (which is most of the time, since the
-      // foreground service keeps the process alive). For the case
-      // where the OS kills the process during a long pause, the
-      // bg-isolate's stationary detector will still re-fire after
-      // 15 min of no movement, so the user is never left silent.
-      _schedulePauseExpiredAlarm(expectedPauseMinutes);
+      // The 30-min "paused too long" alarm is now scheduled by the
+      // background isolate itself (it monitors `tracking_auto_pause_at`
+      // and fires an OS notification via flutter_local_notifications
+      // directly, which works even when the main isolate is dead).
+      // We no longer use a Dart Timer here because it silently died
+      // when the app was killed — the exact bug the user reported.
+      // expectedPauseMinutes is ignored; pause is fixed at 30 min.
+      _schedulePauseExpiredAlarm(null);
 
       // Pause tracking (GPS continues but distance stops)
       await TrackingService.pauseTracking();
@@ -1748,6 +1769,22 @@ class SessionManager {
 
       await _locationRepository.queueLocation(point);
       _logger.i('DIAGNOSTIC: Point queued: ${point.id}');
+
+      // Feed StopDetector. Stops are annotations, not part of distance
+      // billing — so we don't await this, and we swallow any failure
+      // (offline, RLS, etc.). Distance tracking is unaffected.
+      if (_state.session != null && !_state.isPaused) {
+        unawaited(_stopDetector
+            .onPoint(
+              sessionId: _state.session!.id,
+              employeeId: _state.session!.employeeId,
+              point: point,
+            )
+            .catchError((e) {
+          _logger.w('StopDetector.onPoint failed (non-fatal): $e');
+          return null;
+        }));
+      }
 
       // CRITICAL FIX: Sync more aggressively - every 5 points instead of waiting for timer
       final pendingCount = await _locationRepository.getPendingCount();

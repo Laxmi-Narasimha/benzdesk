@@ -171,13 +171,13 @@ const MapComponentGoogle: React.FC<MapComponentProps> = ({
                     }),
                 );
             }
-            // Stop markers
+            // Stop / indoor-walking markers
             for (const stop of timelineEvents) {
-                if (
-                    stop.event_type === 'stop' &&
-                    stop.center_lat &&
-                    stop.center_lng
-                ) {
+                const isStop =
+                    stop.event_type === 'stop' ||
+                    stop.event_type === 'indoor_walking';
+                if (isStop && stop.center_lat && stop.center_lng) {
+                    const isIndoor = stop.event_type === 'indoor_walking';
                     overlays.push(
                         new g.maps.Marker({
                             position: {
@@ -186,9 +186,12 @@ const MapComponentGoogle: React.FC<MapComponentProps> = ({
                             },
                             map,
                             title:
-                                `Stop ${Math.round((stop.duration_sec ?? 0) / 60)} min` +
+                                (isIndoor ? 'Inside building' : 'Stop') +
+                                ` ${Math.round((stop.duration_sec ?? 0) / 60)} min` +
                                 (stop.address ? `\n${stop.address}` : ''),
-                            icon: dotIcon(g, '#f59e0b'),
+                            // Indoor walking gets a violet dot to distinguish
+                            // from regular orange "stopped outside" pins.
+                            icon: dotIcon(g, isIndoor ? '#8b5cf6' : '#f59e0b'),
                         }),
                     );
                 }

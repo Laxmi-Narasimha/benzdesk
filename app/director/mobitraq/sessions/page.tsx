@@ -18,6 +18,7 @@ interface Session {
     start_time: string;
     end_time: string | null;
     total_km: number;
+    final_km: number | null;
     status: 'active' | 'completed' | 'cancelled';
     employees: {
         name: string;
@@ -53,6 +54,7 @@ export default function SessionsPage() {
                     start_time,
                     end_time,
                     total_km,
+                    final_km,
                     status,
                     employees (
                         name,
@@ -232,7 +234,7 @@ export default function SessionsPage() {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 text-gray-900 font-medium">
-                                                {(session.total_km || 0).toFixed(2)} km
+                                                {((session.final_km != null && session.final_km > 0 ? session.final_km : session.total_km) || 0).toFixed(2)} km
                                             </td>
                                             <td className="px-6 py-4">
                                                 {session.status === 'active' ? (

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/widgets.dart';
@@ -10,6 +11,7 @@ import 'package:logger/logger.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'package:benzmobitraq_mobile/core/constants/app_constants.dart';
+import 'package:benzmobitraq_mobile/core/kalman_position_filter.dart';
 
 /// Location update from the background service
 class LocationUpdate {
@@ -91,6 +93,7 @@ class TrackingService {
   static final Logger _logger = Logger();
   // LAZY INSTANTIATION: Prevents usage in background isolate
   static FlutterBackgroundService get _service => FlutterBackgroundService();
+  static bool _listenersAttached = false;
 
   // Callbacks for the main isolate
   static Function(LocationUpdate)? onLocationUpdate;
@@ -99,6 +102,34 @@ class TrackingService {
   static Function(Map<String, dynamic>)? onAutoPaused;
   static Function(Map<String, dynamic>)? onAutoResumed;
   static Function(Map<String, dynamic>)? onStationarySpotDetected;
+  /// Fires whenever the BG isolate observes a change in location-services
+  /// state. The payload is `{enabled: bool}`. The main isolate uses this
+  /// to immediately clear the "Location is OFF" banner (and the GPS-stalled
+  /// watchdog grace window) the moment the user turns location back on.
+  static Function(bool)? onServiceStatusChanged;
+
+  /// Fires when the bg isolate has detected the user has been stationary
+  /// during an active session for >= 10 minutes. Payload:
+  ///   { durationMin: int, lat: double, lng: double, at: ms-epoch }
+  /// Main isolate shows the alarm dialog + plays the alarm sound.
+  static Function(Map<String, dynamic>)? onStationaryAlarm;
+
+  /// Fires when the bg isolate has auto-resumed tracking because the
+  /// user started moving (>= 100 m, >= 5 km/h) during a paused
+  /// session. Payload: { movedM: double, speedKmh: double, lat, lng,
+  /// at }. Main isolate shows a confirmation dialog with Stop /
+  /// Continue Tracking buttons — the resume has already happened, so
+  /// the dialog is informational, not gating.
+  static Function(Map<String, dynamic>)? onMovementAutoResumed;
+
+  /// Fires when the bg isolate sees a large gap between two
+  /// consecutive GPS fixes (>= 60 seconds + >= 200 m straight-line).
+  /// Payload: { fromLat, fromLng, toLat, toLng, haversineM, gapSec }.
+  /// Main isolate calls Google Maps Directions for the real driving
+  /// distance and adds (mapsKm - haversineKm) to the session total
+  /// so the user is not under-counted for a tunnel / location-off
+  /// stretch.
+  static Function(Map<String, dynamic>)? onMapsGapRecovery;
 
   // HANDSHAKE: Wait for background service to be ready
   static Completer<void>? _serviceReadyCompleter;
@@ -168,6 +199,13 @@ class TrackingService {
   }
 
   static void _attachListeners() {
+    // Guard: prevent duplicate stream subscriptions when initialize()
+    // is called multiple times (e.g. hot restart, app resume).
+    // Without this, each call creates NEW listeners on the same events,
+    // causing _onLocationUpdate to fire 2x, 3x, 4x per GPS fix.
+    if (_listenersAttached) return;
+    _listenersAttached = true;
+
     _service.on('locationUpdate').listen((event) {
       if (event != null) {
         final update = LocationUpdate.fromMap(event);
@@ -198,6 +236,30 @@ class TrackingService {
     _service.on('stationarySpotDetected').listen((event) {
       if (event != null) {
         onStationarySpotDetected?.call(Map<String, dynamic>.from(event));
+      }
+    });
+
+    _service.on('serviceStatus').listen((event) {
+      if (event != null) {
+        onServiceStatusChanged?.call(event['enabled'] as bool? ?? true);
+      }
+    });
+
+    _service.on('stationaryAlarm').listen((event) {
+      if (event != null) {
+        onStationaryAlarm?.call(Map<String, dynamic>.from(event));
+      }
+    });
+
+    _service.on('movementAutoResumed').listen((event) {
+      if (event != null) {
+        onMovementAutoResumed?.call(Map<String, dynamic>.from(event));
+      }
+    });
+
+    _service.on('mapsGapRecovery').listen((event) {
+      if (event != null) {
+        onMapsGapRecovery?.call(Map<String, dynamic>.from(event));
       }
     });
 
@@ -247,9 +309,32 @@ class TrackingService {
       await prefs.setString(
           _keySessionDay, DateTime.now().toIso8601String().substring(0, 10));
 
-      // Start the background service if not running
-      if (!await _service.isRunning()) {
+      // Start the background service if not running.
+      // CRITICAL: A previous Work Done → Present sequence may have
+      // sent stopService just milliseconds ago. The bg-isolate's
+      // `service.stopSelf()` is asynchronous — `isRunning()` can
+      // briefly return TRUE while the isolate is winding down, in
+      // which case we'd skip startService and then send startSession
+      // commands into a dying isolate that's no longer listening.
+      // That's the "session 3 has 0 km because GPS never started"
+      // bug after a fast Work Done → Present.
+      //
+      // Defense: if the service claims it's running, wait one beat
+      // and re-check. If a teardown completes in that window, we
+      // start it ourselves.
+      bool running = await _service.isRunning();
+      if (running && !isResume) {
+        // Only enforce the settle-wait on FRESH session starts. On
+        // isResume we trust the existing running service.
+        await Future.delayed(const Duration(milliseconds: 250));
+        running = await _service.isRunning();
+      }
+      if (!running) {
         await _service.startService();
+        // Give the new isolate a moment to register its 'startSession'
+        // listener BEFORE we start invoking it — saves an unnecessary
+        // ACK retry round trip.
+        await Future.delayed(const Duration(milliseconds: 350));
       }
 
       // RETRY LOGIC: Send startSession command and wait for ACK
@@ -311,6 +396,8 @@ class TrackingService {
   static Future<double> stopTracking() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // CRITICAL: Reload from disk to pick up background isolate's latest writes
+      await prefs.reload();
       final totalDistance = prefs.getDouble(_keyTotalDistance) ?? 0;
 
       // Clear tracking state
@@ -325,12 +412,24 @@ class TrackingService {
       await prefs.remove(_keyAutoPauseAt);
       await prefs.remove(_keySessionDay);
 
-      // Stop the service
+      // Stop the session in the bg isolate first (clears its in-memory
+      // state). Then stop the service itself if it's still running.
       _service.invoke('stopSession');
+
+      // Give the bg isolate a moment to process stopSession + clear
+      // its variables before we yank the service out from under it.
+      // Without this pause, a fast Work Done → Present can race and
+      // leave half-cleared state, which is what causes the next
+      // session to not record any distance.
+      await Future.delayed(const Duration(milliseconds: 250));
 
       final isRunning = await _service.isRunning();
       if (isRunning) {
         _service.invoke('stopService');
+        // Brief wait for the service to actually wind down. Required
+        // so the subsequent `isRunning()` check inside startTracking
+        // returns the truth, not the in-flight state.
+        await Future.delayed(const Duration(milliseconds: 400));
       }
 
       _logger.i('Tracking stopped. Total distance: $totalDistance m');
@@ -379,6 +478,7 @@ class TrackingService {
       if (!isRunning) return false;
 
       final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
       return prefs.getBool(_keyIsTracking) ?? false;
     } catch (e) {
       return false;
@@ -391,6 +491,7 @@ class TrackingService {
   static Future<void> resumeIfNeeded() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
       final wasTracking = prefs.getBool(_keyIsTracking) ?? false;
       final sessionId = prefs.getString(_keySessionId);
 
@@ -472,6 +573,21 @@ void _onServiceStart(ServiceInstance service) async {
   double? autoPauseAnchorLng; // lng where auto-pause occurred
   bool autoPauseNotified = false; // track if we sent auto-pause notification
 
+  /// True once the 30-minute stationary alarm has been emitted for the
+  /// current stationary streak. Reset to false the moment the user
+  /// resumes movement (firstStationaryAt is cleared elsewhere when
+  /// movement is confirmed) so the alarm can fire again on the next
+  /// stationary streak.
+  bool stationaryAlarmFired = false;
+
+  /// True once the 30-minute "paused too long" alarm has been emitted
+  /// for the current manual-pause. Reset to false when the user
+  /// resumes or stops the session. This alarm fires from the BG
+  /// isolate so it works even when the app is killed (the original
+  /// pause-expired Dart Timer in SessionManager only worked when the
+  /// main isolate was alive — that was the bug).
+  bool pausedAlarmFired = false;
+
   // Stationary spot detection (for nearby companies feature)
   double stationarySpotSeconds = 0;
   double? stationarySpotAnchorLat;
@@ -533,12 +649,18 @@ void _onServiceStart(ServiceInstance service) async {
     isPaused = false;
     stationaryCount = 0;
     firstStationaryAt = null;
+    stationaryAlarmFired = false;
+    pausedAlarmFired = false;
     autoPauseAnchorLat = null;
     autoPauseAnchorLng = null;
     autoPauseNotified = false;
     resetMovementCandidate();
     await prefs.setBool(TrackingService._keyIsPaused, false);
     await prefs.remove(TrackingService._keyAutoPauseAt);
+    // Dismiss any pending pause alarm UI now that we're resuming.
+    try {
+      await flutterLocalNotificationsPlugin.cancel(90201);
+    } catch (_) {}
 
     // Re-anchor at current position so distance travelled during pause is not counted.
     try {
@@ -597,11 +719,42 @@ void _onServiceStart(ServiceInstance service) async {
           p.longitude,
         );
 
-        if (movedM >= 100.0) {
+        // Auto-resume rule (per product decision):
+        //   - movement >= 100m from the pause anchor, AND
+        //   - segment speed >= 5 km/h
+        // When both hold, we IMMEDIATELY resume the session (no dialog
+        // gate) and then send a `movement_auto_resumed` event so the
+        // main isolate can show a non-blocking alert with Stop /
+        // Continue Tracking buttons. The user is never silently
+        // resumed-and-not-told.
+        // Speed = max(reported position.speed, computed-from-anchor).
+        final reportedSpeedKmh =
+            (p.speed.isFinite && p.speed > 0) ? p.speed * 3.6 : 0.0;
+        // We do NOT have a reliable elapsed-time from the pause
+        // anchor here, so use the reported speed alone for the
+        // threshold check. movedM still has to clear 100m to qualify.
+        if (movedM >= 100.0 && reportedSpeedKmh >= 5.0) {
+          logger.i(
+              'PAUSE-MOVE: auto-resuming after ${movedM.toStringAsFixed(0)}m '
+              'at ${reportedSpeedKmh.toStringAsFixed(1)} km/h');
+
+          // Tell the main isolate the auto-resume happened and let it
+          // show the screen alert + the foreground notification.
+          try {
+            service.invoke('movementAutoResumed', {
+              'movedM': movedM,
+              'speedKmh': reportedSpeedKmh,
+              'lat': p.latitude,
+              'lng': p.longitude,
+              'at': DateTime.now().millisecondsSinceEpoch,
+            });
+          } catch (_) {}
+          // Legacy event consumers (older bloc handlers) still get fed.
           service.invoke('autoResumed', {
             'resumedAt': DateTime.now().millisecondsSinceEpoch,
             'distanceFromAnchor': movedM,
           });
+
           await resumeActiveTracking(reason: 'movement');
         }
       } catch (e) {
@@ -618,6 +771,7 @@ void _onServiceStart(ServiceInstance service) async {
     isPaused = true;
     isMoving = false;
     stationaryCount = 0;
+    pausedAlarmFired = false; // fresh pause → re-arm the 30-min alarm
     autoPauseAnchorLat = anchor.latitude;
     autoPauseAnchorLng = anchor.longitude;
     lastPosition = anchor;
@@ -635,29 +789,13 @@ void _onServiceStart(ServiceInstance service) async {
       'anchorLng': anchor.longitude,
     });
 
-    if (!autoPauseNotified) {
-      autoPauseNotified = true;
-      try {
-        await flutterLocalNotificationsPlugin.show(
-          10001,
-          'Session Auto-Paused',
-          'No movement for 5 min. Tracking and active time are paused. Move 100m or tap Resume.',
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'benzmobitraq_auto_pause',
-              'Auto-Pause Notifications',
-              channelDescription:
-                  'Notifications when session auto-pauses after inactivity',
-              importance: Importance.high,
-              priority: Priority.high,
-              icon: '@mipmap/ic_launcher',
-            ),
-          ),
-        );
-      } catch (e) {
-        logger.e('Failed to show auto-pause notification: $e');
-      }
-    }
+    // (The legacy "Session Auto-Paused. No movement for 30 min."
+    // notification used to fire here. It was misleading on a manual
+    // pause and was the root cause of the "I got a 30-min message
+    // when I asked for 2 minutes" report. The new pause-countdown
+    // notification — set up by the main isolate's pauseSession —
+    // replaces it with a live "Pause: 1m 45s remaining" timer.)
+    autoPauseNotified = true;
 
     if (service is AndroidServiceInstance) {
       try {
@@ -724,6 +862,109 @@ void _onServiceStart(ServiceInstance service) async {
   calculatedSpeedKmh = prefs.getDouble(TrackingService._keyLastSpeedKmh) ?? 0;
 
   // ============================================================
+  // SELF-RECOVERY: AUTO-RESUME AFTER OS KILL
+  // ============================================================
+  // When Android kills the app process (swipe from recents, low memory),
+  // the service restarts because stopWithTask=false. But the main isolate
+  // is dead, so no one sends 'startSession'. We detect this situation
+  // and resume tracking automatically from persisted state.
+  //
+  // Without this fix, tracking silently stops for up to 15 minutes
+  // (until WorkManager watchdog fires).
+  final recoveredSessionId = prefs.getString(TrackingService._keySessionId);
+  final wasTracking = prefs.getBool(TrackingService._keyIsTracking) ?? false;
+
+  // We use this flag to decide later whether to show a "Tracking
+  // Resumed" notification. The notification ONLY makes sense if the
+  // OS killed us — NOT if the main isolate just kicked us off as part
+  // of a fresh user-initiated Present tap. That's why we DEFER the
+  // notification: if a 'startSession' command arrives within a few
+  // seconds we cancel it, because that proves the main isolate is
+  // alive and intentionally driving the start.
+  bool deferredRecoveryNotificationCancelled = false;
+  if (wasTracking && recoveredSessionId != null) {
+    logger.i(
+        'SERVICE SELF-RECOVERY: Detected killed session $recoveredSessionId, auto-resuming...');
+    currentSessionId = recoveredSessionId;
+
+    // Schedule the recovery notification for ~6 seconds later. Plenty
+    // of time for an in-flight `service.invoke('startSession', ...)`
+    // from the main isolate to arrive and toggle the cancel flag.
+    Timer(const Duration(seconds: 6), () async {
+      if (deferredRecoveryNotificationCancelled) {
+        logger.i(
+            'SERVICE SELF-RECOVERY: notification suppressed (main isolate present)');
+        return;
+      }
+      try {
+        await flutterLocalNotificationsPlugin.show(
+          90002,
+          'Tracking Resumed',
+          'Tracking was interrupted and has been automatically resumed.',
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              'benzmobitraq_tracking_alerts',
+              'Tracking Alerts',
+              channelDescription:
+                  'Critical alerts when GPS or tracking is not working correctly',
+              importance: Importance.max,
+              priority: Priority.max,
+              icon: '@mipmap/ic_launcher',
+              enableVibration: true,
+              vibrationPattern:
+                  Int64List.fromList([0, 200, 150, 200, 150, 200]),
+            ),
+          ),
+        );
+      } catch (e) {
+        logger.w('Failed to show recovery notification: $e');
+      }
+    });
+  }
+
+  // ============================================================
+  // BACKGROUND GPS HEALTH MONITOR
+  // ============================================================
+  // Runs every 60 seconds in the background isolate. If GPS hasn't
+  // produced a valid fix in 2+ minutes during an active, non-paused
+  // session, it fires a local notification with 3x vibration.
+  // This works even when the main isolate is dead (app killed).
+  DateTime? lastSuccessfulGpsTime;
+  Timer? backgroundHealthTimer;
+
+  backgroundHealthTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
+    if (currentSessionId == null || isPaused) return;
+    if (lastSuccessfulGpsTime == null) return;
+
+    final sinceLastGps = DateTime.now().difference(lastSuccessfulGpsTime!).inSeconds;
+    if (sinceLastGps >= 120) {
+      logger.w('BG HEALTH: GPS stuck for ${sinceLastGps}s — alerting user');
+      try {
+        await flutterLocalNotificationsPlugin.show(
+          90001,
+          '⚠️ GPS Issue Detected',
+          'No GPS signal for ${(sinceLastGps / 60).toStringAsFixed(0)} min. '
+              'Check location settings and move outdoors.',
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              'benzmobitraq_tracking_alerts',
+              'Tracking Alerts',
+              channelDescription: 'Critical alerts when GPS or tracking is not working correctly',
+              importance: Importance.max,
+              priority: Priority.max,
+              icon: '@mipmap/ic_launcher',
+              enableVibration: true,
+              vibrationPattern: Int64List.fromList([0, 200, 150, 200, 150, 200]),
+            ),
+          ),
+        );
+      } catch (e) {
+        logger.w('BG HEALTH: Failed to show GPS alert: $e');
+      }
+    }
+  });
+
+  // ============================================================
   // LOCATION TRACKING
   // ============================================================
 
@@ -731,8 +972,51 @@ void _onServiceStart(ServiceInstance service) async {
   double? recoveryLat = savedLastLat;
   double? recoveryLon = savedLastLon;
 
-  void onPositionReceived(Position position, {bool forceRecord = false}) async {
+  // Kalman-style 2-D position smoother. Only kicks in for low-accuracy
+  // fixes (>15m reported accuracy) so it doesn't degrade the pristine
+  // fixes that already work well. Maintains its own state per BG-isolate
+  // lifetime — reset on session start.
+  final kalman = KalmanPositionFilter();
+
+  void onPositionReceived(Position rawPosition, {bool forceRecord = false}) async {
     final now = DateTime.now();
+
+    // Run the raw fix through the Kalman position filter before any
+    // distance logic touches it. For high-accuracy fixes this is a
+    // pass-through; for noisy fixes it blends with the running estimate
+    // weighted by accuracy.
+    final smoothed = kalman.process(
+      latitude: rawPosition.latitude,
+      longitude: rawPosition.longitude,
+      accuracyMeters: rawPosition.accuracy,
+      timestampMs: now.millisecondsSinceEpoch,
+    );
+
+    final Position position = smoothed.wasSmoothed
+        ? Position(
+            latitude: smoothed.latitude,
+            longitude: smoothed.longitude,
+            accuracy: smoothed.accuracyMeters,
+            altitude: rawPosition.altitude,
+            altitudeAccuracy: rawPosition.altitudeAccuracy,
+            speed: rawPosition.speed,
+            speedAccuracy: rawPosition.speedAccuracy,
+            heading: rawPosition.heading,
+            headingAccuracy: rawPosition.headingAccuracy,
+            timestamp: rawPosition.timestamp,
+            isMocked: rawPosition.isMocked,
+          )
+        : rawPosition;
+
+    // Stamp GPS health monitor — any valid fix means GPS is alive
+    lastSuccessfulGpsTime = now;
+
+    // Persist to disk so the main-isolate watchdog can see freshness
+    // even when the bg → main event channel is throttled (screen off).
+    try {
+      await prefs.setInt(
+          'tracking_last_gps_fix_at', now.millisecondsSinceEpoch);
+    } catch (_) {}
 
     // ============================================================
     // CROSS-DAY DETECTION
@@ -956,9 +1240,72 @@ void _onServiceStart(ServiceInstance service) async {
         }
         // DO NOT update lastPosition - let distance build from anchor
       } else {
+        // ====================================================================
+        // GAP-RECOVERY FAST PATH
+        //
+        // When `forceRecord` is true AND the time gap is large (>= 30s),
+        // this is a fix that was deliberately captured to recover from a
+        // tracking interruption (e.g. user toggled location services off
+        // and back on, screen woke from deep sleep, etc.). The standard
+        // "movement candidate" gate is designed to reject GPS jitter while
+        // stationary — it does NOT make sense here, because the user
+        // genuinely was moving during the gap. Without this bypass, the
+        // first restored fix gets rejected as "not enough confirmation"
+        // and the entire gap distance (often 0.5–2 km) is silently lost.
+        // That's the "drove 3.3 km but app shows 2.7 km" complaint.
+        //
+        // We still keep the teleport-speed check (above) and the accuracy
+        // check (above) so we don't accept obviously broken fixes.
+        // ====================================================================
+        final isLongGapRecovery = forceRecord &&
+            timeDeltaSec >= 30 &&
+            distanceDelta >= 20.0 &&
+            position.accuracy <= AppConstants.maxAccuracyThreshold;
+
+        // When the gap is BIG (≥ 60s straight-line and ≥ 200m), we
+        // emit an event so the main isolate can hit Google Maps
+        // Directions for the actual driving distance — straight-line
+        // haversine massively under-counts a winding road trip the
+        // user actually drove while location was off. The main
+        // isolate compares Maps distance vs straight-line and
+        // applies the delta to totalDistance via a callback.
+        // Lower thresholds (was 60s + 200m → now 25s + 80m) so even
+        // brief location-off gaps trigger a Maps Directions lookup.
+        // The previous values left typical ~30-second toggles
+        // ("just turned location off at the toll gate") completely
+        // un-credited, so 5+ km of real road got reported as the
+        // straight-line haversine which under-counts winding routes.
+        if (forceRecord &&
+            timeDeltaSec >= 25 &&
+            distanceDelta >= 80.0 &&
+            lastPosition != null) {
+          try {
+            service.invoke('mapsGapRecovery', {
+              'fromLat': lastPosition!.latitude,
+              'fromLng': lastPosition!.longitude,
+              'toLat': position.latitude,
+              'toLng': position.longitude,
+              'haversineM': distanceDelta,
+              'gapSec': timeDeltaSec,
+            });
+          } catch (_) {}
+        }
+
         final requiresConfirmation =
-            wasStationary || movementCandidateCount > 0;
+            !isLongGapRecovery &&
+            (wasStationary || movementCandidateCount > 0);
         bool didCommit = false;
+
+        if (isLongGapRecovery) {
+          logger.i(
+              'GAP-RECOVERY: forced fresh fix after ${timeDeltaSec}s gap — '
+              'crediting ${distanceDelta.toStringAsFixed(1)}m '
+              '(speed ${segmentSpeedKmh.toStringAsFixed(1)} km/h, acc ${position.accuracy.toStringAsFixed(0)}m)');
+          resetMovementCandidate();
+          stationaryCount = 0;
+          firstStationaryAt = null;
+    stationaryAlarmFired = false;
+        }
 
         if (requiresConfirmation) {
           movementCandidateStartedAt ??= now;
@@ -1018,15 +1365,46 @@ void _onServiceStart(ServiceInstance service) async {
             position.latitude,
             position.longitude,
           );
-          if (distanceFromPauseAnchor > 100.0) {
+          if (distanceFromPauseAnchor > 60.0) {
             logger.i(
                 'AUTO-RESUME: Movement detected ${distanceFromPauseAnchor.toStringAsFixed(0)}m from pause anchor - resuming session');
             isPaused = false;
+            stationaryCount = 0;
+            firstStationaryAt = null;
+    stationaryAlarmFired = false;
+            pausedAlarmFired = false;
+            resetMovementCandidate();
             await prefs.setBool(TrackingService._keyIsPaused, false);
             await prefs.remove(TrackingService._keyAutoPauseAt);
+            try {
+              await flutterLocalNotificationsPlugin.cancel(90201);
+            } catch (_) {}
             autoPauseAnchorLat = null;
             autoPauseAnchorLng = null;
             autoPauseNotified = false;
+
+            // Fire 3x vibration notification so user knows tracking auto-resumed
+            try {
+              await flutterLocalNotificationsPlugin.show(
+                10002,
+                '▶️ Tracking Resumed!',
+                'Movement detected (${distanceFromPauseAnchor.toStringAsFixed(0)}m). Session is tracking again.',
+                NotificationDetails(
+                  android: AndroidNotificationDetails(
+                    'benzmobitraq_tracking_alerts',
+                    'Tracking Alerts',
+                    channelDescription: 'Critical alerts when tracking state changes',
+                    importance: Importance.max,
+                    priority: Priority.max,
+                    icon: '@mipmap/ic_launcher',
+                    enableVibration: true,
+                    vibrationPattern: Int64List.fromList([0, 200, 150, 200, 150, 200]),
+                  ),
+                ),
+              );
+            } catch (e) {
+              logger.w('Failed to show inline auto-resume notification: $e');
+            }
 
             service.invoke('autoResumed', {
               'resumedAt': now.millisecondsSinceEpoch,
@@ -1071,20 +1449,147 @@ void _onServiceStart(ServiceInstance service) async {
           lastPositionTime = now;
           // Real movement confirmed - reset stationary timer
           firstStationaryAt = null;
+    stationaryAlarmFired = false;
         }
       }
 
       // ============================================================
-      // AUTO-PAUSE DETECTION (TIME-BASED)
-      // Uses real wall-clock time since first stationary reading.
-      // ============================================================
+      // AUTO-PAUSE DETECTION (DISABLED BY PRODUCT DECISION)
+      //
+      // The product requirement is: a session keeps tracking until the
+      // user explicitly taps Work Done. No silent auto-pause after 30
+      // minutes stationary. Field staff doing long meetings or waiting
+      // at a customer site should not have their session pause behind
+      // their back — that was the #1 source of "the app stopped
+      // tracking me" complaints. The auto-resume path is still wired
+      // for the case where a user manually pauses and then walks away,
+      // but the BG isolate will never enter paused mode on its own.
+      //
+      // PAUSED-TOO-LONG ALARM — fire once when the session has been
+      // manually paused for ≥ 30 minutes. This used to be a Dart Timer
+      // running in the main isolate, which silently died when the app
+      // was killed (the #1 reason "the pause alarm never fires when I
+      // don't open the app" — exactly the user-reported bug). Now we
+      // schedule it from the BG isolate using the same direct
+      // flutter_local_notifications path as the stationary alarm, so
+      // it works regardless of app foreground state.
+      if (isPaused && !pausedAlarmFired) {
+        final pausedAtIso = prefs.getString(TrackingService._keyAutoPauseAt);
+        if (pausedAtIso != null) {
+          final pausedAt = DateTime.tryParse(pausedAtIso);
+          if (pausedAt != null) {
+            final pausedMin = now.difference(pausedAt).inMinutes;
+            if (pausedMin >= 30) {
+              pausedAlarmFired = true;
+              logger.i('PAUSED-ALARM: fired after ${pausedMin}min paused');
+              try {
+                await flutterLocalNotificationsPlugin.show(
+                  90201, // distinct id from stationary alarm
+                  'Session paused for $pausedMin minutes',
+                  'Tap to resume tracking or end the session.',
+                  NotificationDetails(
+                    android: AndroidNotificationDetails(
+                      'benzmobitraq_stationary_alarm',
+                      'Session Alarm',
+                      channelDescription:
+                          'Sounds when your session has been stationary or paused too long.',
+                      importance: Importance.max,
+                      priority: Priority.max,
+                      category: AndroidNotificationCategory.alarm,
+                      fullScreenIntent: true,
+                      icon: '@mipmap/ic_launcher',
+                      enableVibration: true,
+                      vibrationPattern:
+                          Int64List.fromList([0, 900, 250, 900, 250, 900]),
+                      playSound: true,
+                      ongoing: true,
+                      autoCancel: false,
+                      visibility: NotificationVisibility.public,
+                    ),
+                    iOS: const DarwinNotificationDetails(
+                      presentAlert: true,
+                      presentSound: true,
+                      interruptionLevel: InterruptionLevel.timeSensitive,
+                    ),
+                  ),
+                );
+              } catch (e) {
+                logger.w('BG-PAUSED-ALARM: notification failed: $e');
+              }
+              try {
+                service.invoke('pauseExpired', {
+                  'durationMin': pausedMin,
+                  'at': now.millisecondsSinceEpoch,
+                });
+              } catch (_) {}
+            }
+          }
+        }
+      }
+
+      // STATIONARY ALARM — fire once when the user has been stationary
+      // for ≥ 30 minutes during an active (not paused) session. The
+      // threshold was raised from 10 → 30 min after field staff reported
+      // false positives during normal customer meetings. The alarm is
+      // gated by `stationaryAlarmFired` so the user is not bombarded;
+      // it resets the moment they resume movement. We do NOT auto-pause
+      // — the alarm just nudges the user to confirm they're still
+      // working.
       final stationaryDurationMin = firstStationaryAt != null
           ? now.difference(firstStationaryAt!).inMinutes
           : 0;
-      if (stationaryDurationMin >= 5 && !isPaused) {
-        await enterPausedMode(position,
-            reason: '${stationaryDurationMin}min inactive detected');
-        return;
+      if (stationaryDurationMin >= 30 &&
+          !isPaused &&
+          !stationaryAlarmFired) {
+        stationaryAlarmFired = true;
+        logger.i(
+            'STATIONARY-ALARM: fired after ${stationaryDurationMin}min stationary');
+        // Fire the OS-level alarm notification DIRECTLY from the background
+        // isolate. This is the primary alarm path: it works even when the
+        // main isolate is suspended (app backgrounded or killed). The
+        // service.invoke below is a secondary path for in-app dialog when
+        // the main isolate happens to be alive.
+        try {
+          await flutterLocalNotificationsPlugin.show(
+            90200, // matches NotificationService.alarmNotificationId
+            'Stopped for $stationaryDurationMin minutes',
+            'Your session is still running. Open the app to pause, continue tracking, or end the session.',
+            NotificationDetails(
+              android: AndroidNotificationDetails(
+                'benzmobitraq_stationary_alarm',
+                'Session Alarm',
+                channelDescription:
+                    'Sounds when your session has been stationary or paused too long.',
+                importance: Importance.max,
+                priority: Priority.max,
+                category: AndroidNotificationCategory.alarm,
+                fullScreenIntent: true,
+                icon: '@mipmap/ic_launcher',
+                enableVibration: true,
+                vibrationPattern: Int64List.fromList([0, 900, 250, 900, 250, 900]),
+                playSound: true,
+                ongoing: true,
+                autoCancel: false,
+                visibility: NotificationVisibility.public,
+              ),
+              iOS: const DarwinNotificationDetails(
+                presentAlert: true,
+                presentSound: true,
+                interruptionLevel: InterruptionLevel.timeSensitive,
+              ),
+            ),
+          );
+        } catch (e) {
+          logger.w('BG-ALARM: Failed to show alarm notification: $e');
+        }
+        try {
+          service.invoke('stationaryAlarm', {
+            'durationMin': stationaryDurationMin,
+            'lat': position.latitude,
+            'lng': position.longitude,
+            'at': now.millisecondsSinceEpoch,
+          });
+        } catch (_) {}
       }
     } else {
       // ============================================================
@@ -1246,7 +1751,7 @@ void _onServiceStart(ServiceInstance service) async {
 
     // Stationary heartbeat: force a point even when the device doesn't move.
     // REDUCED from 120s → 60s to minimize map gaps when OS throttles GPS stream.
-    // This is required for strict "5 minutes within radius" stop detection
+    // This is required for strict "30 minutes within radius" stop detection
     // AND to ensure route continuity on the admin map.
     // FIX: 20s heartbeat (was 60s). Combined with the force-record initial
     // anchor, this guarantees a fast-stopped session captures at least 2
@@ -1369,20 +1874,55 @@ void _onServiceStart(ServiceInstance service) async {
   // ============================================================
 
   service.on('startSession').listen((event) async {
+    // Suppress the deferred SELF-RECOVERY notification — if the main
+    // isolate is telling us to start a session, this is NOT an
+    // OS-kill recovery, it's a user-initiated start.
+    deferredRecoveryNotificationCancelled = true;
+    try {
+      await flutterLocalNotificationsPlugin.cancel(90002);
+    } catch (_) {}
+
     currentSessionId = event?['sessionId'] as String?;
     final isResume = event?['isResume'] as bool? ?? false;
 
     logger.i('Session started: $currentSessionId (Resuming: $isResume)');
 
     if (!isResume) {
-      // Only reset for new sessions
+      // ================================================================
+      // FULL BG-ISOLATE STATE RESET FOR NEW SESSION
+      //
+      // Why this is gnarly: when a user is stationary for hours (e.g.
+      // sitting at a customer site, forgot to end the previous session),
+      // bg-isolate variables like `firstStationaryAt`, `isMoving`,
+      // `lastPositionTime`, the persistent recoveryLat/Lon prefs, and
+      // the kalman filter all hold values that describe "stuck in a
+      // 3-hour stationary streak at point X". On Work Done + Present
+      // these variables MUST go back to a pristine boot state — if any
+      // one of them leaks, the new session interprets the first
+      // movement as "still stationary at X" and silently rejects
+      // distance for the first several minutes. That's the
+      // "kilometres not being tracked in the new session" bug.
+      //
+      // EVERY in-memory variable that influences the distance-filter
+      // pipeline is reset here. Persistent prefs that mirror these
+      // variables are wiped too, so a hot-restart of the isolate
+      // (rare but possible during the start sequence) does not pick
+      // up stale state.
+      // ================================================================
       lastDistanceNotifiedKm = 0;
       lastTimeNotification = DateTime.now();
       totalDistance = 0;
       lastPosition = null;
+      lastPositionTime = null;
       stationaryCount = 0;
+      firstStationaryAt = null;
+    stationaryAlarmFired = false;   // ← was leaking across sessions
+      isMoving = true;            // ← was leaking false across sessions
       isPaused = false;
       calculatedSpeedKmh = 0;
+      autoPauseAnchorLat = null;
+      autoPauseAnchorLng = null;
+      autoPauseNotified = false;
       stationarySpotSeconds = 0;
       stationarySpotAnchorLat = null;
       stationarySpotAnchorLng = null;
@@ -1390,6 +1930,19 @@ void _onServiceStart(ServiceInstance service) async {
       pausedResumeMonitorTimer?.cancel();
       pausedResumeMonitorTimer = null;
       resetMovementCandidate();
+      kalman.reset();
+      // Drop the persistent recovery anchor so the brand-new session
+      // does not interpolate distance from where the previous session
+      // ended hours ago.
+      recoveryLat = null;
+      recoveryLon = null;
+      try {
+        await prefs.remove(TrackingService._keyLastLat);
+        await prefs.remove(TrackingService._keyLastLon);
+        await prefs.remove(TrackingService._keyLastPositionTime);
+        await prefs.remove(TrackingService._keyTotalDistance);
+        await prefs.setDouble('session_distance_meters', 0);
+      } catch (_) {}
       sessionStartTime = DateTime.now();
       sessionStartDay = sessionStartTime.toIso8601String().substring(0, 10);
 
@@ -1421,26 +1974,80 @@ void _onServiceStart(ServiceInstance service) async {
     } else {
       await startLocationUpdates();
 
-      // CRITICAL FIX: Force-record an initial position immediately so the
-      // anchor (lastPosition) is set right away. Without this, the very
-      // first GPS fix from the stream just becomes the anchor and zero
-      // distance is recorded - leading to 'started, stopped quickly, 0 km'
-      // bug for short sessions.
+      // ================================================================
+      // GPS COLD-START WAKE-UP with retries
+      //
+      // If the user was stationary for hours (e.g. parked at a customer
+      // site) the GPS chip is in deep sleep. A single 8-second
+      // getCurrentPosition almost always times out in that state — it
+      // takes 30-90 seconds for the chip to re-acquire satellites from
+      // cold. Without an anchor, the first new GPS fix from the stream
+      // can land much later (when the user is already 1+ km away), and
+      // the early distance gets silently lost.
+      //
+      // Strategy: try up to 4 times with escalating timeouts. First two
+      // attempts use bestForNavigation (most accurate but slowest to
+      // fix). If still nothing after 30s, fall back to high accuracy
+      // which is faster. We also use getLastKnownPosition() as a same-
+      // moment seed so even if the chip is dead, the next position
+      // delta is correct.
+      // ================================================================
       if (!isResume) {
         unawaited(() async {
+          // Seed with last-known so subsequent fixes have *some* anchor
+          // to compare against, preventing the first real fix from being
+          // treated as "first ever after restart" (which can apply a
+          // recovery interpolation).
           try {
-            final p = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.bestForNavigation,
-            ).timeout(const Duration(seconds: 8));
+            final lk = await Geolocator.getLastKnownPosition();
+            if (lk != null) {
+              lastPosition = lk;
+              lastPositionTime = DateTime.now();
+              logger.i(
+                  'GPS WAKEUP: seeded with last-known ${lk.latitude}, ${lk.longitude} (acc ${lk.accuracy}m)');
+            }
+          } catch (_) {}
+
+          Position? p;
+          final attempts = <(LocationAccuracy, int)>[
+            (LocationAccuracy.bestForNavigation, 12),
+            (LocationAccuracy.bestForNavigation, 20),
+            (LocationAccuracy.high, 25),
+            (LocationAccuracy.high, 30),
+          ];
+          for (var i = 0; i < attempts.length; i++) {
+            final (acc, secs) = attempts[i];
+            try {
+              p = await Geolocator.getCurrentPosition(
+                desiredAccuracy: acc,
+              ).timeout(Duration(seconds: secs));
+              logger.i(
+                  'GPS WAKEUP attempt ${i + 1} OK: ${p.latitude}, ${p.longitude} (acc ${p.accuracy}m)');
+              break;
+            } catch (e) {
+              logger.w(
+                  'GPS WAKEUP attempt ${i + 1} (acc=$acc, ${secs}s) failed: $e');
+              // brief backoff before next try
+              await Future.delayed(const Duration(seconds: 2));
+            }
+          }
+          if (p != null) {
             await prefs.setDouble(TrackingService._keyLastLat, p.latitude);
             await prefs.setDouble(TrackingService._keyLastLon, p.longitude);
             lastPosition = p;
             lastPositionTime = DateTime.now();
-            logger.i(
-                'INITIAL ANCHOR set: ${p.latitude}, ${p.longitude} (acc ${p.accuracy}m)');
             onPositionReceived(p, forceRecord: true);
-          } catch (e) {
-            logger.w('Could not capture initial anchor position: $e');
+          } else {
+            // Final fallback: surface to the user. The position stream
+            // may still recover on its own, but we want them to know.
+            logger.e('GPS WAKEUP: all attempts failed — chip may be dead');
+            try {
+              service.invoke('error', {
+                'message':
+                    'GPS could not get a fix at session start. Move outdoors or check location settings.',
+                'code': 'gps_warmup_failed',
+              });
+            } catch (_) {}
           }
         }());
       }
@@ -1490,20 +2097,221 @@ void _onServiceStart(ServiceInstance service) async {
     await stopLocationUpdates();
     pausedResumeMonitorTimer?.cancel();
     pausedResumeMonitorTimer = null;
+    backgroundHealthTimer?.cancel();
+    backgroundHealthTimer = null;
     currentSessionId = null;
-    // Clear stationary spot state
+
+    // Full state wipe — same set of variables the new-session reset
+    // touches. This way, even if the user opens the app and waits an
+    // hour before tapping Present, the bg-isolate is already in a
+    // pristine state and we don't depend on the next startSession to
+    // clean up correctly. Belt-and-suspenders against the "kilometres
+    // not tracked in new session" bug.
+    lastPosition = null;
+    lastPositionTime = null;
+    stationaryCount = 0;
+    firstStationaryAt = null;
+    stationaryAlarmFired = false;
+    pausedAlarmFired = false;
+    try {
+      await flutterLocalNotificationsPlugin.cancel(90201);
+    } catch (_) {}
+    isMoving = true;
+    isPaused = false;
+    calculatedSpeedKmh = 0;
+    autoPauseAnchorLat = null;
+    autoPauseAnchorLng = null;
+    autoPauseNotified = false;
     stationarySpotSeconds = 0;
     stationarySpotAnchorLat = null;
     stationarySpotAnchorLng = null;
     stationarySpotNotified = false;
+    recoveryLat = null;
+    recoveryLon = null;
     resetMovementCandidate();
+    kalman.reset();
   });
 
   service.on('stopService').listen((event) async {
     logger.i('Service stop requested');
     await stopLocationUpdates();
+    backgroundHealthTimer?.cancel();
+    backgroundHealthTimer = null;
     service.stopSelf();
   });
+
+  // ============================================================
+  // SELF-RECOVERY: AUTO-START GPS AFTER OS KILL
+  // ============================================================
+  // If we detected a killed session during init (currentSessionId was set
+  // from persisted prefs), now that startLocationUpdates is defined we
+  // can kick off GPS tracking.
+  if (currentSessionId != null && wasTracking) {
+    logger.i('SELF-RECOVERY: Kicking off GPS tracking for recovered session $currentSessionId');
+    if (isPaused) {
+      autoPauseAnchorLat ??= prefs.getDouble(TrackingService._keyLastLat);
+      autoPauseAnchorLng ??= prefs.getDouble(TrackingService._keyLastLon);
+      startPausedResumeMonitor();
+      logger.i('SELF-RECOVERY: Session is paused, started resume monitor');
+    } else {
+      await startLocationUpdates();
+      logger.i('SELF-RECOVERY: GPS tracking restarted successfully');
+    }
+
+    // Update foreground notification. We do NOT tag with "(Recovered)"
+    // anymore — that was firing on every fresh user-initiated start
+    // too (since the bg-isolate's _onServiceStart runs before the
+    // main isolate's startSession command lands), confusing the user
+    // who just tapped Present into thinking their session was being
+    // "resumed" instead of "started".
+    if (service is AndroidServiceInstance) {
+      try {
+        service.setForegroundNotificationInfo(
+          title: 'Tracking Active',
+          content: '${(totalDistance / 1000).toStringAsFixed(2)} km tracked',
+        );
+      } catch (e) {
+        logger.w('Failed to update foreground notification: $e');
+      }
+    }
+  }
+
+  // ============================================================
+  // LOCATION-SERVICE STATUS STREAM
+  // ============================================================
+  // When the user toggles location off then on (Quick Settings tile,
+  // airplane mode, Settings → Location), the active position stream
+  // dies silently and never recovers. Geolocator exposes a service-
+  // status stream — we listen to it and re-subscribe the position
+  // stream the moment GPS comes back. This is what fixes the
+  // "Acquiring GPS forever" bug field users keep hitting.
+  // Note: this subscription intentionally lives for the lifetime of the
+  // background isolate and is implicitly cancelled when the isolate
+  // exits via stopService. We assign through a setter to suppress the
+  // 'unused' analyzer hint without losing the typing.
+  bool lastKnownServiceEnabled = true;
+  try {
+    lastKnownServiceEnabled = await Geolocator.isLocationServiceEnabled();
+  } catch (_) {}
+
+  // ignore: cancel_subscriptions, unused_local_variable
+  final StreamSubscription<ServiceStatus> serviceStatusSubscription =
+      Geolocator.getServiceStatusStream().listen(
+    (status) async {
+      final enabled = status == ServiceStatus.enabled;
+      logger.i(
+          'SERVICE-STATUS: location services -> ${enabled ? "ENABLED" : "DISABLED"}');
+
+      if (!enabled && lastKnownServiceEnabled) {
+        // User just turned location OFF. Cancel the dead position stream
+        // so we are ready to attach a fresh one when it comes back.
+        positionSubscription?.cancel();
+        positionSubscription = null;
+
+        // Inform the main isolate so the UI can warn the user. We send
+        // BOTH an error (for backward-compat) and an explicit typed
+        // serviceStatus event so the main isolate can update its
+        // internal state (warning banner + watchdog grace period) in
+        // a way it can later cleanly UNDO when location comes back.
+        try {
+          service.invoke('error', {
+            'message':
+                'Location services were turned off. Tracking is paused until GPS is re-enabled.',
+            'code': 'location_services_disabled',
+          });
+          service.invoke('serviceStatus', {'enabled': false});
+        } catch (_) {}
+
+        // Persistent OS alert so the user sees this even when the app
+        // is in the background.
+        try {
+          await flutterLocalNotificationsPlugin.show(
+            90010,
+            'Location is OFF',
+            'Turn location back on — tracking is paused until you do.',
+            NotificationDetails(
+              android: AndroidNotificationDetails(
+                'benzmobitraq_tracking_alerts',
+                'Tracking Alerts',
+                channelDescription:
+                    'Critical alerts when GPS or tracking is not working correctly',
+                importance: Importance.max,
+                priority: Priority.max,
+                icon: '@mipmap/ic_launcher',
+                enableVibration: true,
+                ongoing: true,
+                autoCancel: false,
+                vibrationPattern:
+                    Int64List.fromList([0, 200, 150, 200, 150, 200]),
+              ),
+            ),
+          );
+        } catch (e) {
+          logger.w('Failed to show location-off notification: $e');
+        }
+      } else if (enabled && !lastKnownServiceEnabled) {
+        // User just turned location ON again. Clear the persistent
+        // warning, re-attach the position stream, and most importantly
+        // force-deliver a fresh fix to the main isolate IMMEDIATELY so
+        // the UI's "Acquiring GPS..." chip clears and the watchdog
+        // resets its "stalled" clock. Without this last step, the user
+        // sees "GPS acquiring" for 30+ seconds while the new stream
+        // waits for its first event, and the watchdog falsely fires
+        // "GPS stalled" notifications during that gap.
+        try {
+          await flutterLocalNotificationsPlugin.cancel(90010);
+        } catch (_) {}
+
+        // Tell main isolate first so it can immediately clear its
+        // 'location services disabled' warning and grant the new
+        // stream a grace window before re-arming the watchdog.
+        try {
+          service.invoke('serviceStatus', {'enabled': true});
+        } catch (_) {}
+
+        if (currentSessionId != null && !isPaused) {
+          logger.i(
+              'SERVICE-STATUS: GPS came back online — re-subscribing position stream');
+          try {
+            await startLocationUpdates();
+            // Reset the GPS health stamp so the no-fix watchdog gives
+            // the new stream a fair window before complaining.
+            lastSuccessfulGpsTime = DateTime.now();
+            try {
+              service.invoke('trackingStateChanged', {'isTracking': true});
+            } catch (_) {}
+
+            // CRITICAL: do a one-shot getCurrentPosition right now so
+            // the main isolate receives at least one fresh location
+            // update within ~1-2 seconds (vs waiting 30+ seconds for
+            // the next stream tick). This also feeds the gap into the
+            // distance engine — if the user moved while location was
+            // off, the existing `recoveryLat / recoveryLon` mechanism
+            // (or a fresh delta from `lastPosition`) accounts for it.
+            unawaited(() async {
+              try {
+                final p = await Geolocator.getCurrentPosition(
+                  desiredAccuracy: LocationAccuracy.bestForNavigation,
+                ).timeout(const Duration(seconds: 10));
+                logger.i(
+                    'SERVICE-STATUS: forced fresh fix lat=${p.latitude}, lng=${p.longitude}, acc=${p.accuracy}m');
+                onPositionReceived(p, forceRecord: true);
+              } catch (e) {
+                logger.w('SERVICE-STATUS: forced fresh fix failed: $e');
+              }
+            }());
+          } catch (e) {
+            logger.e(
+                'Failed to restart position stream after GPS came back: $e');
+          }
+        }
+      }
+
+      lastKnownServiceEnabled = enabled;
+    },
+    onError: (e) => logger.w('ServiceStatus stream error: $e'),
+    cancelOnError: false,
+  );
 
   // SIGNAL READY TO MAIN ISOLATE
   // This prevents the race condition where Main sends startSession before we are listening

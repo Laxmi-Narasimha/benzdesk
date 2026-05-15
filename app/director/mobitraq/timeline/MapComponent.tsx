@@ -164,7 +164,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
 
                 {/* Stop markers from TimelineEvents */}
                 {timelineEvents
-                    .filter((e) => e.event_type === 'stop' && e.center_lat && e.center_lng)
+                    .filter((e) => (e.event_type === 'stop' || e.event_type === 'indoor_walking') && e.center_lat && e.center_lng)
                     .map((stop) => (
                         <CircleMarker
                             key={stop.id}

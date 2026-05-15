@@ -82,7 +82,11 @@ interface TimelineEvent {
         | 'stop'
         | 'move'
         | 'break_start'
-        | 'break_end';
+        | 'break_end'
+        // Synthesised from `session_stops` rows (NOT from the
+        // `timeline_events` table). Carries `kind = 'indoor_walking'`
+        // when the StopDetector classified the stop as inside-a-building.
+        | 'indoor_walking';
     start_time: string;
     end_time: string | null;
     duration_sec: number | null;
@@ -91,6 +95,8 @@ interface TimelineEvent {
     center_lng: number | null;
     address: string | null;
     metadata?: any;
+    /** True for entries sourced from session_stops rather than timeline_events. */
+    fromStopDetector?: boolean;
 }
 
 interface DailyRollup {
@@ -306,7 +312,7 @@ export default function TimelinePage() {
                 return all;
             };
 
-            const [sessionsRes, allPoints, eventsRes, alertsRes] = await Promise.all([
+            const [sessionsRes, allPoints, eventsRes, alertsRes, stopsRes] = await Promise.all([
                 supabase
                     .from('shift_sessions')
                     .select('id, session_name, start_time, end_time, status, purpose')
@@ -333,6 +339,16 @@ export default function TimelinePage() {
                     .gte('created_at', startOfDay)
                     .lte('created_at', endOfDay)
                     .order('created_at', { ascending: false }),
+                // Stops and indoor-walking segments detected by the
+                // mobile StopDetector. Folded into timelineEvents below
+                // so the existing render path picks them up.
+                supabase
+                    .from('session_stops')
+                    .select('id, session_id, kind, started_at, ended_at, duration_sec, center_lat, center_lng, address, point_count')
+                    .eq('employee_id', selectedEmployee)
+                    .gte('started_at', startOfDay)
+                    .lte('started_at', endOfDay)
+                    .order('started_at', { ascending: true }),
             ]);
 
             if (sessionsRes.error) {
@@ -341,10 +357,50 @@ export default function TimelinePage() {
             }
             if (eventsRes.error) console.error('[timeline] events error:', eventsRes.error);
             if (alertsRes.error) console.error('[timeline] alerts error:', alertsRes.error);
+            if (stopsRes.error) console.error('[timeline] stops error:', stopsRes.error);
 
             setSessions(sessionsRes.data || []);
             setPoints(allPoints);
-            setTimelineEvents(eventsRes.data || []);
+
+            // Fold session_stops rows into the timeline event stream so the
+            // existing render path picks them up. We synthesise a
+            // TimelineEvent per stop with event_type='stop' or
+            // 'indoor_walking', tagged with fromStopDetector=true so we
+            // can tell them apart from legacy timeline_events stop rows.
+            const stopRows = (stopsRes.data || []) as Array<{
+                id: string;
+                session_id: string;
+                kind: 'stop' | 'indoor_walking';
+                started_at: string;
+                ended_at: string;
+                duration_sec: number;
+                center_lat: number;
+                center_lng: number;
+                address: string | null;
+                point_count: number;
+            }>;
+            const stopEvents: TimelineEvent[] = stopRows.map((s) => ({
+                id: `stop-${s.id}`,
+                event_type: s.kind,
+                start_time: s.started_at,
+                end_time: s.ended_at,
+                duration_sec: s.duration_sec,
+                distance_km: null,
+                center_lat: s.center_lat,
+                center_lng: s.center_lng,
+                address: s.address,
+                metadata: { source: 'stop_detector', point_count: s.point_count },
+                fromStopDetector: true,
+            }));
+
+            // Merge with timeline_events from the DB and sort chronologically.
+            const merged: TimelineEvent[] = [
+                ...((eventsRes.data || []) as TimelineEvent[]),
+                ...stopEvents,
+            ].sort((a, b) =>
+                new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
+            );
+            setTimelineEvents(merged);
             setTrackingAlerts((alertsRes.data as TrackingAlert[] | null) || []);
 
             // Fallback: pull the most recent 10 sessions for this
@@ -367,14 +423,28 @@ export default function TimelinePage() {
                 setRecentSessions([]);
             }
 
-            // Rollups
+            // Per-session billing distance. We deliberately read
+            // shift_sessions.final_km (the device-filtered total locked at
+            // session end, or Roads-API-verified once the finalizer runs)
+            // and NOT session_rollups.distance_km (raw haversine, always
+            // inflated). This is Stage 1 of the distance rewrite — see
+            // docs/DISTANCE_TRACKING_METHODOLOGY.md.
             if (sessionsRes.data && sessionsRes.data.length > 0) {
                 const sessionIds = sessionsRes.data.map((s) => s.id);
-                const { data: rollupsData } = await supabase
-                    .from('session_rollups')
-                    .select('session_id, distance_km, point_count')
-                    .in('session_id', sessionIds);
-                setRollups(rollupsData || []);
+                const { data: kmRows } = await supabase
+                    .from('shift_sessions')
+                    .select('id, final_km, total_km')
+                    .in('id', sessionIds);
+                // Shape into the legacy {session_id, distance_km, point_count}
+                // structure that the rest of the page expects, so nothing
+                // else has to change.
+                const shaped = (kmRows ?? []).map((r) => {
+                    const fk = (r as any).final_km as number | null;
+                    const tk = (r as any).total_km as number | null;
+                    const km = fk != null && fk > 0 ? fk : (tk ?? 0);
+                    return { session_id: (r as any).id, distance_km: km, point_count: 0 };
+                });
+                setRollups(shaped);
             } else {
                 setRollups([]);
             }
@@ -887,16 +957,24 @@ export default function TimelinePage() {
                                             move: 'Moving',
                                             break_start: 'Paused',
                                             break_end: 'Resumed',
+                                            indoor_walking: 'Walking inside building',
                                         };
                                         const reason = event.metadata?.reason as string | undefined;
                                         const reasonLabel = reason ? ` (${reason.replace(/_/g, ' ')})` : '';
+                                        // TimelineItem's prop only accepts the legacy event set.
+                                        // Map our synthetic 'indoor_walking' onto 'stop' for the
+                                        // visual marker; the distinct title above already tells
+                                        // the admin what's different.
+                                        const visualType: 'start' | 'end' | 'stop' | 'move' | 'break_start' | 'break_end' =
+                                            event.event_type === 'indoor_walking' ? 'stop' : event.event_type;
+                                        const isStopLike = event.event_type === 'stop' || event.event_type === 'indoor_walking';
                                         return (
                                             <TimelineItem
                                                 key={event.id}
-                                                type={event.event_type}
+                                                type={visualType}
                                                 title={titleMap[event.event_type] ?? 'Event'}
                                                 subtitle={
-                                                    event.event_type === 'stop' && event.duration_sec
+                                                    isStopLike && event.duration_sec
                                                         ? `${formatDuration(event.duration_sec / 60)}`
                                                         : event.event_type === 'break_end' && event.duration_sec
                                                             ? `${formatDuration(event.duration_sec / 60)} on break${reasonLabel}`
