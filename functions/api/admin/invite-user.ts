@@ -12,7 +12,7 @@ interface Env {
 
 interface InviteRequest {
     email: string;
-    role: 'requester' | 'accounts_admin';
+    role: 'requester' | 'accounts_admin' | 'sales_manager';
     invitedBy: string; // Director's user ID
 }
 
@@ -83,7 +83,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             );
         }
 
-        if (!['requester', 'accounts_admin'].includes(role)) {
+        if (!['requester', 'accounts_admin', 'sales_manager'].includes(role)) {
             return Response.json(
                 { success: false, error: 'Invalid role' },
                 { status: 400, headers: corsHeaders }

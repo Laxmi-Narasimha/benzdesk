@@ -406,3 +406,85 @@ export async function notifyPendingClosureReminder(
         tag: `pending-${requestId}`,
     });
 }
+
+// ============================================================================
+// Sales Manager Notifications
+// ============================================================================
+
+/**
+ * Notify a sales manager when a team member submits a new request
+ */
+export async function notifyManagerOfNewRequest(
+    managerId: string,
+    requestId: string,
+    requestTitle: string,
+    submitterEmail: string
+): Promise<void> {
+    const submitterName = getDisplayName(submitterEmail);
+    await sendNotification({
+        user_id: managerId,
+        title: `📋 New request needs your approval`,
+        body: `${requestTitle}\nSubmitted by: ${submitterName}`,
+        url: `/sales-manager/request?id=${requestId}`,
+        tag: `manager-approval-${requestId}`,
+        sender_email: submitterEmail,
+    });
+}
+
+/**
+ * Notify a sales person when their manager approves/requests more info
+ */
+export async function notifySalesPersonOfManagerAction(
+    requesterId: string,
+    requestId: string,
+    requestTitle: string,
+    action: 'approved' | 'more_info',
+    managerEmail: string
+): Promise<void> {
+    const managerName = getDisplayName(managerEmail);
+    const isApproved = action === 'approved';
+
+    await sendNotification({
+        user_id: requesterId,
+        title: isApproved
+            ? `✅ Manager approved your request`
+            : `💬 Manager needs more information`,
+        body: `${requestTitle}\n${isApproved
+            ? `${managerName} has approved and forwarded it to Accounts.`
+            : `${managerName} has requested more details from you.`}`,
+        url: `/app/request?id=${requestId}`,
+        tag: `manager-action-${requestId}`,
+        sender_email: managerEmail,
+    });
+}
+
+/**
+ * Notify admins when a manager approves a request (now visible to accounts)
+ */
+export async function notifyAdminsOfManagerApproval(
+    requestId: string,
+    requestTitle: string,
+    managerEmail: string,
+    submitterEmail: string
+): Promise<void> {
+    const managerName = getDisplayName(managerEmail);
+    const submitterName = getDisplayName(submitterEmail);
+
+    const supabase = getSupabaseClient();
+    const { data: admins } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .in('role', ['accounts_admin', 'director'])
+        .eq('is_active', true);
+
+    for (const admin of admins || []) {
+        await sendNotification({
+            user_id: admin.user_id,
+            title: `📩 New request approved by ${managerName}`,
+            body: `${requestTitle}\nFrom: ${submitterName}`,
+            url: `/admin/request?id=${requestId}`,
+            tag: `new-request-${requestId}`,
+            sender_email: managerEmail,
+        });
+    }
+}

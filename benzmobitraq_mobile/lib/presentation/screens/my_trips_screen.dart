@@ -114,13 +114,23 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadTrips, color: _C.textDim),
         ],
       ),
-      floatingActionButton: activeTrip == null
-          ? FloatingActionButton.extended(
-              onPressed: _createNewTrip,
-              icon: const Icon(Icons.add_location_alt),
-              label: Text('Start New Trip', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
-              backgroundColor: _C.accent,
-              foregroundColor: _C.bg,
+      bottomNavigationBar: activeTrip == null
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: ElevatedButton.icon(
+                  onPressed: _createNewTrip,
+                  icon: const Icon(Icons.add_location_alt),
+                  label: Text('Start New Trip', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 16)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _C.accent,
+                    foregroundColor: _C.bg,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    minimumSize: const Size(double.infinity, 56),
+                  ),
+                ),
+              ),
             )
           : null,
       body: _loading
@@ -145,7 +155,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                         const SizedBox(height: 16),
                         Text('No trips yet', style: GoogleFonts.inter(fontSize: 18, color: _C.textSecondary)),
                         const SizedBox(height: 8),
-                        Text('Start a trip to track your journey', style: GoogleFonts.inter(color: _C.textDim)),
+                        Text('Start a trip to track your journey \n"It will get easier as you use it"', textAlign: TextAlign.center, style: GoogleFonts.inter(color: _C.textDim)),
                         const SizedBox(height: 24),
                         ElevatedButton.icon(
                           onPressed: _createNewTrip,

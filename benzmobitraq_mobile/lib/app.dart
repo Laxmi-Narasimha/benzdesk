@@ -50,6 +50,9 @@ class BenzMobiTraqApp extends StatelessWidget {
           title: 'BenzMobiTraq',
           debugShowCheckedModeBanner: false,
           
+          // Navigation Key for background deep linking
+          navigatorKey: getIt<GlobalKey<NavigatorState>>(),
+          
           // Theme configuration
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
@@ -58,6 +61,22 @@ class BenzMobiTraqApp extends StatelessWidget {
           // Routing
           initialRoute: AppRouter.splash,
           onGenerateRoute: AppRouter.onGenerateRoute,
+          
+          // Global builder to handle Auth state changes (like logout)
+          builder: (context, child) {
+            return BlocListener<AuthBloc, AuthState>(
+              listener: (context, state) {
+                if (state is AuthUnauthenticated) {
+                  // Use the navigator key to navigate globally
+                  getIt<GlobalKey<NavigatorState>>().currentState?.pushNamedAndRemoveUntil(
+                    AppRouter.login,
+                    (route) => false,
+                  );
+                }
+              },
+              child: child!,
+            );
+          },
         ),
       ),
     );

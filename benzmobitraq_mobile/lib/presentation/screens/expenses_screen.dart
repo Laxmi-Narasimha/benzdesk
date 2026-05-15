@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:intl/intl.dart';
+
 
 import '../../core/router/app_router.dart';
 import '../../core/utils/date_utils.dart';
 import '../../data/models/simple_expense_model.dart';
 import '../blocs/expense/expense_bloc.dart';
-import '../widgets/app_bottom_nav_bar.dart';
+
 
 /// Screen showing expense claims list
 class ExpensesScreen extends StatefulWidget {
@@ -434,7 +434,9 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                           Icon(Icons.calendar_today_rounded, size: 14, color: Colors.grey.shade400),
                           const SizedBox(width: 4),
                           Text(
-                            DateTimeUtils.formatDate(expense.expenseDate),
+                            expense.createdAt != null 
+                                ? DateTimeUtils.formatDateTime(expense.createdAt!)
+                                : DateTimeUtils.formatDate(expense.expenseDate),
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.grey.shade500,

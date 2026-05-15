@@ -1,9 +1,9 @@
 import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
 
-import '../datasources/local/preferences_local.dart';
-import '../datasources/remote/supabase_client.dart';
-import '../models/session_model.dart';
+import 'package:benzmobitraq_mobile/data/datasources/local/preferences_local.dart';
+import 'package:benzmobitraq_mobile/data/datasources/remote/supabase_client.dart';
+import 'package:benzmobitraq_mobile/data/models/session_model.dart';
 
 /// Repository for handling work session operations
 class SessionRepository {
@@ -57,9 +57,9 @@ class SessionRepository {
       }
 
       _logger.i('Starting session: ${session.id}');
-      
+
       await _dataSource.createSession(session);
-      
+
       // Store session ID locally
       await _preferences.setActiveSessionId(session.id);
 
@@ -112,9 +112,9 @@ class SessionRepository {
       );
 
       _logger.i('Starting new session: $sessionId');
-      
+
       final createdSession = await _dataSource.createSession(session);
-      
+
       // Store session ID locally
       await _preferences.setActiveSessionId(createdSession.id);
 
@@ -144,6 +144,9 @@ class SessionRepository {
     double totalKm, {
     String? address,
     DateTime? endTime,
+    int? totalPausedSeconds,
+    String? confidence,
+    List<String>? reasonCodes,
   }) async {
     try {
       final userId = await resolveCurrentUserId();
@@ -152,15 +155,19 @@ class SessionRepository {
         return null;
       }
 
-      _logger.i('Stopping session: $sessionId with $totalKm km');
+      _logger.i('Stopping session: $sessionId with $totalKm km '
+          'confidence=${confidence ?? "medium"} reasons=${reasonCodes ?? const <String>[]}');
 
       final updatedSession = await _dataSource.endSession(
         sessionId: sessionId,
-        totalKm: 0, // CRITICAL FIX: Send 0 or ignore. Let Backpack Trigger calculate true distance.
+        totalKm: totalKm, // Send actual precision-tracked distance from client
         endLatitude: latitude,
         endLongitude: longitude,
         endAddress: address,
         endTime: endTime,
+        totalPausedSeconds: totalPausedSeconds,
+        confidence: confidence,
+        reasonCodes: reasonCodes,
       );
 
       // Clear local session
@@ -201,33 +208,41 @@ class SessionRepository {
     }
   }
 
-  /// Get the current active session
+  /// Get the current active session.
+  ///
+  /// NOTE: This used to overwrite `activeSessionId` in local prefs as a
+  /// side effect whenever the server returned a session. That created a
+  /// nasty bug: after an offline Stop, the server still showed the old
+  /// session as `active` until the pending stop synced. Any caller that
+  /// touched getActiveSession() would silently pin the old session id
+  /// back into prefs, and on the next launch the app "resumed" the old
+  /// session with its old kilometers. The side effect is removed —
+  /// callers that genuinely want to sync local with server must do it
+  /// explicitly via [syncSessionState].
   Future<SessionModel?> getActiveSession() async {
     try {
       final userId = await resolveCurrentUserId();
       if (userId == null) return null;
 
-      // First check local storage
-      final localSessionId = _preferences.activeSessionId;
-      
-      // Verify with server
-      final serverSession = await _dataSource.getActiveSession(userId);
-
-      if (serverSession == null && localSessionId != null) {
-        // Local session exists but not on server, clear it
-        await _preferences.setActiveSessionId(null);
-        return null;
-      }
-
-      if (serverSession != null && localSessionId != serverSession.id) {
-        // Sync local with server
-        await _preferences.setActiveSessionId(serverSession.id);
-      }
-
-      return serverSession;
+      return await _dataSource.getActiveSession(userId);
     } catch (e) {
       _logger.e('Error getting active session: $e');
       return null;
+    }
+  }
+
+  /// Side-effect-free server check for an active session.
+  ///
+  /// Use this from places like SessionManager.startSession() where we want
+  /// to know "does the server still think this user has an active session"
+  /// without polluting local prefs.
+  Future<SessionModel?> checkServerActiveSessionWithoutSideEffects(
+      String userId) async {
+    try {
+      return await _dataSource.getActiveSession(userId);
+    } catch (e) {
+      _logger.w('Server active-session check failed: $e');
+      rethrow; // Let caller decide (offline vs real error)
     }
   }
 
@@ -251,6 +266,28 @@ class SessionRepository {
     }
   }
 
+  /// Update session status (pause/resume)
+  Future<void> updateSessionStatus(
+    String sessionId,
+    SessionStatus status, {
+    DateTime? pausedAt,
+    DateTime? resumedAt,
+    int? totalPausedSeconds,
+  }) async {
+    try {
+      await _dataSource.updateSessionStatus(
+        sessionId,
+        status.value,
+        pausedAt: pausedAt,
+        resumedAt: resumedAt,
+        totalPausedSeconds: totalPausedSeconds,
+      );
+      _logger.d('Updated session $sessionId status to ${status.value}');
+    } catch (e) {
+      _logger.e('Error updating session status: $e');
+    }
+  }
+
   /// Get today's sessions for current user
   Future<List<SessionModel>> getTodaySessions() async {
     try {
@@ -266,7 +303,7 @@ class SessionRepository {
 
   /// Get session history for current user
   Future<List<SessionModel>> getSessionHistory({
-    int limit = 20,
+    int limit = 200,
     int offset = 0,
   }) async {
     try {
@@ -288,12 +325,12 @@ class SessionRepository {
   Future<double> getTodayTotalKm() async {
     try {
       final sessions = await getTodaySessions();
-      
+
       double total = 0;
       for (final session in sessions) {
         total += session.totalKm;
       }
-      
+
       return total;
     } catch (e) {
       _logger.e('Error getting today total km: $e');
@@ -305,27 +342,38 @@ class SessionRepository {
   Future<Map<String, dynamic>> getMonthlyStats() async {
     try {
       final userId = await resolveCurrentUserId();
-      if (userId == null) return {'distance': 0.0, 'duration': Duration.zero, 'count': 0};
+      if (userId == null)
+        return {'distance': 0.0, 'duration': Duration.zero, 'count': 0};
 
       final sessions = await _dataSource.getMonthlySessions(userId);
-      
+
       double totalDistance = 0;
       Duration totalDuration = Duration.zero;
-      
+
       for (final session in sessions) {
         totalDistance += session.totalKm;
-        
+
         final end = session.endTime ?? DateTime.now();
         final duration = end.difference(session.startTime);
         if (!duration.isNegative) {
           totalDuration += duration;
         }
       }
-      
+
+      // Also load expense and trip stats for achievements
+      final expenseStats = await _dataSource.getExpenseStats(userId);
+      final tripCount = await _dataSource.getTripCount(userId);
+
       return {
         'distance': totalDistance,
         'duration': totalDuration,
         'count': sessions.length,
+        'expenseCount': expenseStats['count'],
+        'expenseApproved': expenseStats['approvedCount'],
+        'expenseSubmitted': expenseStats['submittedCount'],
+        'expenseTotal': expenseStats['totalAmount'],
+        'expenseWithReceipt': expenseStats['withReceipt'],
+        'tripCount': tripCount,
       };
     } catch (e) {
       _logger.e('Error getting monthly stats: $e');
@@ -340,7 +388,7 @@ class SessionRepository {
       if (userId == null) return;
 
       final serverSession = await _dataSource.getActiveSession(userId);
-      
+
       if (serverSession != null) {
         await _preferences.setActiveSessionId(serverSession.id);
       } else {
@@ -361,7 +409,6 @@ class SessionRepository {
     }
   }
 }
-
 
 /// Result class for session operations
 class SessionResult {

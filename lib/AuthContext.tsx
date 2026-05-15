@@ -43,8 +43,10 @@ interface AuthContextValue extends AuthState {
     isRequester: boolean;
     isAdmin: boolean;
     isDirector: boolean;
+    isSalesManager: boolean;
     canManageRequests: boolean;
     canViewMetrics: boolean;
+    canApproveForTeam: boolean;
 
     // Refresh
     refreshUser: () => Promise<void>;
@@ -270,8 +272,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
             isRequester: role === 'requester',
             isAdmin: role === 'accounts_admin',
             isDirector: role === 'director',
+            isSalesManager: role === 'sales_manager',
             canManageRequests: role === 'accounts_admin' || role === 'director',
             canViewMetrics: role === 'director',
+            canApproveForTeam: role === 'sales_manager',
         };
     }, [state.user?.role]);
 

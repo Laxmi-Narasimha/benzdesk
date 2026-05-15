@@ -2,17 +2,17 @@ const { Client } = require('pg');
 const fs = require('fs');
 
 async function run() {
-  const connectionString = "postgresql://postgres.igrudnilqwmlgvmgneng:Mobipackaging111!@aws-0-ap-south-1.pooler.supabase.com:6543/postgres";
+  const connectionString = "postgresql://postgres:Mobipackaging111!@db.igrudnilqwmlgvmgneng.supabase.co:5432/postgres";
   const client = new Client({ connectionString });
   
   try {
     await client.connect();
     console.log("Connected to Supabase.");
 
-    const sql042 = fs.readFileSync('infra/supabase/migrations/042_elegant_redesign_db_fixes.sql', 'utf8');
-    console.log("Running 042_elegant_redesign_db_fixes.sql...");
-    await client.query(sql042);
-    console.log("042_elegant_redesign_db_fixes.sql applied successfully.");
+    const sqlFix = fs.readFileSync('infra/supabase/migrations/20261231000001_sync_requests_to_mobile_notifications.sql', 'utf8');
+    console.log("Running 20261231000001_sync_requests_to_mobile_notifications.sql...");
+    await client.query(sqlFix);
+    console.log("20260312104500_sync_requests_to_mobile_notifications.sql applied successfully.");
 
   } catch (err) {
     console.error("Error executing migrations:", err);

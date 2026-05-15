@@ -6,8 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/di/injection.dart';
 import '../../data/repositories/expense_repository.dart';
 import '../../core/utils/image_picker_helper.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
+
 import 'package:path/path.dart' as p;
 import '../blocs/auth/auth_bloc.dart';
 
@@ -44,11 +43,14 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
   bool _isUploading = false;
   bool _isTripExpense = false; // True if this is in the requests table (trip expense)
   String? _currentStatus; // Mutable status string 
+  double? _currentAmount;
+  String? _currentRequestId; // Cached request ID if this is a TripExpense
 
   @override
   void initState() {
     super.initState();
     _currentStatus = widget.status;
+    _currentAmount = widget.amount;
     _loadData();
   }
 
@@ -64,22 +66,62 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
     final supabase = Supabase.instance.client;
 
     try {
-      // 1. Check if this expense exists in the requests table (trip expense flow)
-      final reqCheck = await supabase
-          .from('requests')
-          .select('id')
-          .eq('reference_id', widget.claimId)
-          .maybeSingle();
+      // 1. Check if this expense exists in the requests table (trip expense flow or unified push)
+      // Try matching by reference_id first, then by id
+      Map<String, dynamic>? reqCheck;
+      try {
+        reqCheck = await supabase
+            .from('requests')
+            .select('id, reference_id')
+            .eq('reference_id', widget.claimId)
+            .maybeSingle();
+      } catch (_) {}
+
+      if (reqCheck == null) {
+        try {
+          reqCheck = await supabase
+              .from('requests')
+              .select('id, reference_id')
+              .eq('id', widget.claimId)
+              .maybeSingle();
+        } catch (_) {}
+      }
 
       _isTripExpense = reqCheck != null;
 
       if (_isTripExpense) {
         // Use BenzDesk request_comments/request_events/request_attachments
         final requestId = reqCheck!['id'];
+        _currentRequestId = requestId;
+        final referenceId = reqCheck['reference_id'];
+        
+        // Fetch up-to-date status AND description (contains amount info)
+        final reqDetails = await supabase.from('requests').select('status, description, category').eq('id', requestId).single();
+
+        // Try to fetch amount from trip_expenses 
+        double? tripAmount;
+        if (referenceId != null) {
+          try {
+            final tripExp = await supabase.from('trip_expenses').select('amount, category').eq('id', referenceId).maybeSingle();
+            if (tripExp != null) {
+              tripAmount = (tripExp['amount'] as num).toDouble();
+            }
+          } catch (_) {}
+        }
+
+        // Fallback: parse amount from request description if trip_expenses didn't have it
+        if (tripAmount == null || tripAmount == 0) {
+          final desc = reqDetails['description'] as String? ?? '';
+          final amountMatch = RegExp(r'Amount:\s*₹?([\d,.]+)').firstMatch(desc);
+          if (amountMatch != null) {
+            tripAmount = double.tryParse(amountMatch.group(1)!.replaceAll(',', ''));
+          }
+        }
+
         final results = await Future.wait([
           supabase
               .from('request_comments')
-              .select('*')
+              .select('*, author:employees(name)')
               .eq('request_id', requestId)
               .order('created_at', ascending: true),
           supabase
@@ -96,6 +138,8 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
 
         if (mounted) {
           setState(() {
+            _currentStatus = reqDetails['status'];
+            if (tripAmount != null && tripAmount! > 0) _currentAmount = tripAmount;
             _comments = List<Map<String, dynamic>>.from(results[0] as List);
             _events = List<Map<String, dynamic>>.from(results[1] as List);
             _attachments = List<Map<String, dynamic>>.from(results[2] as List);
@@ -103,6 +147,9 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
           });
         }
       } else {
+        // Fetch up-to-date status and amount
+        final claimDetails = await supabase.from('expense_claims').select('status, total_amount').eq('id', widget.claimId).single();
+        
         // Use expense_claim_comments for standalone claims
         final repo = getIt<ExpenseRepository>();
         final results = await Future.wait([
@@ -113,6 +160,10 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
 
         if (mounted) {
           setState(() {
+            _currentStatus = claimDetails['status'];
+            if (claimDetails['total_amount'] != null) {
+              _currentAmount = (claimDetails['total_amount'] as num).toDouble();
+            }
             _comments = results[0];
             _events = results[1];
             _attachments = results[2];
@@ -132,33 +183,38 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
 
     final authState = context.read<AuthBloc>().state;
     final employeeId = authState is AuthAuthenticated ? authState.employee.id : null;
-    if (employeeId == null) return;
+    if (employeeId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Not logged in. Please log in again.')),
+        );
+      }
+      return;
+    }
 
     setState(() => _isSending = true);
+    final savedText = text; // Save text before clearing
     _messageController.clear();
 
     try {
       final supabase = Supabase.instance.client;
 
-      if (_isTripExpense) {
+      if (_isTripExpense && _currentRequestId != null) {
         // Insert into request_comments (same as BenzDesk web)
-        final reqCheck = await supabase.from('requests').select('id').eq('reference_id', widget.claimId).single();
-        final response = await supabase
+        await supabase
             .from('request_comments')
             .insert({
-              'request_id': reqCheck['id'],
+              'request_id': _currentRequestId,
               'author_id': employeeId,
-              'body': text,
+              'body': savedText,
               'is_internal': false,
             })
             .select()
             .single();
 
         if (mounted) {
-          setState(() {
-            _comments.add(response);
-            _isSending = false;
-          });
+          await _loadData();
+          setState(() => _isSending = false);
           _scrollToBottom();
         }
       } else {
@@ -167,20 +223,40 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
         final result = await repo.addComment(
           claimId: widget.claimId,
           authorId: employeeId,
-          body: text,
+          body: savedText,
         );
 
-        if (result != null && mounted) {
-          setState(() {
-            _comments.add(result);
-            _isSending = false;
-          });
-          _scrollToBottom();
+        if (mounted) {
+          if (result != null) {
+            await _loadData();
+            setState(() => _isSending = false);
+            _scrollToBottom();
+          } else {
+            // Restore the text so user can retry
+            _messageController.text = savedText;
+            setState(() => _isSending = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Failed to send message. Please try again.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
         }
       }
     } catch (e) {
       debugPrint('Error sending message: $e');
-      if (mounted) setState(() => _isSending = false);
+      if (mounted) {
+        // Restore text for retry
+        _messageController.text = savedText;
+        setState(() => _isSending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString().length > 100 ? e.toString().substring(0, 100) : e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -213,12 +289,11 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
       final publicUrl = storageBucket.getPublicUrl(storagePath);
 
       // Save attachment record
-      if (_isTripExpense) {
-        final reqCheck = await supabase.from('requests').select('id').eq('reference_id', widget.claimId).single();
+      if (_isTripExpense && _currentRequestId != null) {
         final response = await supabase
             .from('request_attachments')
             .insert({
-              'request_id': reqCheck['id'],
+              'request_id': _currentRequestId,
               'uploaded_by': employeeId,
               'file_name': p.basename(file.path),
               'file_url': publicUrl,
@@ -435,7 +510,7 @@ class _ExpenseDetailScreenState extends State<ExpenseDetailScreen> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        '₹${widget.amount?.toStringAsFixed(0) ?? '0'}',
+                        '₹${_currentAmount?.toStringAsFixed(0) ?? '0'}',
                         style: const TextStyle(
                           fontSize: 32,
                           fontWeight: FontWeight.w800,

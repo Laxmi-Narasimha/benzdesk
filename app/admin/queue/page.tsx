@@ -42,10 +42,12 @@ export default function AdminQueuePage() {
                 const supabase = getSupabaseClient();
 
                 // Query requests table directly with FRESH_START_DATE filter
+                // Exclude session-related categories so stats match the RequestList below
                 const { data, error } = await supabase
                     .from('requests')
                     .select('status')
-                    .gte('created_at', FRESH_START_DATE);
+                    .gte('created_at', FRESH_START_DATE)
+                    .not('category', 'in', '(expense_claim,travel_allowance,transport_expense)');
 
                 if (data) {
                     // Count by status manually
@@ -155,13 +157,15 @@ export default function AdminQueuePage() {
                 />
             </div>
 
-            {/* Request List - Default to NOT CLOSED (hide closed requests) */}
+            {/* Request List - Default to NOT CLOSED (hide closed requests)
+                Exclude session/field expenses — those live in MobiTraq Field Expenses tab */}
             <RequestList
                 key={currentStatusFilter}
                 showFilters={true}
                 showAssignee={true}
                 defaultStatus={currentStatusFilter}
                 linkPrefix="/admin/request"
+                excludeCategories={['expense_claim', 'travel_allowance', 'transport_expense']}
             />
         </div>
     );

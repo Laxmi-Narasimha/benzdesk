@@ -137,6 +137,7 @@ const statusConfig: Record<RequestStatus, { color: BadgeProps['color']; label: s
     in_progress: { color: 'blue', label: 'In Progress' },
     waiting_on_requester: { color: 'yellow', label: 'Waiting' },
     pending_closure: { color: 'purple', label: 'Pending Closure' },
+    pending_manager_approval: { color: 'orange', label: 'Pending Manager Approval' },
     closed: { color: 'gray', label: 'Closed' },
 };
 
@@ -185,7 +186,7 @@ export function PriorityBadge({ priority, ...props }: PriorityBadgeProps) {
 // ============================================================================
 
 export interface RoleBadgeProps extends Omit<BadgeProps, 'color' | 'children'> {
-    role: 'requester' | 'accounts_admin' | 'director';
+    role: 'requester' | 'accounts_admin' | 'director' | 'sales_manager';
 }
 
 export function RoleBadge({ role, ...props }: RoleBadgeProps) {
@@ -193,6 +194,7 @@ export function RoleBadge({ role, ...props }: RoleBadgeProps) {
         requester: { color: 'gray', label: 'Employee' },
         accounts_admin: { color: 'blue', label: 'Admin' },
         director: { color: 'purple', label: 'Director' },
+        sales_manager: { color: 'orange', label: 'Manager' },
     };
 
     const { color, label } = config[role] || { color: 'gray', label: role };

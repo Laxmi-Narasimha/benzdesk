@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/timeline_engine.dart';
-import '../../core/utils/date_utils.dart';
-import '../../data/models/session_model.dart';
-import '../../data/repositories/location_repository.dart';
-import '../../data/repositories/session_repository.dart';
+import 'package:benzmobitraq_mobile/core/distance_engine.dart';
+import 'package:benzmobitraq_mobile/core/timeline_engine.dart';
+import 'package:benzmobitraq_mobile/core/utils/date_utils.dart';
+import 'package:benzmobitraq_mobile/data/models/session_model.dart';
+import 'package:benzmobitraq_mobile/data/repositories/location_repository.dart';
+import 'package:benzmobitraq_mobile/data/repositories/session_repository.dart';
+import 'package:benzmobitraq_mobile/presentation/widgets/post_session_expense_dialog.dart';
 
 /// My Timeline Screen - Employee's personal timeline view
-/// Shows sessions with expandable details containing stops, moves, and stats
 class MyTimelineScreen extends StatefulWidget {
   const MyTimelineScreen({super.key});
 
@@ -42,9 +44,8 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
   String? _error;
   
   List<SessionTimelineGroup> _sessionGroups = [];
-  Set<String> _expandedSessions = {};
+  final Set<String> _expandedSessions = {};
   double _totalDistanceKm = 0;
-  int _totalStopsCount = 0;
   Duration _totalDuration = Duration.zero;
 
   @override
@@ -67,8 +68,18 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
           : await _sessionRepo.getSessionHistory(limit: 50);
       
       // Filter sessions for selected date (for non-today)
+      // Including cross-day logic: show session if it started on selected date,
+      // ended on selected date, or spans across the selected date.
       final filteredSessions = sessions.where((s) {
-        return DateTimeUtils.isSameDay(s.startTime, _selectedDate);
+        final startSameDay = DateTimeUtils.isSameDay(s.startTime, _selectedDate);
+        final endSameDay = s.endTime != null && DateTimeUtils.isSameDay(s.endTime!, _selectedDate);
+        final spansDay = s.endTime != null && 
+            s.startTime.isBefore(_selectedDate) && 
+            s.endTime!.isAfter(_selectedDate.add(const Duration(days: 1)));
+        final isActiveAndStartedBefore = s.status == SessionStatus.active && 
+            s.startTime.isBefore(_selectedDate.add(const Duration(days: 1)));
+            
+        return startSameDay || endSameDay || spansDay || isActiveAndStartedBefore;
       }).toList();
 
       // Sort by start time (earliest first)
@@ -80,7 +91,6 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
           _isLoading = false;
           _sessionGroups = [];
           _totalDistanceKm = 0;
-          _totalStopsCount = 0;
           _totalDuration = Duration.zero;
         });
         return;
@@ -89,7 +99,6 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
       // Load timeline events for each session
       final groups = <SessionTimelineGroup>[];
       double dayTotalDistance = 0;
-      int dayTotalStops = 0;
       Duration dayTotalDuration = Duration.zero;
 
       for (final session in filteredSessions) {
@@ -114,8 +123,37 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
           }
         }
 
-        // Use session's stored totalKm if available (calculated by database trigger)
-        final actualDistance = session.totalKm > 0 ? session.totalKm : sessionDistance;
+        // Single source of truth: shift_sessions.final_km, locked at
+        // session end (Stage 1 of distance rewrite). Never read
+        // session_rollups for billing/display — that's raw haversine
+        // and is always inflated relative to the device's filtered
+        // total. See docs/DISTANCE_TRACKING_METHODOLOGY.md.
+        double actualDistance = sessionDistance;
+        try {
+          final sessRow = await Supabase.instance.client
+              .from('shift_sessions')
+              .select('final_km, total_km')
+              .eq('id', session.id)
+              .maybeSingle();
+          if (sessRow != null) {
+            final fk = (sessRow['final_km'] as num?)?.toDouble();
+            final tk = (sessRow['total_km'] as num?)?.toDouble();
+            final picked = (fk != null && fk > 0) ? fk : tk;
+            if (picked != null && picked > 0) {
+              actualDistance = picked;
+            }
+          }
+        } catch (_) {
+          // Network down — keep the locally-recalculated estimate.
+          if (points.length >= 2) {
+            final recalculated = DistanceEngine.calculateTotalDistance(points);
+            if (recalculated > 0) {
+              actualDistance = recalculated;
+            }
+          } else if (session.totalKm > 0) {
+            actualDistance = session.totalKm;
+          }
+        }
 
         groups.add(SessionTimelineGroup(
           session: session,
@@ -125,7 +163,6 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
         ));
 
         dayTotalDistance += actualDistance;
-        dayTotalStops += sessionStops;
         dayTotalDuration += session.duration;
       }
 
@@ -134,7 +171,6 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
         _isLoading = false;
         _sessionGroups = groups;
         _totalDistanceKm = dayTotalDistance;
-        _totalStopsCount = dayTotalStops;
         _totalDuration = dayTotalDuration;
       });
     } catch (e) {
@@ -168,6 +204,64 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
         _expandedSessions.add(sessionId);
       }
     });
+  }
+
+  Future<void> _closeSession(SessionModel session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Close Session'),
+        content: Text('Are you sure you want to close Session #${session.id.substring(0, 8)}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Close Session'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final result = await _sessionRepo.stopSession(
+        session.id,
+        null,
+        null,
+        session.totalKm,
+        endTime: DateTime.now(),
+      );
+
+      if (result != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Session closed successfully')),
+          );
+          _loadTimelineData();
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to close session. Please try again.')),
+          );
+          setState(() => _isLoading = false);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error closing session: $e')),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   void _openInMaps(double lat, double lng) async {
@@ -523,6 +617,48 @@ class _MyTimelineScreenState extends State<MyTimelineScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 itemCount: group.events.length,
                 itemBuilder: (context, index) => _buildTimelineEventItem(group.events[index]),
+              ),
+              
+            if (isActive)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _closeSession(session),
+                    icon: const Icon(Icons.stop_circle, color: Colors.white),
+                    label: const Text('Close This Session', style: TextStyle(color: Colors.white)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (!isActive && group.totalDistanceKm > 0)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      PostSessionExpenseDialog.showIfNeeded(context, session, group.totalDistanceKm);
+                    },
+                    icon: const Icon(Icons.local_gas_station),
+                    label: const Text('Log Fuel Expense'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.primary,
+                      side: BorderSide(color: Theme.of(context).colorScheme.primary),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
               ),
           ],
         ],

@@ -11,20 +11,30 @@ import {
     Calendar,
     User,
     Clock,
-    Navigation,
     Route,
     Target,
     Activity,
     Search,
     ChevronRight,
-    Play,
-    Square
+    AlertCircle,
 } from 'lucide-react';
 
 import ErrorBoundary from '@/components/ErrorBoundary';
 
-// Dynamic import for map to prevent SSR issues with Leaflet
-const MapComponent = dynamic(() => import('./MapComponent'), {
+// Map provider switch.
+//
+// NEXT_PUBLIC_MAP_PROVIDER=google  → Google Maps (required to render Roads-API
+//                                    snapped polyline per Google ToS).
+// NEXT_PUBLIC_MAP_PROVIDER=osm     → Legacy Leaflet/OSM (raw GPS only; cannot
+//                                    legally display Google-snapped geometry).
+// Default: google. See docs/MAP_PROVIDER_MIGRATION.md to revert.
+const _mapProvider = (process.env.NEXT_PUBLIC_MAP_PROVIDER ?? 'google').toLowerCase();
+const MapComponent = dynamic(
+    () =>
+        _mapProvider === 'osm'
+            ? import('./MapComponent')
+            : import('./MapComponentGoogle'),
+    {
     ssr: false,
     loading: () => (
         <div className="h-full w-full flex items-center justify-center bg-gray-50 dark:bg-dark-900 text-gray-400">
@@ -55,6 +65,7 @@ interface Session {
     start_time: string;
     end_time: string | null;
     status: string;
+    purpose?: string | null;
 }
 
 interface SessionRollup {
@@ -65,7 +76,17 @@ interface SessionRollup {
 
 interface TimelineEvent {
     id: string;
-    event_type: 'start' | 'end' | 'stop' | 'move';
+    event_type:
+        | 'start'
+        | 'end'
+        | 'stop'
+        | 'move'
+        | 'break_start'
+        | 'break_end'
+        // Synthesised from `session_stops` rows (NOT from the
+        // `timeline_events` table). Carries `kind = 'indoor_walking'`
+        // when the StopDetector classified the stop as inside-a-building.
+        | 'indoor_walking';
     start_time: string;
     end_time: string | null;
     duration_sec: number | null;
@@ -73,6 +94,9 @@ interface TimelineEvent {
     center_lat: number | null;
     center_lng: number | null;
     address: string | null;
+    metadata?: any;
+    /** True for entries sourced from session_stops rather than timeline_events. */
+    fromStopDetector?: boolean;
 }
 
 interface DailyRollup {
@@ -81,6 +105,25 @@ interface DailyRollup {
     session_count: number;
     point_count: number;
 }
+
+interface TrackingAlert {
+    id: string;
+    session_id: string | null;
+    code: string;
+    message: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    created_at: string;
+    resolved_at: string | null;
+}
+
+const TRACKING_ALERT_LABEL: Record<string, { label: string; tone: 'warn' | 'error' | 'info' }> = {
+    location_services_disabled: { label: 'Location turned off', tone: 'error' },
+    location_permission_denied: { label: 'Location permission revoked', tone: 'error' },
+    no_gps_fix_60s: { label: 'GPS could not fix', tone: 'warn' },
+    session_stopped_unexpectedly: { label: 'Session stopped unexpectedly', tone: 'error' },
+    session_ended: { label: 'Session ended', tone: 'info' },
+};
 
 const getIstDateString = (date: Date = new Date()) =>
     date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -111,8 +154,15 @@ export default function TimelinePage() {
     const [rollups, setRollups] = useState<SessionRollup[]>([]);
     const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
     const [dailyRollup, setDailyRollup] = useState<DailyRollup | null>(null);
+    const [trackingAlerts, setTrackingAlerts] = useState<TrackingAlert[]>([]);
+    // Latest 10 sessions for the selected employee across ANY date.
+    // Lets the admin spot a session that exists but landed on a
+    // different day (e.g. crossed midnight, started offline + synced
+    // hours later) without manually scanning every date picker.
+    const [recentSessions, setRecentSessions] = useState<Session[]>([]);
 
     const [mapReady, setMapReady] = useState(false);
+    const [fetchError, setFetchError] = useState<string | null>(null);
 
     // Focused Session logic
     const [focusedSession, setFocusedSession] = useState<string | null>(null);
@@ -216,7 +266,8 @@ export default function TimelinePage() {
 
     const loadTimelineData = useCallback(async () => {
         setDataLoading(true);
-        setFocusedSession(null); // Reset focus on new data load
+        setFetchError(null);
+        setFocusedSession(null);
 
         try {
             const supabase = getSupabaseClient();
@@ -224,50 +275,184 @@ export default function TimelinePage() {
             const startOfDay = `${validDate}T00:00:00+05:30`;
             const endOfDay = `${validDate}T23:59:59+05:30`;
 
-            // Parallel fetch for speed
-            const [sessionsRes, pointsRes, eventsRes] = await Promise.all([
+            // Parallel fetch for speed.
+            //
+            // CRITICAL FIX: Supabase clients enforce a default response cap
+            // of 1000 rows when no .range() is specified. A 4-hour session
+            // with 6-second GPS intervals produces ~2,400 points — the old
+            // code silently dropped everything past row 1000, which is why
+            // the route polyline visibly cut off at ~100km for long trips.
+            // We page through location_points in 1,000-row chunks until
+            // exhausted so the rendered polyline matches reality.
+            const fetchAllPoints = async (): Promise<LocationPoint[]> => {
+                const pageSize = 1000;
+                const all: LocationPoint[] = [];
+                let from = 0;
+                // Hard cap of 50,000 points/day so a misconfigured client
+                // can't accidentally pull millions of rows.
+                const HARD_CAP = 50000;
+                while (from < HARD_CAP) {
+                    const { data, error } = await supabase
+                        .from('location_points')
+                        .select('id, latitude, longitude, recorded_at, speed, accuracy')
+                        .eq('employee_id', selectedEmployee)
+                        .gte('recorded_at', startOfDay)
+                        .lte('recorded_at', endOfDay)
+                        .order('recorded_at', { ascending: true })
+                        .range(from, from + pageSize - 1);
+                    if (error) {
+                        console.error('Error paging location_points:', error);
+                        break;
+                    }
+                    const batch = (data as LocationPoint[]) || [];
+                    all.push(...batch);
+                    if (batch.length < pageSize) break;
+                    from += pageSize;
+                }
+                return all;
+            };
+
+            const [sessionsRes, allPoints, eventsRes, alertsRes, stopsRes] = await Promise.all([
                 supabase
                     .from('shift_sessions')
-                    .select('id, session_name, start_time, end_time, status')
+                    .select('id, session_name, start_time, end_time, status, purpose')
                     .eq('employee_id', selectedEmployee)
                     .gte('start_time', startOfDay)
                     .lte('start_time', endOfDay)
                     .order('start_time', { ascending: true }),
-                supabase
-                    .from('location_points')
-                    .select('id, latitude, longitude, recorded_at, speed, accuracy')
-                    .eq('employee_id', selectedEmployee)
-                    .gte('recorded_at', startOfDay)
-                    .lte('recorded_at', endOfDay)
-                    .order('recorded_at', { ascending: true }),
+                fetchAllPoints(),
                 supabase
                     .from('timeline_events')
-                    .select('*')
+                    .select('*, metadata')
                     .eq('employee_id', selectedEmployee)
                     .gte('start_time', startOfDay)
                     .lte('start_time', endOfDay)
-                    .order('start_time', { ascending: true })
+                    .order('start_time', { ascending: true }),
+                // Tracking-failure events that the mobile client wrote
+                // for this employee on this date. We show them in the
+                // sidebar so the admin can see "what went wrong" without
+                // having to dig through logs.
+                supabase
+                    .from('tracking_alerts')
+                    .select('id, session_id, code, message, latitude, longitude, created_at, resolved_at')
+                    .eq('employee_id', selectedEmployee)
+                    .gte('created_at', startOfDay)
+                    .lte('created_at', endOfDay)
+                    .order('created_at', { ascending: false }),
+                // Stops and indoor-walking segments detected by the
+                // mobile StopDetector. Folded into timelineEvents below
+                // so the existing render path picks them up.
+                supabase
+                    .from('session_stops')
+                    .select('id, session_id, kind, started_at, ended_at, duration_sec, center_lat, center_lng, address, point_count')
+                    .eq('employee_id', selectedEmployee)
+                    .gte('started_at', startOfDay)
+                    .lte('started_at', endOfDay)
+                    .order('started_at', { ascending: true }),
             ]);
 
-            setSessions(sessionsRes.data || []);
-            setPoints(pointsRes.data || []);
-            setTimelineEvents(eventsRes.data || []);
+            if (sessionsRes.error) {
+                console.error('[timeline] sessions error:', sessionsRes.error);
+                setFetchError(`Sessions: ${sessionsRes.error.message}`);
+            }
+            if (eventsRes.error) console.error('[timeline] events error:', eventsRes.error);
+            if (alertsRes.error) console.error('[timeline] alerts error:', alertsRes.error);
+            if (stopsRes.error) console.error('[timeline] stops error:', stopsRes.error);
 
-            // Rollups
+            setSessions(sessionsRes.data || []);
+            setPoints(allPoints);
+
+            // Fold session_stops rows into the timeline event stream so the
+            // existing render path picks them up. We synthesise a
+            // TimelineEvent per stop with event_type='stop' or
+            // 'indoor_walking', tagged with fromStopDetector=true so we
+            // can tell them apart from legacy timeline_events stop rows.
+            const stopRows = (stopsRes.data || []) as Array<{
+                id: string;
+                session_id: string;
+                kind: 'stop' | 'indoor_walking';
+                started_at: string;
+                ended_at: string;
+                duration_sec: number;
+                center_lat: number;
+                center_lng: number;
+                address: string | null;
+                point_count: number;
+            }>;
+            const stopEvents: TimelineEvent[] = stopRows.map((s) => ({
+                id: `stop-${s.id}`,
+                event_type: s.kind,
+                start_time: s.started_at,
+                end_time: s.ended_at,
+                duration_sec: s.duration_sec,
+                distance_km: null,
+                center_lat: s.center_lat,
+                center_lng: s.center_lng,
+                address: s.address,
+                metadata: { source: 'stop_detector', point_count: s.point_count },
+                fromStopDetector: true,
+            }));
+
+            // Merge with timeline_events from the DB and sort chronologically.
+            const merged: TimelineEvent[] = [
+                ...((eventsRes.data || []) as TimelineEvent[]),
+                ...stopEvents,
+            ].sort((a, b) =>
+                new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
+            );
+            setTimelineEvents(merged);
+            setTrackingAlerts((alertsRes.data as TrackingAlert[] | null) || []);
+
+            // Fallback: pull the most recent 10 sessions for this
+            // employee across ANY date. If a session is missing from
+            // the day-view above (cross-midnight session, offline-
+            // synced session landed on a different IST day, etc.)
+            // the admin can still find it here in one click.
+            try {
+                const { data: recent } = await supabase
+                    .from('shift_sessions')
+                    .select(
+                        'id, session_name, start_time, end_time, status, purpose'
+                    )
+                    .eq('employee_id', selectedEmployee)
+                    .order('start_time', { ascending: false })
+                    .limit(10);
+                setRecentSessions((recent as Session[] | null) || []);
+            } catch (e) {
+                console.warn('Recent-sessions fallback fetch failed:', e);
+                setRecentSessions([]);
+            }
+
+            // Per-session billing distance. We deliberately read
+            // shift_sessions.final_km (the device-filtered total locked at
+            // session end, or Roads-API-verified once the finalizer runs)
+            // and NOT session_rollups.distance_km (raw haversine, always
+            // inflated). This is Stage 1 of the distance rewrite — see
+            // docs/DISTANCE_TRACKING_METHODOLOGY.md.
             if (sessionsRes.data && sessionsRes.data.length > 0) {
                 const sessionIds = sessionsRes.data.map((s) => s.id);
-                const { data: rollupsData } = await supabase
-                    .from('session_rollups')
-                    .select('session_id, distance_km, point_count')
-                    .in('session_id', sessionIds);
-                setRollups(rollupsData || []);
+                const { data: kmRows } = await supabase
+                    .from('shift_sessions')
+                    .select('id, final_km, total_km')
+                    .in('id', sessionIds);
+                // Shape into the legacy {session_id, distance_km, point_count}
+                // structure that the rest of the page expects, so nothing
+                // else has to change.
+                const shaped = (kmRows ?? []).map((r) => {
+                    const fk = (r as any).final_km as number | null;
+                    const tk = (r as any).total_km as number | null;
+                    const km = fk != null && fk > 0 ? fk : (tk ?? 0);
+                    return { session_id: (r as any).id, distance_km: km, point_count: 0 };
+                });
+                setRollups(shaped);
             } else {
                 setRollups([]);
             }
 
             setDailyRollup(null);
-        } catch (error) {
-            console.error('Error loading timeline data:', error);
+        } catch (error: any) {
+            console.error('[timeline] unexpected error:', error);
+            setFetchError(error?.message || String(error));
         } finally {
             setDataLoading(false);
         }
@@ -280,17 +465,30 @@ export default function TimelinePage() {
     }, [selectedEmployee, selectedDate, loadTimelineData]);
 
     // Map Configuration
+    //
+    // NOTE: a naive `Math.min(...lats)` blows the JS argument-count limit
+    // (~64k on V8) for very long sessions. We compute the bounding box
+    // in a single linear pass so we stay safe up to the 50k point cap.
     const mapConfig = useMemo(() => {
         if (points.length === 0) return { center: [20.5937, 78.9629] as [number, number], zoom: 5 };
-        const lats = points.map((p) => p.latitude);
-        const lngs = points.map((p) => p.longitude);
-        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-        const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+        let minLat = points[0].latitude;
+        let maxLat = points[0].latitude;
+        let minLng = points[0].longitude;
+        let maxLng = points[0].longitude;
+        for (let i = 1; i < points.length; i++) {
+            const lat = points[i].latitude;
+            const lng = points[i].longitude;
+            if (lat < minLat) minLat = lat;
+            else if (lat > maxLat) maxLat = lat;
+            if (lng < minLng) minLng = lng;
+            else if (lng > maxLng) maxLng = lng;
+        }
         const centerLat = (minLat + maxLat) / 2;
         const centerLng = (minLng + maxLng) / 2;
         const maxSpan = Math.max(maxLat - minLat, maxLng - minLng);
         let zoom = 15;
-        if (maxSpan > 0.5) zoom = 10;
+        if (maxSpan > 2) zoom = 8;
+        else if (maxSpan > 0.5) zoom = 10;
         else if (maxSpan > 0.1) zoom = 12;
         else if (maxSpan > 0.05) zoom = 13;
         else if (maxSpan > 0.01) zoom = 14;
@@ -358,8 +556,39 @@ export default function TimelinePage() {
         return { center: [centerLat, centerLng] as [number, number], zoom };
     }, [filteredPoints]);
 
-    const filteredRoutePositions = useMemo(() => filteredPoints.map((p) => [p.latitude, p.longitude] as [number, number]), [filteredPoints]);
-    const routePositions = useMemo(() => points.map((p) => [p.latitude, p.longitude] as [number, number]), [points]);
+    // Decimate the polyline if we have more than 3,000 points so Leaflet
+    // doesn't choke trying to draw every vertex. Visually 3,000 points is
+    // more than enough fidelity for any zoom level a human can read. We
+    // always keep the first and last point so the start/end markers line
+    // up exactly with the route.
+    const decimate = (
+        arr: LocationPoint[],
+        maxPts: number,
+    ): [number, number][] => {
+        if (arr.length <= maxPts) {
+            return arr.map((p) => [p.latitude, p.longitude] as [number, number]);
+        }
+        const step = arr.length / maxPts;
+        const result: [number, number][] = [];
+        for (let i = 0; i < maxPts; i++) {
+            const idx = Math.min(Math.floor(i * step), arr.length - 1);
+            const p = arr[idx];
+            result.push([p.latitude, p.longitude]);
+        }
+        // Always preserve the exact endpoint.
+        const last = arr[arr.length - 1];
+        result.push([last.latitude, last.longitude]);
+        return result;
+    };
+
+    const filteredRoutePositions = useMemo(
+        () => decimate(filteredPoints, 3000),
+        [filteredPoints],
+    );
+    const routePositions = useMemo(
+        () => decimate(points, 3000),
+        [points],
+    );
 
     const stats = useMemo(() => {
         const totalKm = dailyRollup?.distance_km || rollups.reduce((sum, r) => sum + r.distance_km, 0);
@@ -449,6 +678,18 @@ export default function TimelinePage() {
                 />
             </div>
 
+            {/* Error Banner */}
+            {fetchError && (
+                <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 shrink-0">
+                    <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-500" />
+                    <div>
+                        <p className="font-semibold">Failed to load timeline data</p>
+                        <p className="text-sm mt-1">{fetchError}</p>
+                        <p className="text-xs mt-2 text-red-600">Open browser console (F12) for full details.</p>
+                    </div>
+                </div>
+            )}
+
             {/* Main Content Grid */}
             <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
                 {/* Left Sidebar - Sessions List */}
@@ -502,13 +743,18 @@ export default function TimelinePage() {
                                                 `}>
                                                     #{idx + 1}
                                                 </div>
-                                                <div>
+                                                <div className="min-w-0">
                                                     <h4 className={`font-semibold ${isFocused ? 'text-primary-700' : 'text-slate-900'}`}>
-                                                        {session.session_name || 'Regular Session'}
+                                                        {session.purpose || session.session_name || 'Regular Session'}
                                                     </h4>
                                                     <span className={`text-xs ${isFocused ? 'text-primary-600/80' : 'text-gray-500'}`}>
                                                         {formatTime(session.start_time)} - {session.end_time ? formatTime(session.end_time) : 'Active'}
                                                     </span>
+                                                    {session.purpose && session.session_name && (
+                                                        <div className="text-[11px] text-gray-400 italic truncate mt-0.5">
+                                                            {session.session_name}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                             <ChevronRight className={`w-5 h-5 transition-transform ${isFocused ? 'rotate-90 text-primary-500' : 'text-gray-400'}`} />
@@ -588,6 +834,107 @@ export default function TimelinePage() {
                         )}
                     </div>
 
+                    {/* Recent-sessions fallback (any date). Surfaces
+                        sessions that exist on the server but didn't
+                        land on the currently selected date — common
+                        when a session crossed midnight, or when an
+                        offline session synced hours after end and
+                        ended up timestamped on a different IST day.
+                        Click any row to jump to that day's view. */}
+                    {recentSessions.length > 0 && (
+                        <div className="bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 overflow-hidden flex flex-col shadow-sm">
+                            <div className="px-5 py-3 border-b border-gray-100 dark:border-dark-700 bg-gray-50/50 dark:bg-dark-800/50 flex justify-between items-center">
+                                <h3 className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                                    <Clock className="w-4 h-4 text-primary-500" />
+                                    Recent sessions (any date)
+                                </h3>
+                                <Badge variant="subtle" color="gray" size="sm">{recentSessions.length}</Badge>
+                            </div>
+                            <div className="max-h-[220px] overflow-y-auto p-3 scrollbar-thin space-y-1.5">
+                                {recentSessions.map((s) => {
+                                    const dayIst = new Date(s.start_time).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+                                    const isOnSelectedDay = dayIst === selectedDate;
+                                    return (
+                                        <button
+                                            key={s.id}
+                                            type="button"
+                                            onClick={() => setSelectedDate(dayIst)}
+                                            className={`w-full text-left flex items-center justify-between gap-3 px-3 py-2 rounded-lg border ${isOnSelectedDay ? 'border-primary-300 bg-primary-50/40 dark:bg-primary-900/20' : 'border-gray-100 dark:border-dark-700 hover:bg-gray-50 dark:hover:bg-dark-700/40'} transition-colors`}
+                                        >
+                                            <div className="min-w-0">
+                                                <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                                                    {s.purpose || s.session_name || 'Regular Session'}
+                                                </div>
+                                                <div className="text-[11px] text-gray-500 font-mono">
+                                                    {dayIst} · {formatTime(s.start_time)}
+                                                    {s.end_time ? ` → ${formatTime(s.end_time)}` : ' · Active'}
+                                                </div>
+                                            </div>
+                                            <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Tracking issue log — populated by the mobile
+                        client whenever the user's tracking is interrupted
+                        (location turned off, permission revoked, GPS not
+                        fixing, session ended unexpectedly, etc.). The
+                        admin needs a single place to see WHY a session
+                        looks broken without digging through device logs. */}
+                    {trackingAlerts.length > 0 && (
+                        <div className="bg-white dark:bg-dark-800 rounded-2xl border border-amber-200 dark:border-amber-900/30 overflow-hidden flex flex-col shadow-sm">
+                            <div className="px-5 py-3 border-b border-amber-100 dark:border-amber-900/30 bg-amber-50/60 dark:bg-amber-950/20 flex justify-between items-center">
+                                <h3 className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                                    <Activity className="w-4 h-4 text-amber-600" />
+                                    Tracking Issues
+                                </h3>
+                                <Badge variant="subtle" color="orange" size="sm">{trackingAlerts.length}</Badge>
+                            </div>
+                            <div className="max-h-[260px] overflow-y-auto p-3 scrollbar-thin space-y-2">
+                                {trackingAlerts.map((alert) => {
+                                    const meta = TRACKING_ALERT_LABEL[alert.code] ?? { label: alert.code, tone: 'warn' as const };
+                                    const dotColor =
+                                        meta.tone === 'error'
+                                            ? 'bg-red-500'
+                                            : meta.tone === 'warn'
+                                                ? 'bg-amber-500'
+                                                : 'bg-blue-500';
+                                    return (
+                                        <div
+                                            key={alert.id}
+                                            className="flex gap-3 items-start px-3 py-2 rounded-lg border border-gray-100 dark:border-dark-700 hover:bg-gray-50 dark:hover:bg-dark-700/40 transition-colors"
+                                        >
+                                            <span className={`mt-1.5 inline-block w-2.5 h-2.5 rounded-full ${dotColor}`} />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                                                        {meta.label}
+                                                    </p>
+                                                    <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                                                        {formatTime(alert.created_at)}
+                                                    </span>
+                                                </div>
+                                                {alert.message && (
+                                                    <p className="text-xs text-gray-600 dark:text-gray-300 mt-0.5 break-words">
+                                                        {alert.message}
+                                                    </p>
+                                                )}
+                                                {(alert.latitude != null && alert.longitude != null) && (
+                                                    <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 font-mono">
+                                                        {alert.latitude.toFixed(5)}, {alert.longitude.toFixed(5)}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Timeline Events Log */}
                     <div className="h-1/3 min-h-[250px] bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 overflow-hidden flex flex-col shadow-sm">
                         <div className="px-5 py-3 border-b border-gray-100 dark:border-dark-700 bg-gray-50/50 dark:bg-dark-800/50 flex justify-between items-center">
@@ -602,17 +949,45 @@ export default function TimelinePage() {
                                 <p className="text-center text-gray-500 py-10 text-sm">No events recorded yet</p>
                             ) : (
                                 <div className="max-w-3xl">
-                                    {filteredEvents.map((event, i) => (
-                                        <TimelineItem
-                                            key={event.id}
-                                            type={event.event_type}
-                                            title={event.event_type === 'start' ? 'Details Started' : event.event_type === 'end' ? 'Session Ended' : event.event_type === 'stop' ? 'Stopped' : 'Moving'}
-                                            subtitle={event.event_type === 'stop' && event.duration_sec ? `${formatDuration(event.duration_sec / 60)}` : undefined}
-                                            time={formatTime(event.start_time)}
-                                            address={event.address}
-                                            isLast={i === filteredEvents.length - 1}
-                                        />
-                                    ))}
+                                    {filteredEvents.map((event, i) => {
+                                        const titleMap: Record<TimelineEvent['event_type'], string> = {
+                                            start: 'Session started',
+                                            end: 'Session ended',
+                                            stop: 'Stopped',
+                                            move: 'Moving',
+                                            break_start: 'Paused',
+                                            break_end: 'Resumed',
+                                            indoor_walking: 'Walking inside building',
+                                        };
+                                        const reason = event.metadata?.reason as string | undefined;
+                                        const reasonLabel = reason ? ` (${reason.replace(/_/g, ' ')})` : '';
+                                        // TimelineItem's prop only accepts the legacy event set.
+                                        // Map our synthetic 'indoor_walking' onto 'stop' for the
+                                        // visual marker; the distinct title above already tells
+                                        // the admin what's different.
+                                        const visualType: 'start' | 'end' | 'stop' | 'move' | 'break_start' | 'break_end' =
+                                            event.event_type === 'indoor_walking' ? 'stop' : event.event_type;
+                                        const isStopLike = event.event_type === 'stop' || event.event_type === 'indoor_walking';
+                                        return (
+                                            <TimelineItem
+                                                key={event.id}
+                                                type={visualType}
+                                                title={titleMap[event.event_type] ?? 'Event'}
+                                                subtitle={
+                                                    isStopLike && event.duration_sec
+                                                        ? `${formatDuration(event.duration_sec / 60)}`
+                                                        : event.event_type === 'break_end' && event.duration_sec
+                                                            ? `${formatDuration(event.duration_sec / 60)} on break${reasonLabel}`
+                                                            : (event.event_type === 'break_start' || event.event_type === 'break_end')
+                                                                ? reasonLabel.trim()
+                                                                : undefined
+                                                }
+                                                time={formatTime(event.start_time)}
+                                                address={event.address}
+                                                isLast={i === filteredEvents.length - 1}
+                                            />
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>

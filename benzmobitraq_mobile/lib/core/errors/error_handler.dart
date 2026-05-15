@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+
 import 'package:logger/logger.dart';
 
 /// Centralized error handling for industry-grade reliability

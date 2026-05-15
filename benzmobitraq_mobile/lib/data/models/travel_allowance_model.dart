@@ -1,3 +1,5 @@
+import 'employee_model.dart';
+
 // Travel allowance limits based on employee grade
 // Based on BENZ Packaging Travel Policy (Updated Feb 2026)
 
@@ -291,8 +293,9 @@ class TravelAllowanceLimits {
     required EmployeeGrade grade,
     required String category,
     required double amount,
+    EmployeeModel? employee,
   }) {
-    double limit = getLimitForCategory(grade: grade, category: category) ?? -1;
+    double limit = getLimitForCategory(grade: grade, category: category, employee: employee) ?? -1;
     if (limit < 0) return false; // -1 means actuals accepted
     return amount > limit;
   }
@@ -302,12 +305,13 @@ class TravelAllowanceLimits {
     required EmployeeGrade grade,
     required String category,
     required double amount,
+    EmployeeModel? employee,
   }) {
-    if (!exceedsLimit(grade: grade, category: category, amount: amount)) {
+    if (!exceedsLimit(grade: grade, category: category, amount: amount, employee: employee)) {
       return null;
     }
 
-    double? limit = getLimitForCategory(grade: grade, category: category);
+    double? limit = getLimitForCategory(grade: grade, category: category, employee: employee);
     if (limit == null || limit < 0) return null;
 
     String limitType = _getLimitTypeForCategory(category);
@@ -346,6 +350,7 @@ class TravelAllowanceLimits {
   static double? getLimitForCategory({
     required EmployeeGrade grade,
     required String category,
+    EmployeeModel? employee,
   }) {
     final lowered = category.toLowerCase();
     
@@ -357,6 +362,9 @@ class TravelAllowanceLimits {
     
     // Food DA
     if (lowered == 'food_da') {
+      if (employee != null && employee.dailyAllowance != null && employee.dailyAllowance! > 0) {
+        return employee.dailyAllowance;
+      }
       return getFoodDailyLimit(grade);
     }
     
@@ -382,8 +390,9 @@ class TravelAllowanceLimits {
   static String getLimitInfoText({
     required EmployeeGrade grade,
     required String category,
+    EmployeeModel? employee,
   }) {
-    final limit = getLimitForCategory(grade: grade, category: category);
+    final limit = getLimitForCategory(grade: grade, category: category, employee: employee);
     
     if (limit == null) {
       return 'Actuals with bill for ${grade.bandName}';
@@ -403,8 +412,9 @@ class TravelAllowanceLimits {
     required EmployeeGrade grade,
     required String category,
     required double alreadySpent,
+    EmployeeModel? employee,
   }) {
-    final limit = getLimitForCategory(grade: grade, category: category);
+    final limit = getLimitForCategory(grade: grade, category: category, employee: employee);
     if (limit == null) return double.infinity;
     return (limit - alreadySpent).clamp(0, limit);
   }
@@ -415,8 +425,9 @@ class TravelAllowanceLimits {
     required String category,
     required double amount,
     required double alreadySpentToday,
+    EmployeeModel? employee,
   }) {
-    final limit = getLimitForCategory(grade: grade, category: category);
+    final limit = getLimitForCategory(grade: grade, category: category, employee: employee);
     if (limit == null) return null; // No limit
     
     final totalToday = alreadySpentToday + amount;

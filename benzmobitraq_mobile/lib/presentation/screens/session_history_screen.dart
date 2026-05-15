@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
-import '../../data/models/session_model.dart';
-import '../../core/utils/date_utils.dart';
-import '../blocs/session/session_bloc.dart';
-import '../widgets/stats_card.dart';
-import '../widgets/app_bottom_nav_bar.dart';
-import '../widgets/post_session_expense_dialog.dart';
+import 'package:benzmobitraq_mobile/data/models/session_model.dart';
+import 'package:benzmobitraq_mobile/core/utils/date_utils.dart';
+import 'package:benzmobitraq_mobile/presentation/blocs/session/session_bloc.dart';
+
+
+import 'package:benzmobitraq_mobile/presentation/widgets/post_session_expense_dialog.dart';
 
 /// Screen showing session history with distance and duration
 class SessionHistoryScreen extends StatefulWidget {
@@ -67,20 +67,20 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
           Icon(
             Icons.history,
             size: 80,
-            color: Theme.of(context).colorScheme.outline.withOpacity(0.3),
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
           ),
           const SizedBox(height: 16),
           Text(
             'No sessions yet',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
             ),
           ),
           const SizedBox(height: 8),
           Text(
             'Your work sessions will appear here',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4),
             ),
           ),
         ],
@@ -131,7 +131,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
     double totalKm = 0;
     Duration totalDuration = Duration.zero;
     for (final session in sessions) {
-      totalKm += session.totalKm;
+      totalKm += session.billedKm;
       if (session.endTime != null) {
         totalDuration += session.endTime!.difference(session.startTime);
       }
@@ -143,7 +143,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
         // Date header with summary
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
           child: Row(
             children: [
               Text(
@@ -158,7 +158,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -226,13 +226,13 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isActive 
-              ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
-              : Theme.of(context).colorScheme.outline.withOpacity(0.1),
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.5)
+              : Theme.of(context).colorScheme.outline.withValues(alpha: 0.1),
           width: isActive ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -257,7 +257,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                         Icon(
                           Icons.schedule,
                           size: 16,
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
                         ),
                         const SizedBox(width: 6),
                         Text(
@@ -274,7 +274,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.1),
+                          color: Colors.green.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
@@ -311,7 +311,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                     Expanded(
                       child: _buildStat(
                         icon: Icons.route,
-                        value: '${session.totalKm.toStringAsFixed(2)} km',
+                        value: '${session.billedKm.toStringAsFixed(2)} km',
                         label: 'Distance',
                         color: Theme.of(context).colorScheme.primary,
                       ),
@@ -319,7 +319,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                     Container(
                       width: 1,
                       height: 40,
-                      color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+                      color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.1),
                     ),
                     // Duration
                     Expanded(
@@ -354,13 +354,13 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
                       ),
                     ),
                   ),
-                ] else if (session.totalKm > 0.1) ...[
+                ] else if (session.billedKm > 0.1) ...[
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: () {
-                        PostSessionExpenseDialog.showIfNeeded(context, session, session.totalKm);
+                        PostSessionExpenseDialog.showIfNeeded(context, session, session.billedKm);
                       },
                       icon: const Icon(Icons.local_gas_station),
                       label: const Text('Log Fuel Expense'),
@@ -402,7 +402,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
         Text(
           label,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
           ),
         ),
       ],
@@ -525,7 +525,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
               // Distance
               _buildDetailRow(
                 'Distance',
-                '${session.totalKm.toStringAsFixed(2)} km',
+                '${session.billedKm.toStringAsFixed(2)} km',
               ),
               
               // Duration
@@ -582,7 +582,7 @@ class _SessionHistoryScreenState extends State<SessionHistoryScreen> {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
               ),
             ),
           ),

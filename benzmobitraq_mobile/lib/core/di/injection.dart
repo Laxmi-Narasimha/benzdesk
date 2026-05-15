@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -40,6 +41,11 @@ Future<void> configureDependencies() async {
   // LOCAL DATA SOURCES
   // ============================================================
   
+  // Global navigation key for deep linking from notifications
+  getIt.registerLazySingleton<GlobalKey<NavigatorState>>(
+    () => GlobalKey<NavigatorState>(),
+  );
+
   getIt.registerLazySingleton<PreferencesLocal>(
     () => PreferencesLocal(),
   );

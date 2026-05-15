@@ -403,7 +403,24 @@ enum ExpenseCategory {
   mobileInternet('mobile_internet'),
   stationary('stationary'),
   medical('medical'),
-  other('other');
+  other('other'),
+  
+  // New mapped categories
+  foodDa('food_da'),
+  hotel('hotel'),
+  localTravel('local_travel'),
+  fuelCar('fuel_car'),
+  fuelBike('fuel_bike'),
+  laundry('laundry'),
+  expenseReimbursement('expense_reimbursement'),
+  salaryPayrollQuery('salary_payroll_query'),
+  bankAccountUpdate('bank_account_update'),
+  purchaseOrderQuery('purchase_order_query'),
+  deliveryChallan('delivery_challan'),
+  invoiceQuery('invoice_query'),
+  vendorPaymentStatus('vendor_payment_status'),
+  gstTaxQuery('gst_tax_query'),
+  otherQuery('other_query');
 
   final String value;
 
@@ -444,6 +461,36 @@ enum ExpenseCategory {
         return 'Medical';
       case ExpenseCategory.other:
         return 'Other';
+      case ExpenseCategory.foodDa:
+        return 'Food DA';
+      case ExpenseCategory.hotel:
+        return 'Hotel';
+      case ExpenseCategory.localTravel:
+        return 'Local Travel';
+      case ExpenseCategory.fuelCar:
+        return 'Fuel - Car';
+      case ExpenseCategory.fuelBike:
+        return 'Fuel - Bike';
+      case ExpenseCategory.laundry:
+        return 'Laundry';
+      case ExpenseCategory.expenseReimbursement:
+        return 'Expense Reimbursement';
+      case ExpenseCategory.salaryPayrollQuery:
+        return 'Salary / Payroll Query';
+      case ExpenseCategory.bankAccountUpdate:
+        return 'Bank Account Update';
+      case ExpenseCategory.purchaseOrderQuery:
+        return 'Purchase Order Query';
+      case ExpenseCategory.deliveryChallan:
+        return 'Delivery Challan';
+      case ExpenseCategory.invoiceQuery:
+        return 'Invoice Query';
+      case ExpenseCategory.vendorPaymentStatus:
+        return 'Vendor Payment Status';
+      case ExpenseCategory.gstTaxQuery:
+        return 'GST / Tax Query';
+      case ExpenseCategory.otherQuery:
+        return 'Other Query';
     }
   }
 
@@ -475,6 +522,36 @@ enum ExpenseCategory {
         return '🏥';
       case ExpenseCategory.other:
         return '📋';
+      case ExpenseCategory.foodDa:
+        return '🍽️';
+      case ExpenseCategory.hotel:
+        return '🏨';
+      case ExpenseCategory.localTravel:
+        return '🚗';
+      case ExpenseCategory.fuelCar:
+        return '⛽';
+      case ExpenseCategory.fuelBike:
+        return '🏍️';
+      case ExpenseCategory.laundry:
+        return '👔';
+      case ExpenseCategory.expenseReimbursement:
+        return '🧾';
+      case ExpenseCategory.salaryPayrollQuery:
+        return '💵';
+      case ExpenseCategory.bankAccountUpdate:
+        return '🏦';
+      case ExpenseCategory.purchaseOrderQuery:
+        return '🛒';
+      case ExpenseCategory.deliveryChallan:
+        return '📦';
+      case ExpenseCategory.invoiceQuery:
+        return '🧾';
+      case ExpenseCategory.vendorPaymentStatus:
+        return '🏢';
+      case ExpenseCategory.gstTaxQuery:
+        return '⚖️';
+      case ExpenseCategory.otherQuery:
+        return '❓';
     }
   }
 }

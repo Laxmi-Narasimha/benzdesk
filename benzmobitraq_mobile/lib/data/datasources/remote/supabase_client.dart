@@ -1,11 +1,11 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:logger/logger.dart';
 
-import '../../models/employee_model.dart';
-import '../../models/session_model.dart';
-import '../../models/location_point_model.dart';
-import '../../models/notification_model.dart';
-import '../../models/expense_model.dart';
+import 'package:benzmobitraq_mobile/data/models/employee_model.dart';
+import 'package:benzmobitraq_mobile/data/models/session_model.dart';
+import 'package:benzmobitraq_mobile/data/models/location_point_model.dart';
+import 'package:benzmobitraq_mobile/data/models/notification_model.dart';
+import 'package:benzmobitraq_mobile/data/models/expense_model.dart';
 
 /// Remote data source for Supabase operations
 class SupabaseDataSource {
@@ -23,11 +23,8 @@ class SupabaseDataSource {
 
   /// Get employee by ID
   Future<EmployeeModel?> getEmployee(String id) async {
-    final response = await _client
-        .from('employees')
-        .select()
-        .eq('id', id)
-        .maybeSingle();
+    final response =
+        await _client.from('employees').select().eq('id', id).maybeSingle();
 
     if (response == null) return null;
     return EmployeeModel.fromJson(response);
@@ -46,13 +43,10 @@ class SupabaseDataSource {
 
   /// Update device token for push notifications
   Future<void> updateDeviceToken(String employeeId, String token) async {
-    await _client
-        .from('employees')
-        .update({
-          'device_token': token,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', employeeId);
+    await _client.from('employees').update({
+      'device_token': token,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', employeeId);
   }
 
   /// Get all employees (admin only)
@@ -63,9 +57,7 @@ class SupabaseDataSource {
         .eq('is_active', true)
         .order('name');
 
-    return (response as List)
-        .map((e) => EmployeeModel.fromJson(e))
-        .toList();
+    return (response as List).map((e) => EmployeeModel.fromJson(e)).toList();
   }
 
   // ============================================================
@@ -108,7 +100,17 @@ class SupabaseDataSource {
     return SessionModel.fromJson(response);
   }
 
-  /// End a work session
+  /// End a work session.
+  ///
+  /// Writes the device-calculated authoritative distance to BOTH:
+  ///   - total_km  (legacy; admin views still read this)
+  ///   - final_km  (new authoritative billing field, locked from triggers)
+  ///   - estimated_km (preserved alongside final_km — final_km may be later
+  ///                   overwritten by Roads API verification; estimated_km
+  ///                   keeps the original device value for audit)
+  ///
+  /// Also persists confidence + reason_codes computed from GPS quality at
+  /// session end. See docs/DISTANCE_TRACKING_METHODOLOGY.md.
   Future<SessionModel> endSession({
     required String sessionId,
     required double totalKm,
@@ -116,19 +118,33 @@ class SupabaseDataSource {
     double? endLongitude,
     String? endAddress,
     DateTime? endTime,
+    int? totalPausedSeconds,
+    String? confidence,
+    List<String>? reasonCodes,
+    String distanceSource = 'device_gps_filtered',
   }) async {
     final effectiveEndTime = (endTime ?? DateTime.now()).toUtc();
+    final now = DateTime.now().toUtc().toIso8601String();
+
+    final payload = <String, dynamic>{
+      'end_time': effectiveEndTime.toIso8601String(),
+      'end_latitude': endLatitude,
+      'end_longitude': endLongitude,
+      'end_address': endAddress,
+      'total_km': totalKm,
+      'estimated_km': totalKm,
+      'final_km': totalKm,
+      'distance_source': distanceSource,
+      'confidence': confidence ?? 'medium',
+      'reason_codes': reasonCodes ?? const <String>[],
+      'finalized_at': now,
+      'status': 'completed',
+      'updated_at': now,
+    };
+
     final response = await _client
         .from('shift_sessions')
-        .update({
-          'end_time': effectiveEndTime.toIso8601String(),
-          'end_latitude': endLatitude,
-          'end_longitude': endLongitude,
-          'end_address': endAddress,
-          'total_km': totalKm,
-          'status': 'completed',
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
+        .update(payload)
         .eq('id', sessionId)
         .select()
         .single();
@@ -138,13 +154,33 @@ class SupabaseDataSource {
 
   /// Update session km
   Future<void> updateSessionKm(String sessionId, double totalKm) async {
-    await _client
-        .from('shift_sessions')
-        .update({
-          'total_km': totalKm,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', sessionId);
+    await _client.from('shift_sessions').update({
+      'total_km': totalKm,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', sessionId);
+  }
+
+  /// Update session status (pause/resume)
+  ///
+  /// Until the DB migration adds paused_at / resumed_at /
+  /// total_paused_seconds + expands the status CHECK constraint to include
+  /// 'paused', we keep the DB status as 'active' during pauses and only
+  /// write the resume transition (status → 'active').  Pause state is
+  /// tracked locally by the BLoC; this prevents silent UPDATE failures.
+  Future<void> updateSessionStatus(
+    String sessionId,
+    String status, {
+    DateTime? pausedAt,
+    DateTime? resumedAt,
+    int? totalPausedSeconds,
+  }) async {
+    // 'paused' is not in the DB CHECK constraint yet — skip DB write.
+    if (status == 'paused') return;
+
+    await _client.from('shift_sessions').update({
+      'status': status,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', sessionId);
   }
 
   /// Get sessions for employee (with pagination)
@@ -160,9 +196,7 @@ class SupabaseDataSource {
         .order('start_time', ascending: false)
         .range(offset, offset + limit - 1);
 
-    return (response as List)
-        .map((e) => SessionModel.fromJson(e))
-        .toList();
+    return (response as List).map((e) => SessionModel.fromJson(e)).toList();
   }
 
   /// Get today's sessions for employee
@@ -179,16 +213,16 @@ class SupabaseDataSource {
         .lt('start_time', endOfDay.toUtc().toIso8601String())
         .order('start_time', ascending: false);
 
-    return (response as List)
-        .map((e) => SessionModel.fromJson(e))
-        .toList();
+    return (response as List).map((e) => SessionModel.fromJson(e)).toList();
   }
 
   /// Get sessions for a specific date for employee
-  Future<List<SessionModel>> getSessionsForDate(String employeeId, DateTime date) async {
+  Future<List<SessionModel>> getSessionsForDate(
+      String employeeId, DateTime date) async {
     // Use IST day boundaries but query in UTC (TIMESTAMPTZ-safe)
     const istOffset = Duration(hours: 5, minutes: 30);
-    final startOfDayUtc = DateTime.utc(date.year, date.month, date.day).subtract(istOffset);
+    final startOfDayUtc =
+        DateTime.utc(date.year, date.month, date.day).subtract(istOffset);
     final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
 
     final response = await _client
@@ -199,9 +233,7 @@ class SupabaseDataSource {
         .lt('start_time', endOfDayUtc.toIso8601String())
         .order('start_time', ascending: true);
 
-    return (response as List)
-        .map((e) => SessionModel.fromJson(e))
-        .toList();
+    return (response as List).map((e) => SessionModel.fromJson(e)).toList();
   }
 
   /// Get sessions for current month (stats)
@@ -217,9 +249,7 @@ class SupabaseDataSource {
         .gte('start_time', startOfMonth.toUtc().toIso8601String())
         .lt('start_time', endOfMonth.toUtc().toIso8601String());
 
-    return (response as List)
-        .map((e) => SessionModel.fromJson(e))
-        .toList();
+    return (response as List).map((e) => SessionModel.fromJson(e)).toList();
   }
 
   // ============================================================
@@ -232,64 +262,79 @@ class SupabaseDataSource {
 
     try {
       final data = points.map((p) => p.toJson()).toList();
-      
+
       // Enhanced diagnostic logging
-      _logger.i('SYNC DIAGNOSTIC: Attempting upload of ${points.length} points...');
+      _logger.i(
+          'SYNC DIAGNOSTIC: Attempting upload of ${points.length} points...');
       _logger.d('SYNC: Session: ${points.first.sessionId}');
       _logger.d('SYNC: Employee: ${points.first.employeeId}');
       _logger.d('SYNC: Auth UID: $currentUserId');
       _logger.d('SYNC: Hash: ${data.first['hash']}');
-      
+
       // Verify employee_id matches auth.uid (RLS requirement)
       if (points.first.employeeId != currentUserId) {
-        _logger.e('SYNC WARNING: employee_id (${points.first.employeeId}) != auth.uid ($currentUserId)');
+        _logger.e(
+            'SYNC WARNING: employee_id (${points.first.employeeId}) != auth.uid ($currentUserId)');
       }
-      
+
       try {
         // Try upsert first (idempotent)
         await _client.from('location_points').upsert(data, onConflict: 'hash');
-        _logger.i('SYNC: Successfully uploaded ${points.length} points via upsert');
+        _logger.i(
+            'SYNC: Successfully uploaded ${points.length} points via upsert');
       } catch (upsertError) {
         _logger.w('SYNC: Upsert failed, trying insert: $upsertError');
-        
+
         // Fallback to insert (handles case where hash column issue)
         try {
           await _client.from('location_points').insert(data);
-          _logger.i('SYNC: Successfully uploaded ${points.length} points via insert');
+          _logger.i(
+              'SYNC: Successfully uploaded ${points.length} points via insert');
         } catch (insertError) {
           // If insert fails due to schema drift (missing columns), retry with a sanitized payload.
           final msg = insertError.toString().toLowerCase();
           if (msg.contains('column') &&
-              (msg.contains('hash') || msg.contains('provider') || msg.contains('address'))) {
-            _logger.w('SYNC: Insert failed due to missing columns. Retrying with sanitized payload...');
+              (msg.contains('hash') ||
+                  msg.contains('provider') ||
+                  msg.contains('address') ||
+                  msg.contains('counts_for_distance') ||
+                  msg.contains('distance_delta_m'))) {
+            _logger.w(
+                'SYNC: Insert failed due to missing columns. Retrying with sanitized payload...');
 
             final sanitized = data.map((row) {
               final copy = Map<String, dynamic>.from(row);
               copy.remove('hash');
               copy.remove('provider');
               copy.remove('address');
+              copy.remove('counts_for_distance');
+              copy.remove('distance_delta_m');
               return copy;
             }).toList();
 
             try {
               await _client.from('location_points').insert(sanitized);
-              _logger.i('SYNC: Successfully uploaded ${points.length} points via sanitized insert');
+              _logger.i(
+                  'SYNC: Successfully uploaded ${points.length} points via sanitized insert');
               return;
             } catch (sanitizedError) {
-              _logger.e('SYNC CRITICAL: Sanitized insert also failed: $sanitizedError');
+              _logger.e(
+                  'SYNC CRITICAL: Sanitized insert also failed: $sanitizedError');
               rethrow;
             }
           }
 
           // If insert also fails, it's likely an RLS issue
           _logger.e('SYNC CRITICAL: Insert also failed: $insertError');
-          _logger.e('SYNC: This is likely an RLS policy issue. Check employee_id matches auth.uid.');
+          _logger.e(
+              'SYNC: This is likely an RLS policy issue. Check employee_id matches auth.uid.');
           rethrow;
         }
       }
     } catch (e) {
       _logger.e('SYNC FAILED: $e');
-      _logger.e('SYNC: Points employee_id: ${points.first.employeeId}, auth.uid: $currentUserId');
+      _logger.e(
+          'SYNC: Points employee_id: ${points.first.employeeId}, auth.uid: $currentUserId');
       rethrow;
     }
   }
@@ -341,7 +386,6 @@ class SupabaseDataSource {
   // ============================================================
   // EMPLOYEE STATE
   // ============================================================
-
 
   /// Update employee state (for stuck detection)
   Future<void> updateEmployeeState({
@@ -435,8 +479,7 @@ class SupabaseDataSource {
   Future<void> markNotificationAsRead(String notificationId) async {
     await _client
         .from('mobile_notifications')
-        .update({'is_read': true})
-        .eq('id', notificationId);
+        .update({'is_read': true}).eq('id', notificationId);
   }
 
   /// Mark all notifications as read
@@ -445,15 +488,12 @@ class SupabaseDataSource {
     required bool isAdmin,
   }) async {
     if (isAdmin) {
-      await _client
-          .from('mobile_notifications')
-          .update({'is_read': true})
-          .or('recipient_id.eq.$userId,recipient_role.eq.admin');
+      await _client.from('mobile_notifications').update({'is_read': true}).or(
+          'recipient_id.eq.$userId,recipient_role.eq.admin');
     } else {
       await _client
           .from('mobile_notifications')
-          .update({'is_read': true})
-          .eq('recipient_id', userId);
+          .update({'is_read': true}).eq('recipient_id', userId);
     }
   }
 
@@ -467,7 +507,7 @@ class SupabaseDataSource {
       _logger.d('Creating expense claim...');
       _logger.d('Claim employee_id: ${claim.employeeId}');
       _logger.d('Current auth.uid: $currentUserId');
-      
+
       final response = await _client
           .from('expense_claims')
           .insert(claim.toJson())
@@ -505,11 +545,12 @@ class SupabaseDataSource {
     try {
       final response = await _client
           .from('expense_claims')
-          .select('*, employees!expense_claims_employee_id_fkey(name, phone), expense_items(*)')
+          .select(
+              '*, employees!expense_claims_employee_id_fkey(name, phone), expense_items(*)')
           .eq('employee_id', employeeId)
           .order('created_at', ascending: false)
           .range(offset, offset + limit - 1);
-      
+
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       _logger.e('Error fetching employee expenses: $e');
@@ -523,13 +564,14 @@ class SupabaseDataSource {
   Future<String?> createTimelineEvent({
     required String employeeId,
     required String sessionId,
-    required String eventType, // 'start', 'stop', 'move', 'end'
+    required String eventType, // 'start', 'stop', 'move', 'end', 'break_start', 'break_end'
     required DateTime startTime,
     required DateTime endTime,
     int? durationSec,
     double? latitude,
     double? longitude,
     String? address,
+    Map<String, dynamic>? metadata,
   }) async {
     try {
       final startUtc = startTime.toUtc();
@@ -548,6 +590,7 @@ class SupabaseDataSource {
         'center_lng': longitude,
         'address': address,
         'created_at': DateTime.now().toUtc().toIso8601String(),
+        if (metadata != null && metadata.isNotEmpty) 'metadata': metadata,
       };
 
       final response = await _client
@@ -563,6 +606,51 @@ class SupabaseDataSource {
       // Don't rethrow to avoid disrupting tracking flow
       return null;
     }
+  }
+
+  /// Create a timeline event and RETHROW on failure.
+  ///
+  /// Used by the offline-sync worker which MUST be able to tell the
+  /// difference between "row created" and "network/auth/RLS error"
+  /// so it can retry. The non-throwing variant above swallows errors
+  /// (intentional, so live tracking never crashes), which is wrong
+  /// for the sync worker — a swallowed error there gets the row
+  /// marked uploaded and the event is lost forever.
+  Future<String?> createTimelineEventStrict({
+    required String employeeId,
+    required String sessionId,
+    required String eventType,
+    required DateTime startTime,
+    required DateTime endTime,
+    int? durationSec,
+    double? latitude,
+    double? longitude,
+    String? address,
+    Map<String, dynamic>? metadata,
+  }) async {
+    final startUtc = startTime.toUtc();
+    final endUtc = endTime.toUtc();
+    final data = {
+      'employee_id': employeeId,
+      'session_id': sessionId,
+      'day': startUtc.toIso8601String().split('T')[0],
+      'event_type': eventType,
+      'start_time': startUtc.toIso8601String(),
+      'end_time': endUtc.toIso8601String(),
+      'duration_sec': durationSec ?? endUtc.difference(startUtc).inSeconds,
+      'center_lat': latitude,
+      'center_lng': longitude,
+      'address': address,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      if (metadata != null && metadata.isNotEmpty) 'metadata': metadata,
+    };
+
+    final response = await _client
+        .from('timeline_events')
+        .insert(data)
+        .select('id')
+        .maybeSingle();
+    return response?['id'] as String?;
   }
 
   /// Update an existing timeline event (used to extend an in-progress stop)
@@ -620,6 +708,7 @@ class SupabaseDataSource {
       _logger.e('Error creating alert: $e');
     }
   }
+
   /// Add expense item
   Future<ExpenseItemModel> addExpenseItem(ExpenseItemModel item) async {
     final response = await _client
@@ -644,13 +733,10 @@ class SupabaseDataSource {
       total += (item['amount'] as num).toDouble();
     }
 
-    await _client
-        .from('expense_claims')
-        .update({
-          'total_amount': total,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', claimId);
+    await _client.from('expense_claims').update({
+      'total_amount': total,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', claimId);
   }
 
   /// Submit expense claim
@@ -687,7 +773,7 @@ class SupabaseDataSource {
   /// Get app setting by key
   Future<dynamic> getSetting(String key) async {
     final response = await _client
-        .from('mobile_app_settings')
+        .from('app_settings')
         .select('value')
         .eq('key', key)
         .maybeSingle();
@@ -697,12 +783,71 @@ class SupabaseDataSource {
 
   /// Get all app settings
   Future<Map<String, dynamic>> getAllSettings() async {
-    final response = await _client.from('mobile_app_settings').select();
+    final response = await _client.from('app_settings').select();
 
     final settings = <String, dynamic>{};
     for (final row in response as List) {
       settings[row['key']] = row['value'];
     }
     return settings;
+  }
+
+  // ============================================================
+  // ACHIEVEMENT STATS (expenses + trips)
+  // ============================================================
+
+  /// Get expense claim stats for achievements
+  Future<Map<String, dynamic>> getExpenseStats(String userId) async {
+    try {
+      final response = await _client
+          .from('expense_claims')
+          .select('total_amount, status, created_at, submitted_at')
+          .eq('employee_id', userId);
+
+      int count = 0;
+      int approved = 0;
+      int submitted = 0;
+      double totalAmount = 0;
+      int withReceipt = 0;
+
+      for (final claim in response as List) {
+        count++;
+        totalAmount += (claim['total_amount'] as num?)?.toDouble() ?? 0;
+        final status = claim['status'] as String?;
+        if (status == 'approved') approved++;
+        if (status == 'submitted' || status == 'approved') submitted++;
+        // Count as having receipt if submitted or approved (implies documentation)
+        if (status != 'draft') withReceipt++;
+      }
+
+      return {
+        'count': count,
+        'approvedCount': approved,
+        'submittedCount': submitted,
+        'totalAmount': totalAmount,
+        'withReceipt': withReceipt,
+      };
+    } catch (e) {
+      _logger.e('Error getting expense stats: $e');
+      return {
+        'count': 0,
+        'approvedCount': 0,
+        'submittedCount': 0,
+        'totalAmount': 0.0,
+        'withReceipt': 0
+      };
+    }
+  }
+
+  /// Get trip count for achievements
+  Future<int> getTripCount(String userId) async {
+    try {
+      final response =
+          await _client.from('trips').select('id').eq('employee_id', userId);
+      return (response as List).length;
+    } catch (e) {
+      _logger.e('Error getting trip count: $e');
+      return 0;
+    }
   }
 }

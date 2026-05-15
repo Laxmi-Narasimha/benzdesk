@@ -12,7 +12,7 @@ interface Env {
 
 interface SetRoleRequest {
     userId: string;
-    role: 'requester' | 'accounts_admin' | 'director';
+    role: 'requester' | 'accounts_admin' | 'director' | 'sales_manager';
 }
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
@@ -80,7 +80,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             );
         }
 
-        if (!['requester', 'accounts_admin', 'director'].includes(role)) {
+        if (!['requester', 'accounts_admin', 'director', 'sales_manager'].includes(role)) {
             return Response.json(
                 { success: false, error: 'Invalid role' },
                 { status: 400, headers: corsHeaders }

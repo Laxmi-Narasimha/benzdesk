@@ -21,6 +21,7 @@ import {
     CheckCircle2,
     XCircle,
     AlertCircle,
+    Bell,
 } from 'lucide-react';
 import {
     Card,
@@ -31,12 +32,15 @@ import {
     Select,
     useToast,
     Spinner,
+    Badge,
 } from '@/components/ui';
 import { CustomSelect } from '@/components/ui/Select';
 import { RequestTimeline } from './RequestTimeline';
 import { CommentThread } from './CommentThread';
 import { AttachmentList } from './AttachmentList';
 import { TripExpenseCard } from './TripExpenseCard';
+import { ExpenseClaimCard } from './ExpenseClaimCard';
+import { FuelExpenseMap } from './FuelExpenseMap';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import type { Request, RequestComment, RequestEvent, RequestAttachment, RequestStatus, Priority } from '@/types';
@@ -55,14 +59,11 @@ interface RequestDetailProps {
 // Status Options (for admin)
 // ============================================================================
 
-// Status options - admins can't set 'closed' directly, only 'pending_closure'
-// Directors can set any status including 'closed'
+// Admins and directors can set any request status directly from the detail view.
 const allStatusOptions = Object.entries(REQUEST_STATUS_LABELS).map(([value, label]) => ({
     value,
     label,
 }));
-
-const adminStatusOptions = allStatusOptions.filter(opt => opt.value !== 'closed');
 
 // ============================================================================
 // Component
@@ -76,7 +77,7 @@ interface AdminUser {
 
 export function RequestDetail({ requestId }: RequestDetailProps) {
     const router = useRouter();
-    const { user, isAdmin, isDirector, canManageRequests } = useAuth();
+    const { user, canManageRequests } = useAuth();
     const { success, error: showError } = useToast();
 
     const [request, setRequest] = useState<Request | null>(null);
@@ -88,6 +89,7 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
     const [loading, setLoading] = useState(true);
     const [updating, setUpdating] = useState(false);
     const [activeTab, setActiveTab] = useState<'comments' | 'timeline'>('comments');
+    const [expenseCategories, setExpenseCategories] = useState<string[]>([]);
 
     // ============================================================================
     // Fetch Data
@@ -393,17 +395,21 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
             console.log(`[RequestDetail] Comment added. isAdmin: ${isUserAdmin}, requestCreator: ${request.created_by}`);
 
             if (isUserAdmin) {
-                // Admin replying -> Notify Creator
-                console.log(`[RequestDetail] ADMIN commenting -> Calling notifyNewComment for creator ${request.created_by}`);
-                notifyNewComment(
-                    request.created_by,
-                    '', // Email not available here easily, fallback used
-                    user.email || 'Admin',
-                    request.id,
-                    request.title,
-                    body,
-                    true
-                );
+                // Admin replying -> Notify Creator (but not if admin is the creator)
+                if (request.created_by !== user.id) {
+                    console.log(`[RequestDetail] ADMIN commenting -> Calling notifyNewComment for creator ${request.created_by}`);
+                    notifyNewComment(
+                        request.created_by,
+                        '', // Email not available here easily, fallback used
+                        user.email || 'Admin',
+                        request.id,
+                        request.title,
+                        body,
+                        true
+                    );
+                } else {
+                    console.log(`[RequestDetail] ADMIN commenting on own request -> Skipping self-notification`);
+                }
             } else {
                 // User replying -> Notify ALL Admins
                 console.log(`[RequestDetail] USER commenting -> Calling notifyAdminsOfNewComment`);
@@ -574,18 +580,39 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                     <Card padding="lg">
                         <div className="flex flex-col sm:flex-row items-start justify-between gap-4 mb-4">
                             <div>
-                                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{request.title}</h1>
+                                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-3">
+                                    {request.title}
+                                    {request.reference_id && (
+                                        <span className="inline-flex items-center justify-center px-2 py-1 text-sm font-mono font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
+                                            #{request.reference_id}
+                                        </span>
+                                    )}
+                                </h1>
                                 <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
+                                    {request.category === 'expense_claim' && expenseCategories.length > 0 ? (
+                                        expenseCategories.map(cat => (
+                                            <Badge key={cat} variant="outline" className="text-gray-500 bg-gray-50 flex items-center gap-1.5 py-1">
+                                                <Tag className="w-3.5 h-3.5" />
+                                                {cat}
+                                            </Badge>
+                                        ))
+                                    ) : (
+                                        <Badge variant="outline" className="text-gray-500 bg-gray-50 flex items-center gap-1.5 py-1">
+                                            <Tag className="w-3.5 h-3.5" />
+                                            {REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category}
+                                        </Badge>
+                                    )}
+                                    <div className="w-1 h-1 rounded-full bg-gray-300 hidden sm:block" />
                                     <StatusBadge status={request.status} size="md" />
                                     <PriorityBadge priority={request.priority as Priority} size="md" />
                                 </div>
                             </div>
 
                             {/* Admin status control */}
-                            {canManageRequests && request.category !== 'expense_reimbursement' && (
-                                <div className="flex-shrink-0 w-full sm:w-auto">
+                            {canManageRequests && (
+                                <div className="flex-shrink-0 w-full sm:w-auto space-y-2">
                                     <Select
-                                        options={isDirector ? allStatusOptions : adminStatusOptions}
+                                        options={allStatusOptions}
                                         value={request.status}
                                         onChange={(e) => updateStatus(e.target.value as RequestStatus)}
                                         size="sm"
@@ -593,31 +620,68 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                                         className="w-full sm:w-48"
                                         disabled={updating}
                                     />
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={async () => {
+                                            if (!request?.created_by) return;
+                                            try {
+                                                const supabase = getSupabaseClient();
+                                                const { error } = await supabase.rpc('send_manual_notification', {
+                                                    p_recipient_id: request.created_by,
+                                                    p_title: `Reminder: ${request.title}`,
+                                                    p_body: 'Admin has sent you a notification regarding this request.',
+                                                    p_request_id: request.id
+                                                });
+                                                if (error) throw error;
+                                                success('Notification Sent', 'Manual notification sent to employee');
+                                            } catch (err: any) {
+                                                console.error('Error sending notification:', err);
+                                                showError('Error', err?.message || 'Failed to send notification');
+                                            }
+                                        }}
+                                        className="w-full sm:w-48 text-xs"
+                                    >
+                                        <Bell className="w-3 h-3 mr-1" />
+                                        Send Notification
+                                    </Button>
                                 </div>
                             )}
                         </div>
 
                         {/* Description */}
                         <div className="prose max-w-none">
-                            <p className="text-gray-600 whitespace-pre-wrap">{request.description}</p>
+                            {request.category === 'expense_claim' && request.description.startsWith('Amount: ') ? (
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 bg-gray-50 border border-gray-100 rounded-lg p-3">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-gray-500 font-medium text-sm">Amount:</span>
+                                        <span className="text-gray-900 font-semibold">{request.description.match(/Amount: ([^\n]+)/)?.[1] || 'N/A'}</span>
+                                    </div>
+                                    <div className="hidden sm:block w-px h-5 bg-gray-200" />
+                                    <div className="flex items-start sm:items-center gap-2 flex-1">
+                                        <span className="text-gray-500 font-medium text-sm">Notes:</span>
+                                        <span className="text-gray-700 italic">{request.description.match(/Notes: ([\s\S]*)/)?.[1] || 'N/A'}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <p className="text-gray-600 whitespace-pre-wrap">{request.description}</p>
+                            )}
                         </div>
                         
-                        {/* Session Details Link */}
+                        {/* Session Map Details */}
                         {request.description?.includes('Session ID:') && (
-                            <div className="mt-6 pt-4 border-t border-gray-100">
-                                <Button 
-                                    variant="outline" 
-                                    className="w-full sm:w-auto flex items-center gap-2 text-blue-600 border-blue-200 hover:bg-blue-50"
-                                    onClick={() => {
-                                        const match = request.description?.match(/Session ID: ([a-zA-Z0-9-]+)/);
-                                        if (match && match[1]) {
-                                            router.push(`/director/map?session=${match[1]}`);
-                                        }
-                                    }}
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-                                    View GPS Session Map
-                                </Button>
+                            <div className="mt-6 pt-0 border-t-0">
+                                {(() => {
+                                    const match = request.description?.match(/Session ID: ([a-zA-Z0-9-]+)/);
+                                    if (match && match[1]) {
+                                        return <FuelExpenseMap 
+                                            sessionId={match[1]} 
+                                            description={request.description}
+                                            employeeId={request.created_by} 
+                                        />;
+                                    }
+                                    return null;
+                                })()}
                             </div>
                         )}
                     </Card>
@@ -625,6 +689,16 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                     {request.category === 'expense_reimbursement' && (
                         <TripExpenseCard 
                             requestId={request.id} 
+                            onStatusChange={() => {
+                                window.location.reload();
+                            }}
+                        />
+                    )}
+
+                    {request.category === 'expense_claim' && (
+                        <ExpenseClaimCard 
+                            requestId={request.id} 
+                            onCategoriesLoaded={setExpenseCategories}
                             onStatusChange={() => {
                                 window.location.reload();
                             }}
@@ -690,6 +764,30 @@ export function RequestDetail({ requestId }: RequestDetailProps) {
                                     {REQUEST_CATEGORY_LABELS[request.category as keyof typeof REQUEST_CATEGORY_LABELS] || request.category}
                                 </dd>
                             </div>
+
+                            {request.amount != null && (
+                                <div className="flex items-center justify-between">
+                                    <dt className="text-sm text-dark-500 flex items-center gap-2">
+                                        <Tag className="w-4 h-4" />
+                                        Amount
+                                    </dt>
+                                    <dd className="text-sm font-semibold text-green-400">
+                                        ₹{request.amount.toLocaleString('en-IN')}
+                                    </dd>
+                                </div>
+                            )}
+
+                            {request.manager_adjusted_amount != null && (
+                                <div className="flex items-center justify-between">
+                                    <dt className="text-sm text-dark-500 flex items-center gap-2">
+                                        <Tag className="w-4 h-4" />
+                                        Adjusted Amount
+                                    </dt>
+                                    <dd className="text-sm font-semibold text-amber-400">
+                                        ₹{request.manager_adjusted_amount.toLocaleString('en-IN')}
+                                    </dd>
+                                </div>
+                            )}
 
                             {/* Assign To — Admin only */}
                             {canManageRequests && admins.length > 0 && (

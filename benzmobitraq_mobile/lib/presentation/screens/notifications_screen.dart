@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:intl/intl.dart';
+
 
 import '../../core/utils/date_utils.dart';
+import '../../core/router/app_router.dart';
 import '../../data/models/notification_model.dart';
 import '../blocs/notification/notification_bloc.dart';
 import '../blocs/auth/auth_bloc.dart';
@@ -241,6 +242,33 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             context.read<NotificationBloc>().add(
               NotificationMarkReadRequested(notification.id),
             );
+          }
+
+          // Navigate based on notification type
+          switch (notification.type) {
+            case NotificationType.expenseApproved:
+            case NotificationType.expenseRejected:
+            case NotificationType.expenseSubmitted:
+              // Only navigate to expense detail if we have a request_id
+              final requestId = notification.data['request_id'] as String?;
+              if (requestId != null) {
+                Navigator.pushNamed(
+                  context,
+                  AppRouter.expenseDetail,
+                  arguments: ExpenseDetailArguments(
+                    claimId: requestId,
+                  ),
+                );
+              }
+              break;
+            case NotificationType.sessionStarted:
+            case NotificationType.sessionEnded:
+              // Navigate to timeline
+              Navigator.pushNamed(context, AppRouter.myTimeline);
+              break;
+            case NotificationType.stuckAlert:
+              // Stay on notifications, already marked as read
+              break;
           }
         },
       ),

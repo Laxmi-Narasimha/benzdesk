@@ -1,4 +1,4 @@
-import 'dart:io';
+
 import 'package:equatable/equatable.dart';
 
 /// File attachment on an expense claim (receipt/bill)

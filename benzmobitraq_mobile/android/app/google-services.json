@@ -9,7 +9,7 @@
             "client_info": {
                 "mobilesdk_app_id": "1:123456789012:android:6e6e6e6e6e6e6e6e",
                 "android_client_info": {
-                    "package_name": "com.example.benzmobitraq_mobile"
+                    "package_name": "com.benzpackaging.employee"
                 }
             },
             "oauth_client": [],
