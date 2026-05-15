@@ -926,6 +926,59 @@ class SessionManager {
         }
       }
 
+      // RECONCILE — never under-count what the rep saw on screen.
+      //
+      // The authoritative recalc above (DistanceEngine.calculate
+      // AuthoritativeDistance) applies a second pass of Kalman +
+      // teleport + jitter filtering. On a noisy trip this catches
+      // bad GPS spikes. On a real-world long curvy drive — verified
+      // by the rep against Google Maps — it can OVER-filter and
+      // under-count real distance by 15-20%.
+      //
+      // Concrete example reported by the user: a 12 km drive (Google
+      // Maps confirmed) returned from this pass as 9.70 km. The BG
+      // isolate's running tally was 11.X km. The rollup raw haversine
+      // was 12.07 km. Locking final_km to 9.70 cost the rep ~₹18 on
+      // a single trip — and broke trust.
+      //
+      // Fix: verifiedDistanceKm = MAX of three signals:
+      //   (a) the authoritative recalc — our best filtered guess
+      //   (b) the BG isolate's running totalDistance — what the rep
+      //       actually saw on screen, sum of per-fix accepted deltas
+      //   (c) sum of distance_delta_m where counts_for_distance — the
+      //       raw per-point accepted deltas chain
+      //
+      // We deliberately do NOT include raw haversine over ALL points
+      // here — that DOES over-count when the rep is stationary. The
+      // three signals above are all "filtered" in some way and the
+      // worst case is over-counting by a few percent, never the 20%
+      // under-count we just shipped.
+      try {
+        final runningKm = _state.currentDistanceMeters / 1000.0;
+        if (runningKm > verifiedDistanceKm) {
+          _logger.i(
+              'RECONCILE: bumping verifiedDistanceKm ${verifiedDistanceKm.toStringAsFixed(2)} '
+              '→ running total ${runningKm.toStringAsFixed(2)} km');
+          verifiedDistanceKm = runningKm;
+        }
+        final sessionId = _state.session!.id;
+        final summedDeltaM = await _locationRepository
+            .getLocalSessionPoints(sessionId)
+            .then((pts) => pts
+                .where((p) =>
+                    p.countsForDistance && (p.distanceDeltaM ?? 0) > 0)
+                .fold<double>(0, (a, p) => a + (p.distanceDeltaM ?? 0)));
+        final summedKm = summedDeltaM / 1000.0;
+        if (summedKm > verifiedDistanceKm) {
+          _logger.i(
+              'RECONCILE: bumping verifiedDistanceKm to summed-deltas '
+              '${summedKm.toStringAsFixed(2)} km');
+          verifiedDistanceKm = summedKm;
+        }
+      } catch (e) {
+        _logger.w('Reconcile pass failed (non-fatal): $e');
+      }
+
       _logger.i(
           'FINAL verified distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
 

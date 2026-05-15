@@ -14,6 +14,10 @@
     <!-- Required for background location tracking -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Android 14+: declaring the data-sync type explicitly so queued location
+         points + offline expenses can be uploaded by the same foreground service
+         once internet returns, without the OS killing the service mid-sync. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     
     <!-- WAKE LOCK - Keep CPU alive during tracking -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -29,6 +33,18 @@
     
     <!-- BATTERY OPTIMIZATION - Request to be exempted -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- VIBRATION - For tracking-stalled alerts (3x vibration pattern) -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- FULL SCREEN INTENT — required on Android 14+ so the stationary
+         alarm can rise over the lock screen like a clock-alarm
+         instead of staying as a silent tray entry the user misses. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- SCHEDULE_EXACT_ALARM - For tracking watchdog on Android 12+ -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     
     <!-- SENSORS for motion detection -->
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
@@ -64,14 +80,24 @@
         </activity>
         
         <!-- Background Service for Location Tracking -->
+        <!-- stopWithTask=false: keep service alive even if user swipes the app away (VPN-style) -->
+        <!-- The foregroundServiceType is intentionally a combination:
+              - "location" : required to keep receiving GPS in background
+              - "dataSync" : required on Android 14+ to upload location points
+                             and offline expense queue while the service runs.
+             Without dataSync, Android 14 silently restricts the service from
+             doing the Supabase work it needs to do after location runs.
+             stopWithTask=false ensures swiping the app from recents does
+             NOT stop the tracking service — same behavior as VPN apps. -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
-            android:foregroundServiceType="location"
+            android:foregroundServiceType="location|dataSync"
             android:exported="false"
+            android:stopWithTask="false"
             tools:node="replace">
         </service>
-        
-        <!-- Boot Receiver - Resume tracking after device restart (DISABLED TO PREVENT FREEZE)
+
+        <!-- Boot Receiver - Resume tracking after device restart -->
         <receiver
             android:name="id.flutter.flutter_background_service.BootReceiver"
             android:enabled="true"
@@ -81,7 +107,6 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
-        -->
         
         <!-- Firebase Messaging Service -->
         <service
@@ -103,11 +128,16 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Google Maps API Key for nearby company search -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyD2EH4_Gv6tP3qS1Ue70gLfyoOZT9eIciM" />
+
         <!-- DISABLE IMPELLER: Known to cause freezes on some devices -->
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />
-            
+
     </application>
     
     <!-- QUERIES for opening settings -->
