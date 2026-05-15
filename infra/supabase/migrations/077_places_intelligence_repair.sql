@@ -1,31 +1,27 @@
--- Migration 076: Places + Geocoding intelligence layer
+-- Migration 077: Repair + complete migration 076.
 --
--- Adds the data shape needed to:
---   1. Bind each trip to a customer (Google Place ID) at session start.
---   2. Reverse-geocode session endpoints + every detected stop so the
---      admin timeline shows readable addresses instead of lat/lng.
---   3. Auto-detect which of OUR customers an employee visited, by
---      matching every session_stops row to the nearest customer
---      Place ID within a 100m radius.
---   4. Re-run that detection for HISTORIC sessions (backfill_enrich_session
---      RPC) so the admin can validate the system against past data.
+-- 076 assumed the `customers` table didn't exist and tried to
+-- CREATE TABLE IF NOT EXISTS it with all the columns we need. In
+-- production a `customers` table DOES exist (created earlier outside
+-- of this migration chain), so the CREATE was a no-op and the
+-- subsequent CREATE INDEX ON customers (google_place_id) failed
+-- because the column wasn't there.
 --
--- Roads API enqueue policy also rewritten here from "every completed
--- session" → "only when verification adds value" (offline / low
--- confidence / >50km / admin trigger). See docs/DISTANCE_TRACKING_METHODOLOGY.md.
+-- This migration is **defensive**: it adds every column we need with
+-- ADD COLUMN IF NOT EXISTS, then re-runs all of 076 from that point
+-- forward. Everything is idempotent (IF NOT EXISTS, CREATE OR REPLACE,
+-- DROP CONSTRAINT IF EXISTS) so safe to run even on databases where
+-- 076 ran cleanly.
+--
+-- Run this AFTER 076. If 076 hasn't been run at all, this still
+-- works — every step is independently safe.
 
 -- ============================================================================
--- 1. customers master
+-- 1. Patch customers table to match the shape our code expects
 -- ============================================================================
--- Place-ID-anchored customer/site directory. Independent of the legacy
--- "purpose" free-text field on sessions — that field stays for back-compat
--- and for "Other / Personal" trips that don't correspond to a customer.
---
--- DEFENSIVE: in production a `customers` table may already exist
--- (created earlier outside this migration chain). Use a minimal
--- CREATE TABLE IF NOT EXISTS for the id PK, then ADD COLUMN IF NOT
--- EXISTS for each field so we don't blow up if the pre-existing
--- table has a different shape.
+-- Make sure the table exists at minimum. If it already exists with
+-- different columns, ADD COLUMN IF NOT EXISTS below handles each
+-- missing field individually.
 
 CREATE TABLE IF NOT EXISTS customers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid()
@@ -43,6 +39,15 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_active         BOOLEAN NOT NUL
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- Unique constraint on google_place_id (only when non-null) so the
+-- admin "Add customer" modal can rely on ON CONFLICT to detect dupes.
+-- We do this with a partial unique INDEX rather than a CONSTRAINT
+-- because partial unique constraints require Postgres 15+ and we want
+-- this to run on any Supabase project. The downside is the admin code
+-- can't use ON CONFLICT (google_place_id) — it has to SELECT first.
+-- Re-checked the admin/customers/page.tsx code: it uses a plain
+-- INSERT and surfaces error code 23505 for the duplicate case, which
+-- the unique INDEX raises just like a CONSTRAINT would.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_place_id
   ON customers (google_place_id) WHERE google_place_id IS NOT NULL;
 
@@ -56,9 +61,6 @@ ALTER TABLE customers DISABLE ROW LEVEL SECURITY;
 -- 2. Place-ID columns on the trip-level rows
 -- ============================================================================
 
--- A session can be bound to one PRIMARY customer (the one the rep set
--- at session start via Places Autocomplete). The "visited" customers
--- column lists every customer whose Place matched a detected stop.
 ALTER TABLE shift_sessions
   ADD COLUMN IF NOT EXISTS primary_customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS visited_customer_ids UUID[] NOT NULL DEFAULT '{}',
@@ -71,7 +73,6 @@ CREATE INDEX IF NOT EXISTS idx_shift_sessions_primary_customer
 CREATE INDEX IF NOT EXISTS idx_shift_sessions_visited_customers
   ON shift_sessions USING GIN (visited_customer_ids);
 
--- Per-stop: which customer (if any) sits within 100m of the stop center.
 ALTER TABLE session_stops
   ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS place_id TEXT,
@@ -83,20 +84,10 @@ CREATE INDEX IF NOT EXISTS idx_session_stops_customer
 -- ============================================================================
 -- 3. Selective Roads-API enqueue policy
 -- ============================================================================
--- Previously: every completed session enqueued (072 + 074).
--- Now: only when Roads API would actually add value. Saves API budget
--- AND keeps the queue table small enough to scan cheaply.
---
--- We also expose a manual-trigger RPC (admin_request_distance_verification)
--- so the admin "Verify Distance" button on a session detail page can
--- queue verification on demand.
 
 CREATE OR REPLACE FUNCTION enqueue_trip_finalization()
 RETURNS TRIGGER AS $$
-DECLARE
-  v_pending_secs INTEGER;
 BEGIN
-  -- Only on transition into 'completed'.
   IF NEW.status <> 'completed' OR OLD.status IS NOT DISTINCT FROM 'completed' THEN
     RETURN NEW;
   END IF;
@@ -104,13 +95,6 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Eligibility: any one of these qualifies the session for Roads API
-  -- verification. If none match, we trust final_km as-is.
-  --
-  -- (1) Confidence != 'high'  → device thinks GPS was iffy
-  -- (2) >= 50 km              → high-value trip, worth the audit cost
-  -- (3) Reason codes include any of {GPS_GAP_OVER_120S, MOCK_LOCATION_DETECTED,
-  --     POINT_SPACING_OVER_300M, STATIONARY_DOMINATED} → known noisy signals
   IF NEW.confidence IS DISTINCT FROM 'high'
      OR NEW.final_km >= 50
      OR EXISTS (
@@ -133,9 +117,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Admin "Verify Distance" entry point. Returns true if a new job was
--- enqueued (or the existing one was re-queued), false if the job is
--- still running.
 CREATE OR REPLACE FUNCTION admin_request_distance_verification(p_session_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
@@ -153,7 +134,6 @@ BEGIN
     RETURN FALSE;
   END IF;
 
-  -- Re-queue a previously-completed or failed verification.
   UPDATE trip_finalization_jobs
   SET status          = 'pending',
       reason          = 'admin_verify',
@@ -166,13 +146,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
--- 4. Place-enrichment jobs (separate queue from Roads finalization)
+-- 4. Trip-enrichment jobs queue
 -- ============================================================================
--- Geocoding + Nearby-Search-against-customers runs for EVERY session,
--- but it's cheap (well under free tier) and provides the user-facing
--- value (readable addresses, "visited X" tags). We use a separate
--- queue from trip_finalization_jobs so a slow Roads API call doesn't
--- block fast enrichment, and vice versa.
 
 CREATE TABLE IF NOT EXISTS trip_enrichment_jobs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -216,7 +191,6 @@ CREATE TRIGGER trg_enqueue_trip_enrichment
   FOR EACH ROW
   EXECUTE FUNCTION enqueue_trip_enrichment();
 
--- Claim-next helper, same pattern as the Roads queue.
 CREATE OR REPLACE FUNCTION claim_next_enrichment_job()
 RETURNS SETOF trip_enrichment_jobs AS $$
 DECLARE
@@ -249,14 +223,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
--- 5. Historic backfill — enqueue every completed session that hasn't
---    been enriched yet
+-- 5. Historic backfill RPC
 -- ============================================================================
--- The user explicitly wants old sessions to ALSO get readable addresses
--- + visited-customers tags so they can validate the system against
--- historic data before fully trusting it. Run this RPC once after
--- migration. The enrichment Edge Function then drains the queue at
--- its normal rate (~1 job/sec).
 
 CREATE OR REPLACE FUNCTION backfill_trip_enrichment(p_limit INTEGER DEFAULT 1000)
 RETURNS INTEGER AS $$
@@ -282,14 +250,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
--- 6. Active employee snapshot — used by the Route Matrix "Closest
---    teammate" feature on the admin dashboard
+-- 6. Active employee snapshot view (Route Matrix proximity panel)
 -- ============================================================================
--- A view that exposes the latest known location of each currently-
--- active employee. We pick the latest location_point for each
--- employee whose session is currently 'active'. The admin web calls
--- Routes API Route Matrix with these points to compute pairwise
--- travel times.
 
 CREATE OR REPLACE VIEW active_employee_locations AS
 WITH active_sessions AS (
