@@ -13,13 +13,19 @@ import 'package:benzmobitraq_mobile/data/repositories/session_repository.dart';
 import 'package:benzmobitraq_mobile/data/repositories/location_repository.dart';
 import 'package:benzmobitraq_mobile/data/repositories/expense_repository.dart';
 import 'package:benzmobitraq_mobile/data/datasources/local/preferences_local.dart';
+import 'package:benzmobitraq_mobile/core/confidence_scorer.dart';
 import 'package:benzmobitraq_mobile/core/distance_engine.dart';
+import 'package:geolocator/geolocator.dart';
+
+import 'package:benzmobitraq_mobile/services/google_maps_directions_service.dart';
 import 'package:benzmobitraq_mobile/services/tracking_service.dart';
 import 'package:benzmobitraq_mobile/services/permission_service.dart';
+import 'package:benzmobitraq_mobile/services/tracking_alert_service.dart';
 import 'package:benzmobitraq_mobile/services/geocoding_service.dart';
 import 'package:benzmobitraq_mobile/services/notification_scheduler.dart';
 import 'package:benzmobitraq_mobile/services/timeline_recorder.dart';
 import 'package:benzmobitraq_mobile/services/notification_service.dart';
+import 'package:benzmobitraq_mobile/services/connectivity_service.dart';
 
 /// Session status for UI feedback
 enum ManagerSessionStatus {
@@ -42,6 +48,11 @@ class ManagerSessionState {
   final String? errorMessage;
   final List<String> warnings;
   final bool isPaused;
+  /// When set, the wall-clock time at which the current pause is
+  /// supposed to end. Drives the on-screen "Pause: 4m 23s remaining"
+  /// countdown on the session card. Cleared on resume / stop / a
+  /// pause without an expected duration.
+  final DateTime? pauseExpectedResumeAt;
 
   const ManagerSessionState({
     this.status = ManagerSessionStatus.idle,
@@ -52,6 +63,7 @@ class ManagerSessionState {
     this.errorMessage,
     this.warnings = const [],
     this.isPaused = false,
+    this.pauseExpectedResumeAt,
   });
 
   double get currentDistanceKm => currentDistanceMeters / 1000;
@@ -65,6 +77,8 @@ class ManagerSessionState {
     String? errorMessage,
     List<String>? warnings,
     bool? isPaused,
+    DateTime? pauseExpectedResumeAt,
+    bool clearPauseExpectedResumeAt = false,
   }) {
     return ManagerSessionState(
       status: status ?? this.status,
@@ -76,6 +90,9 @@ class ManagerSessionState {
       errorMessage: errorMessage,
       warnings: warnings ?? this.warnings,
       isPaused: isPaused ?? this.isPaused,
+      pauseExpectedResumeAt: clearPauseExpectedResumeAt
+          ? null
+          : (pauseExpectedResumeAt ?? this.pauseExpectedResumeAt),
     );
   }
 }
@@ -121,6 +138,37 @@ class SessionManager {
   Timer? _durationTimer;
   Timer? _syncTimer;
   Timer? _watchdogTimer;
+  Timer? _postStartNoFixTimer;
+  Timer? _envCheckTimer;
+  bool _hasReceivedFirstFix = false;
+  bool _lastEnvLocationServicesEnabled = true;
+  bool _lastEnvPermissionGranted = true;
+
+  /// When set in the future, the GPS-stall and distance-stall checks
+  /// in `_watchdogTick` skip their alerts. Used after the BG isolate
+  /// tells us location services were just restored — we want to give
+  /// the freshly-resubscribed position stream 90 seconds to deliver
+  /// its first fix before we cry "GPS stalled".
+  DateTime? _watchdogGraceUntil;
+
+  /// Tracks when we last nudged the user with a "are you still working?"
+  /// notification because their session has been stationary for hours.
+  /// We do NOT auto-end the session (product decision) — we just keep
+  /// reminding them every ~60 minutes so a forgotten session doesn't
+  /// run for the entire weekend.
+  DateTime? _lastForgottenSessionNudgeAt;
+
+  /// Fires the pause-expired alarm. Lives outside the duration timer so
+  /// it works even if the duration timer ticks at a different cadence.
+  Timer? _pauseExpiryTimer;
+  int? _lastPauseExpectedMinutes;
+  Timer? _pauseCountdownTicker;
+
+  /// True when the BG isolate reported location services are OFF and
+  /// has not yet reported them back ON. While this is true, the env
+  /// watchdog must NOT report a new alert every 30 seconds (it would
+  /// just be amplifying noise the user already saw).
+  bool _bgReportsLocationOff = false;
 
   // Tracking health
   DateTime? _lastLocationUpdateAt;
@@ -139,6 +187,10 @@ class SessionManager {
 
   // Guard: prevent uploading points before session exists on server
   bool _backendSessionReady = false;
+
+  // Connectivity subscription — used to clear the offline banner
+  // automatically when the device reconnects to the internet.
+  StreamSubscription<bool>? _connectivitySubscription;
 
   // Timeline Recorder
   late final TimelineRecorder _timelineRecorder;
@@ -171,6 +223,105 @@ class SessionManager {
   /// Current session state
   ManagerSessionState get currentState => _state;
 
+  /// Force-refresh from the on-disk values written by the background
+  /// isolate. Use this on app-resume so the UI never shows a stale
+  /// distance when the bg→main event channel was throttled by the OS
+  /// while the app was backgrounded.
+  ///
+  /// Specifically fixes: "home screen says 8.4 km but the post-session
+  /// dialog says 12.7 km after opening the app a few hours later."
+  /// Both numbers came from different sources — one in-memory + stale,
+  /// one from disk. After this call they agree.
+  Future<void> rehydrateFromDisk() async {
+    if (_state.session == null) return; // Nothing to rehydrate
+    try {
+      await _preferences.reload();
+    } catch (_) {}
+
+    double bestDistanceM = _state.currentDistanceMeters;
+    try {
+      final persisted = _preferences.getSessionDistanceMeters();
+      if (persisted > bestDistanceM) bestDistanceM = persisted;
+    } catch (_) {}
+    try {
+      final bg = _preferences.getBackgroundServiceDistance();
+      if (bg > bestDistanceM) bestDistanceM = bg;
+    } catch (_) {}
+
+    // Recompute active duration too — relying on the in-memory timer
+    // means the UI shows a frozen value if the timer was throttled.
+    final start = _preferences.getSessionStartTime() ?? _state.session!.startTime;
+    final rawDuration = DateTime.now().difference(start);
+    int pausedSec = _state.session!.totalPausedSeconds;
+    if (_state.isPaused && _state.session!.pausedAt != null) {
+      pausedSec += DateTime.now()
+          .difference(_state.session!.pausedAt!)
+          .inSeconds
+          .clamp(0, 1 << 31);
+    }
+    final paused = Duration(seconds: pausedSec);
+    final activeDuration =
+        paused > rawDuration ? Duration.zero : rawDuration - paused;
+
+    if (bestDistanceM > _state.currentDistanceMeters ||
+        activeDuration != _state.duration) {
+      _logger.i(
+          'REHYDRATE: distance ${_state.currentDistanceMeters.toStringAsFixed(0)}m -> ${bestDistanceM.toStringAsFixed(0)}m, '
+          'duration ${_state.duration.inSeconds}s -> ${activeDuration.inSeconds}s');
+      _updateState(_state.copyWith(
+        currentDistanceMeters: bestDistanceM,
+        duration: activeDuration,
+      ));
+
+      // Keep the persistent caches in sync so the next reader (e.g. the
+      // post-session dialog) doesn't see a mismatch either.
+      try {
+        await _preferences.setSessionDistanceMeters(bestDistanceM);
+      } catch (_) {}
+    }
+  }
+
+  /// Force-flush every pending queue we have RIGHT NOW. Ordering matters:
+  /// session START goes first (otherwise the server has no row to update),
+  /// then session STOP (which writes the final total_km), then location
+  /// points, then offline-fuel expenses (so they reconcile against
+  /// authoritative total_km, not the temporary 0).
+  ///
+  /// Public + idempotent so the post-session dialog can call it the
+  /// moment internet returns — without it, the dialog reads the
+  /// stale "row exists with total_km=0" state and the UI flips to 0.
+  Future<void> flushAllPendingNow() async {
+    try {
+      await _syncPendingSessionStart();
+    } catch (e) {
+      _logger.w('flushAllPendingNow: start sync failed: $e');
+    }
+    try {
+      await _syncPendingSessionStop();
+    } catch (e) {
+      _logger.w('flushAllPendingNow: stop sync failed: $e');
+    }
+    try {
+      await _syncPendingLocations();
+    } catch (e) {
+      _logger.w('flushAllPendingNow: locations sync failed: $e');
+    }
+    try {
+      final n = await _locationRepository.uploadPendingTimelineEvents();
+      if (n > 0) _logger.i('flushAllPendingNow: timeline events synced=$n');
+    } catch (e) {
+      _logger.w('flushAllPendingNow: timeline events sync failed: $e');
+    }
+    if (_expenseRepository != null) {
+      try {
+        await _expenseRepository.syncPendingExpenses();
+      } catch (_) {}
+      try {
+        await _expenseRepository.syncPendingSessionFuels();
+      } catch (_) {}
+    }
+  }
+
   /// Whether a session is currently active (includes paused)
   bool get isSessionActive => _state.status == ManagerSessionStatus.active;
 
@@ -195,6 +346,30 @@ class SessionManager {
       TrackingService.onAutoPaused = _onAutoPaused;
       TrackingService.onAutoResumed = _onAutoResumed;
       TrackingService.onStationarySpotDetected = _onStationarySpotDetected;
+      TrackingService.onServiceStatusChanged = _onServiceStatusChanged;
+      TrackingService.onStationaryAlarm = _onStationaryAlarm;
+      TrackingService.onMovementAutoResumed = _onMovementAutoResumed;
+      TrackingService.onMapsGapRecovery = _onMapsGapRecovery;
+
+      // Listen for connectivity changes. When the device goes from
+      // offline → online, clear the "You are offline..." warning so the
+      // user doesn't see a stale banner for the rest of the trip.
+      _connectivitySubscription?.cancel();
+      _connectivitySubscription = ConnectivityService.onlineChanges.listen(
+        (isOnline) {
+          if (isOnline && _state.status == ManagerSessionStatus.active) {
+            try {
+              final cleaned = List<String>.from(_state.warnings)
+                ..removeWhere((s) =>
+                    s.startsWith('You are offline') ||
+                    s.contains('being tracked locally'));
+              if (cleaned.length != _state.warnings.length) {
+                _updateState(_state.copyWith(warnings: cleaned));
+              }
+            } catch (_) {}
+          }
+        },
+      );
 
       // Check if there was an active session
       final activeSessionId = await _preferences.getActiveSessionId();
@@ -229,10 +404,24 @@ class SessionManager {
 
         if (session != null && session.isActive) {
           await _resumeSession(session);
+        } else if (session != null && !session.isActive) {
+          // Server explicitly says this session is completed/cancelled.
+          // Trust the server — clear local state so we don't keep
+          // "resuming" a ghost session every cold start. This is the
+          // other half of the offline-stop bug: even if our pending
+          // stop sync never went through, anyone who finished the
+          // session from the admin panel or another device will see
+          // the right outcome here.
+          _logger.w(
+              'Server reports session $activeSessionId is ${session.status.value}. Clearing local active marker.');
+          await TrackingService.stopTracking();
+          await _preferences.clearActiveSession();
+          await _preferences.clearCachedSession();
+          await _preferences.clearPendingSessionEnd();
         } else {
-          // Session ended or invalid, clean up
-          // Only clear if we are SURE it's gone (e.g. online check failed and no cache)
-          // For now, if we can't recover it, we have to clear it to unblock the user
+          // Could not reach server AND no cached copy — we have to
+          // clear it to unblock the user. (If a cached copy did exist
+          // we already returned above via _resumeSession.)
           _logger.w(
               'Could not recover session $activeSessionId. Clearing local state.');
           await _preferences.clearActiveSession();
@@ -277,7 +466,7 @@ class SessionManager {
   /// 3. Create session in backend
   /// 4. Start background tracking
   /// 5. Begin sync timer
-  Future<bool> startSession() async {
+  Future<bool> startSession({String? purpose}) async {
     if (_state.status == ManagerSessionStatus.active) {
       _logger.w('Session already active');
       return false;
@@ -305,24 +494,52 @@ class SessionManager {
         return false;
       }
 
-      // B. Check server (Strict Mode)
-      // This safeguards against cases where local data was cleared but server has a running session
+      // B. Drain any pending offline session-stop BEFORE checking the server.
+      //
+      // Otherwise the server still sees the previous session as `active`
+      // (because the stop hasn't synced yet) and the server-check below
+      // refuses to start a new one. Then getActiveSession() side-effects
+      // the old session-id back into local prefs and the next app launch
+      // "resumes" the old session with its old kilometers. That is the
+      // exact bug field users have been hitting.
+      await _syncPendingSessionStop();
+      await _syncPendingSessionStart();
+
+      // C. Check server (Strict Mode)
+      // Only error out if the server truly has an active session for THIS user
+      // that we cannot reconcile. Note: do NOT use the repository's
+      // getActiveSession() here — it writes back to local prefs as a side
+      // effect, which would re-pin the old session id. Query the data
+      // source directly.
       try {
-        final serverSession = await _sessionRepository.getActiveSession();
-        if (serverSession != null) {
-          _logger.w('Found existing session on server: ${serverSession.id}');
+        final userIdEarly = await _sessionRepository.resolveCurrentUserId();
+        if (userIdEarly != null) {
+          // After draining the pending stop above, the server should no
+          // longer report this user as active. If it still does, something
+          // is genuinely out of sync — surface a clear error.
+          final stillActive = await _sessionRepository
+              .checkServerActiveSessionWithoutSideEffects(userIdEarly);
+          if (stillActive != null) {
+            _logger.w(
+                'Server still reports active session ${stillActive.id} after sync attempt');
 
-          // Auto-recover this session instead of erroring?
-          // The user experience is better if we just "find" it.
-          // However, startSession() expects to START a NEW one.
-          // Let's return false with a specific message.
+            // Try one targeted recovery: force-end it on the server with the
+            // last-known distance from the pending stop (if any), so the user
+            // can start fresh instead of being stuck behind ghost state.
+            await _forceEndGhostServerSession(stillActive);
 
-          _updateState(_state.copyWith(
-            status: ManagerSessionStatus.error,
-            errorMessage:
-                'Found an active session on the server. Please restart the app to sync.',
-          ));
-          return false;
+            // Re-check once more
+            final reCheck = await _sessionRepository
+                .checkServerActiveSessionWithoutSideEffects(userIdEarly);
+            if (reCheck != null) {
+              _updateState(_state.copyWith(
+                status: ManagerSessionStatus.error,
+                errorMessage:
+                    'A previous session is still being synced. Please wait a moment and try again.',
+              ));
+              return false;
+            }
+          }
         }
       } catch (e) {
         _logger.w('Failed to check server for active session (offline?): $e');
@@ -418,6 +635,7 @@ class SessionManager {
         latitude: position.latitude,
         longitude: position.longitude,
         address: address,
+        purpose: purpose?.trim().isEmpty == true ? null : purpose?.trim(),
       );
 
       // Cache session immediately for offline recovery
@@ -673,6 +891,89 @@ class SessionManager {
 
       _logger.i(
           'FINAL verified distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+
+      // ================================================================
+      // GOOGLE MAPS RECONCILIATION
+      // ================================================================
+      // The product owner wants the billed distance to be accurate "at
+      // any cost". GPS + Kalman is correct for the actual driven route
+      // (which can be longer than the optimal Maps route due to detours,
+      // U-turns, traffic reroutes, etc.). But if GPS missed a chunk of
+      // road (e.g. lost satellite lock in a tunnel, or location was
+      // toggled off mid-trip), the GPS distance is UNDER-counted.
+      //
+      // Strategy: also fetch Google Maps' driving distance between the
+      // start and end coordinates. If it's significantly LARGER than the
+      // GPS distance, we trust Maps and lift the session distance up to
+      // the Maps value — the user wasn't shorted. If GPS is larger, we
+      // trust GPS (real detours, in-route stops). The decision threshold
+      // (10% slack + 250m absolute) is conservative so we don't bump a
+      // legitimately short trip up to a longer "optimal" route.
+      double? mapsRouteKm;
+      try {
+        final startLat = _state.session!.startLatitude;
+        final startLng = _state.session!.startLongitude;
+        final endLat = position?.latitude ?? _state.lastLocation?.latitude;
+        final endLng = position?.longitude ?? _state.lastLocation?.longitude;
+        if (startLat != null &&
+            startLng != null &&
+            endLat != null &&
+            endLng != null) {
+          final dir = await GoogleMapsDirectionsService.getDrivingDistance(
+            startLat: startLat,
+            startLng: startLng,
+            endLat: endLat,
+            endLng: endLng,
+          );
+          if (dir != null && dir.distanceKm > 0) {
+            mapsRouteKm = dir.distanceKm;
+            _logger.i(
+                'MAPS reconciliation: gps=${verifiedDistanceKm.toStringAsFixed(2)}km, '
+                'maps_direct=${mapsRouteKm.toStringAsFixed(2)}km');
+            // Lift only when GPS is meaningfully lower than the direct
+            // route — that's the "GPS missed road" case.
+            if (verifiedDistanceKm > 0 &&
+                mapsRouteKm > verifiedDistanceKm * 1.10 &&
+                mapsRouteKm - verifiedDistanceKm > 0.25) {
+              _logger.w(
+                  'MAPS reconciliation: GPS appears to have under-counted by '
+                  '${(mapsRouteKm - verifiedDistanceKm).toStringAsFixed(2)}km — '
+                  'using Maps value as authoritative.');
+              verifiedDistanceKm = mapsRouteKm;
+            }
+          }
+        }
+      } catch (e) {
+        _logger.w('Maps reconciliation failed (non-fatal): $e');
+      }
+
+      // Step 4.5: Compute confidence + reason_codes from the same point set
+      // used for verifiedDistanceKm. This is the audit/quality label that
+      // travels with the session for the rest of its life. We compute it
+      // ONCE here, on the device, so the value persisted online and the
+      // value persisted via the offline pending-stop queue are identical.
+      ConfidenceResult confidenceResult;
+      try {
+        final pointsForScoring = await _locationRepository
+            .getLocalSessionPoints(_state.session!.id);
+        confidenceResult = ConfidenceScorer.score(
+          points: pointsForScoring,
+          estimatedKm: verifiedDistanceKm,
+          rawHaversineKm: mapsRouteKm,
+        );
+        _logger.i(
+            'Session confidence: ${confidenceResult.confidence} '
+            '(score=${confidenceResult.rawScore}, '
+            'reasons=${confidenceResult.reasonCodes})');
+      } catch (e) {
+        _logger.w('Confidence scoring failed (non-fatal): $e');
+        confidenceResult = const ConfidenceResult(
+          confidence: 'medium',
+          reasonCodes: <String>[],
+          rawScore: 50,
+        );
+      }
+
       // Step 5: End session in backend
       SessionModel? endedSession;
       try {
@@ -684,6 +985,8 @@ class SessionManager {
           address: address,
           endTime: endTime,
           totalPausedSeconds: finalTotalPausedSeconds,
+          confidence: confidenceResult.confidence,
+          reasonCodes: confidenceResult.reasonCodes,
         );
       } catch (e) {
         _logger.w('Failed to stop session online: $e');
@@ -700,6 +1003,8 @@ class SessionManager {
           address: address,
           totalKm: verifiedDistanceKm,
           totalPausedSeconds: finalTotalPausedSeconds,
+          confidence: confidenceResult.confidence,
+          reasonCodes: confidenceResult.reasonCodes,
         );
 
         // Ensure sync timer is running to retry this later
@@ -735,6 +1040,7 @@ class SessionManager {
 
       // Step 7: Background notification summary is handled by background service or skipped
 
+      _schedulePauseExpiredAlarm(null); // cancel any pending pause alarm
       _stopWatchdog();
 
       // Update state
@@ -743,9 +1049,43 @@ class SessionManager {
 
       _logger.i(
           'Session stopped. Distance: ${verifiedDistanceKm.toStringAsFixed(2)} km');
+
+      // Inform the super admin that this session ended. This is the
+      // "for any reason if anyone's session got stopped" hook the
+      // product owner asked for. We do not distinguish user-tap vs
+      // system-stop here — the super admin wants to see all of them.
+      try {
+        final uid = await _sessionRepository.resolveCurrentUserId();
+        if (uid != null) {
+          unawaited(TrackingAlertService.report(
+            employeeId: uid,
+            sessionId: _state.session?.id,
+            code: 'session_ended',
+            message:
+                'Session ended after ${verifiedDistanceKm.toStringAsFixed(2)} km',
+            latitude: position?.latitude ?? _state.lastLocation?.latitude,
+            longitude: position?.longitude ?? _state.lastLocation?.longitude,
+          ));
+        }
+      } catch (_) {/* best effort */}
+
       return endedSession;
     } catch (e) {
       _logger.e('Error stopping session: $e');
+      // Also surface the unexpected failure to the super admin.
+      try {
+        final uid = await _sessionRepository.resolveCurrentUserId();
+        if (uid != null) {
+          unawaited(TrackingAlertService.report(
+            employeeId: uid,
+            sessionId: _state.session?.id,
+            code: 'session_stopped_unexpectedly',
+            message: 'Stop failed: $e',
+            latitude: _state.lastLocation?.latitude,
+            longitude: _state.lastLocation?.longitude,
+          ));
+        }
+      } catch (_) {}
       _updateState(_state.copyWith(
         status: ManagerSessionStatus.error,
         errorMessage: 'Error stopping session: $e',
@@ -763,7 +1103,11 @@ class SessionManager {
   // ============================================================
 
   /// Pause the current session (manual or auto)
-  Future<bool> pauseSession({bool isAutoPause = false}) async {
+  Future<bool> pauseSession({
+    bool isAutoPause = false,
+    int? expectedPauseMinutes,
+    String? reason,
+  }) async {
     if (_state.session == null || _state.isPaused) {
       _logger.w('Cannot pause: no session or already paused');
       return false;
@@ -776,16 +1120,32 @@ class SessionManager {
         pausedAt: pausedAt,
       );
 
+      // Schedule the pause-expired alarm. We use a Dart timer for
+      // simplicity — it survives bg/fg transitions while the app
+      // process is alive (which is most of the time, since the
+      // foreground service keeps the process alive). For the case
+      // where the OS kills the process during a long pause, the
+      // bg-isolate's stationary detector will still re-fire after
+      // 15 min of no movement, so the user is never left silent.
+      _schedulePauseExpiredAlarm(expectedPauseMinutes);
+
       // Pause tracking (GPS continues but distance stops)
       await TrackingService.pauseTracking();
 
-      // Record break_start timeline event
+      // Record break_start timeline event with rich metadata so the
+      // admin Timeline Log shows WHY the session was paused.
+      final pauseReason = reason ?? (isAutoPause ? 'auto_pause' : 'manual');
       if (_state.lastLocation != null) {
         await _timelineRecorder.recordEvent(
           eventType: 'break_start',
           latitude: _state.lastLocation!.latitude,
           longitude: _state.lastLocation!.longitude,
           timestamp: pausedAt,
+          metadata: {
+            'reason': pauseReason,
+            'source': isAutoPause ? 'background_service' : 'user_dialog',
+            'expected_minutes': expectedPauseMinutes,
+          },
         );
       }
 
@@ -815,7 +1175,11 @@ class SessionManager {
   }
 
   /// Resume a paused session
-  Future<bool> resumeSession() async {
+  Future<bool> resumeSession({String? reason}) async {
+    // Resuming cancels any pause-expired alarm — they explicitly
+    // chose to return to tracking before the alarm fired (or in
+    // response to the alarm).
+    _schedulePauseExpiredAlarm(null);
     if (_state.session == null || !_state.isPaused) {
       _logger.w('Cannot resume: no session or not paused');
       return false;
@@ -837,7 +1201,9 @@ class SessionManager {
       // Resume tracking
       await TrackingService.resumeTracking();
 
-      // Record break_end timeline event
+      // Record break_end timeline event with rich metadata so the
+      // admin Timeline Log shows WHY the session resumed.
+      final resumeReason = reason ?? 'manual';
       if (_state.lastLocation != null) {
         await _timelineRecorder.recordEvent(
           eventType: 'break_end',
@@ -845,6 +1211,12 @@ class SessionManager {
           longitude: _state.lastLocation!.longitude,
           timestamp: resumedAt,
           durationSec: pauseDurationSec,
+          metadata: {
+            'reason': resumeReason,
+            'source': resumeReason == 'auto_resume'
+                ? 'background_service'
+                : 'user_dialog',
+          },
         );
       }
 
@@ -950,6 +1322,7 @@ class SessionManager {
 
     // Watchdog: mark when we last received GPS data.
     _lastLocationUpdateAt = DateTime.now();
+    _hasReceivedFirstFix = true;
     // Watchdog: mark when distance actually increased.
     if (update.totalDistance > _lastWatchdogDistanceM) {
       _lastDistanceIncreasedAt = DateTime.now();
@@ -988,7 +1361,10 @@ class SessionManager {
   void _onAutoPaused(Map<String, dynamic> data) {
     _logger.i('Auto-pause received from background service');
     if (_state.session != null && !_state.isPaused) {
-      unawaited(pauseSession(isAutoPause: true));
+      unawaited(pauseSession(
+        isAutoPause: true,
+        reason: 'auto_pause',
+      ));
     }
   }
 
@@ -996,7 +1372,7 @@ class SessionManager {
     _logger.i(
         'Auto-resume received from background service: ${data['distanceFromAnchor']}m moved');
     if (_state.session != null && _state.isPaused) {
-      unawaited(resumeSession());
+      unawaited(resumeSession(reason: 'auto_resume'));
     }
   }
 
@@ -1005,10 +1381,258 @@ class SessionManager {
   Stream<Map<String, dynamic>> get stationarySpotStream =>
       _stationarySpotController.stream;
 
+  /// Broadcasts when the bg-isolate detects ≥10 min stationary during
+  /// an active session. UI layer (home screen) subscribes and shows
+  /// the full-screen alarm dialog + plays the alarm sound.
+  final _stationaryAlarmController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get stationaryAlarmStream =>
+      _stationaryAlarmController.stream;
+
+  /// Broadcasts when the bg-isolate has auto-resumed tracking because
+  /// the user moved ≥ 100 m at ≥ 5 km/h during a paused session.
+  /// The resume has already happened by the time this fires — the
+  /// UI just confirms with Stop / Continue Tracking buttons.
+  final _movementAutoResumedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get movementAutoResumedStream =>
+      _movementAutoResumedController.stream;
+
   void _onStationarySpotDetected(Map<String, dynamic> data) {
     _logger.i(
         'Stationary spot detected: lat=${data['lat']}, lng=${data['lng']}, duration=${data['durationSec']}s');
     _stationarySpotController.add(data);
+  }
+
+  /// User chose "Extend pause" in the pause-expired alarm dialog. We
+  /// just reschedule the pause-expired timer for another N minutes.
+  /// Public so the home screen can call it without reaching into the
+  /// session bloc.
+  void extendPause(int minutes) {
+    if (_state.session == null || !_state.isPaused) return;
+    _logger.i('Extending pause by $minutes min');
+    _schedulePauseExpiredAlarm(minutes);
+  }
+
+  /// Schedule (or reschedule) the pause-expired alarm. Pass null to
+  /// cancel without scheduling a new one (e.g. on resume / stop).
+  ///
+  /// Side effect: also starts/stops a 10-second ticker that updates a
+  /// "Pause: 1m 45s remaining" foreground notification so the user
+  /// has a visible countdown while paused, not just a silent timer.
+  void _schedulePauseExpiredAlarm(int? minutes) {
+    _pauseExpiryTimer?.cancel();
+    _pauseExpiryTimer = null;
+    _pauseCountdownTicker?.cancel();
+    _pauseCountdownTicker = null;
+    _lastPauseExpectedMinutes = minutes;
+    if (minutes == null || minutes <= 0) {
+      // No expected duration → clear any visible countdown.
+      _updateState(_state.copyWith(clearPauseExpectedResumeAt: true));
+      try {
+        _notificationService?.cancelPauseCountdown();
+      } catch (_) {}
+      return;
+    }
+    final expectedAt =
+        DateTime.now().add(Duration(minutes: minutes));
+    _updateState(_state.copyWith(pauseExpectedResumeAt: expectedAt));
+
+    // Schedule the actual alarm at the end of the duration.
+    _pauseExpiryTimer =
+        Timer(Duration(minutes: minutes), _firePauseExpiredAlarm);
+
+    // Push the first countdown notification immediately, then refresh
+    // every 10 seconds. We stop the ticker the moment we're past the
+    // expected time — the alarm itself takes over from there.
+    final original = Duration(minutes: minutes);
+    Future<void> tick() async {
+      if (_state.session == null || !_state.isPaused) {
+        _pauseCountdownTicker?.cancel();
+        _pauseCountdownTicker = null;
+        return;
+      }
+      final remaining = expectedAt.difference(DateTime.now());
+      try {
+        await _notificationService?.showPauseCountdown(
+          remaining: remaining,
+          originalDuration: original,
+        );
+      } catch (_) {}
+      if (remaining.isNegative) {
+        _pauseCountdownTicker?.cancel();
+        _pauseCountdownTicker = null;
+      }
+    }
+
+    unawaited(tick());
+    _pauseCountdownTicker =
+        Timer.periodic(const Duration(seconds: 10), (_) => unawaited(tick()));
+
+    _logger.i('Pause-expired alarm scheduled for $minutes min '
+        '(expectedAt=${expectedAt.toIso8601String()})');
+  }
+
+  void _firePauseExpiredAlarm() {
+    if (_state.session == null || !_state.isPaused) return;
+    _logger.i('Pause-expired alarm firing');
+    _stationaryAlarmController.add({
+      'kind': 'pause_expired',
+      'durationMin': _lastPauseExpectedMinutes ?? 30,
+    });
+    try {
+      _notificationService?.showSessionAlarm(
+        title: 'Pause time is over',
+        body:
+            'Your session is still paused. Resume tracking, extend the pause, or end the session.',
+        data: {'kind': 'pause_expired'},
+      );
+    } catch (_) {}
+  }
+
+  /// The bg-isolate just noticed a long gap with significant movement
+  /// (typical when location services were toggled off mid-trip).
+  /// We hit Google Maps Directions to learn the true driving
+  /// distance between the two anchors, then add the difference
+  /// (mapsKm − haversineKm) onto the persisted session-distance.
+  /// This is how an 8 km route that lost 5.2 km to "location off"
+  /// gets back to ~8 km on the home screen and on the bill.
+  Future<void> _onMapsGapRecovery(Map<String, dynamic> data) async {
+    if (_state.session == null) return;
+    try {
+      final fromLat = (data['fromLat'] as num?)?.toDouble();
+      final fromLng = (data['fromLng'] as num?)?.toDouble();
+      final toLat = (data['toLat'] as num?)?.toDouble();
+      final toLng = (data['toLng'] as num?)?.toDouble();
+      final haversineM = (data['haversineM'] as num?)?.toDouble() ?? 0;
+      if (fromLat == null || fromLng == null || toLat == null || toLng == null) {
+        return;
+      }
+      final result = await GoogleMapsDirectionsService.getDrivingDistance(
+        startLat: fromLat,
+        startLng: fromLng,
+        endLat: toLat,
+        endLng: toLng,
+      );
+      if (result == null) {
+        _logger.w(
+            'MAPS-GAP-RECOVERY: Directions API returned nothing — keeping haversine value');
+        return;
+      }
+      final mapsM = result.distanceMeters;
+      // Only credit the DIFFERENCE between Maps and what we already
+      // counted (the haversine got recorded by the gap-recovery fast
+      // path in onPositionReceived). We credit the FULL difference
+      // because the user explicitly asked for the real road distance.
+      final addM = (mapsM - haversineM).toDouble();
+      if (addM <= 0) {
+        _logger.i(
+            'MAPS-GAP-RECOVERY: Maps (${mapsM.toStringAsFixed(0)}m) <= haversine (${haversineM.toStringAsFixed(0)}m) — no credit added');
+        return;
+      }
+      _logger.i(
+          'MAPS-GAP-RECOVERY: crediting +${addM.toStringAsFixed(0)}m '
+          '(maps=${mapsM.toStringAsFixed(0)}m, haversine=${haversineM.toStringAsFixed(0)}m)');
+
+      // Write to BOTH SharedPrefs keys + the in-memory state so the
+      // UI, the watchdog, and the post-session expense dialog all
+      // see the corrected total immediately.
+      try {
+        await _preferences.reload();
+        final currentSession = _preferences.getSessionDistanceMeters();
+        final currentBg = _preferences.getBackgroundServiceDistance();
+        final best =
+            currentSession > currentBg ? currentSession : currentBg;
+        final newTotal = best + addM;
+        await _preferences.setSessionDistanceMeters(newTotal);
+        // Also bump the bg-service key so the watchdog stays in sync.
+        try {
+          final sp = await SharedPreferences.getInstance();
+          await sp.setDouble('tracking_total_distance', newTotal);
+        } catch (_) {}
+        _updateState(_state.copyWith(currentDistanceMeters: newTotal));
+      } catch (e) {
+        _logger.e('MAPS-GAP-RECOVERY: persistence failed: $e');
+      }
+
+      // Surface a confirmation toast / state warning so the user
+      // (and the admin via tracking_alerts) can see this was
+      // applied.
+      final addedKm = addM / 1000.0;
+      final w = List<String>.from(_state.warnings)
+        ..removeWhere((s) => s.startsWith('Gap recovered'))
+        ..add(
+            'Gap recovered via Google Maps: +${addedKm.toStringAsFixed(2)} km');
+      _updateState(_state.copyWith(warnings: w));
+
+      final uid = await _sessionRepository.resolveCurrentUserId();
+      if (uid != null) {
+        unawaited(TrackingAlertService.report(
+          employeeId: uid,
+          sessionId: _state.session?.id,
+          code: 'gap_recovered_via_maps',
+          message:
+              'Recovered ${addedKm.toStringAsFixed(2)} km via Google Maps after a tracking gap',
+          latitude: toLat,
+          longitude: toLng,
+        ));
+      }
+    } catch (e) {
+      _logger.e('MAPS-GAP-RECOVERY error: $e');
+    }
+  }
+
+  void _onMovementAutoResumed(Map<String, dynamic> data) {
+    _logger.i('MOVEMENT-AUTO-RESUMED: $data');
+    // The bg-isolate has already called resumeActiveTracking(). Our
+    // job here is two things:
+    //   1) reflect the session as ACTIVE (not paused) in our state,
+    //      so the home-screen UI flips back without waiting for the
+    //      next location update.
+    //   2) cancel the pause-expired alarm + countdown that may still
+    //      be running from when the user manually paused.
+    if (_state.session != null && _state.isPaused) {
+      final resumedAt = DateTime.now();
+      final previousPausedAt = _state.session!.pausedAt ?? resumedAt;
+      final pauseDurationSec =
+          resumedAt.difference(previousPausedAt).inSeconds;
+      final totalPausedSeconds =
+          _state.session!.totalPausedSeconds + pauseDurationSec;
+      final updated = _state.session!.copyWith(
+        status: SessionStatus.active,
+        resumedAt: resumedAt,
+        totalPausedSeconds: totalPausedSeconds,
+      );
+      _updateState(_state.copyWith(session: updated, isPaused: false));
+      // Also record the break_end timeline event + update server status
+      // so the admin Timeline Log shows the auto-resume correctly.
+      unawaited(resumeSession(reason: 'auto_resume'));
+    }
+    _schedulePauseExpiredAlarm(null);
+    try {
+      _notificationService?.cancelSessionAlarm();
+      _notificationService?.cancelPauseCountdown();
+    } catch (_) {}
+    _movementAutoResumedController.add(data);
+  }
+
+  void _onStationaryAlarm(Map<String, dynamic> data) {
+    _logger.i('STATIONARY-ALARM received: $data');
+    // Surface to UI for in-app dialog.
+    _stationaryAlarmController.add(data);
+    // Also fire the OS-level alarm notification so the user gets it
+    // even when the app isn't in the foreground.
+    final mins = (data['durationMin'] as int?) ?? 15;
+    try {
+      _notificationService?.showSessionAlarm(
+        title: 'Stopped for $mins minutes',
+        body:
+            'Your session is still running. Tap to pause, continue tracking, or end the session.',
+        data: data,
+      );
+    } catch (e) {
+      _logger.w('Failed to show stationary alarm notification: $e');
+    }
   }
 
   void _onTrackingError(String error) {
@@ -1018,6 +1642,54 @@ class SessionManager {
       _updateState(_state.copyWith(
         warnings: [..._state.warnings, error],
       ));
+    }
+  }
+
+  /// Called from the BG isolate's service-status stream listener
+  /// whenever Android's "location services" master toggle flips.
+  ///
+  /// We use this to:
+  ///   1. CLEAR the "Location is OFF" warning when the user turns it
+  ///      back on, instead of waiting up to 30 seconds for the env
+  ///      watchdog to notice on its own polling cycle.
+  ///   2. Grant the freshly-resubscribed position stream a 90-second
+  ///      grace window so the watchdog doesn't fire bogus
+  ///      "GPS stalled" notifications during the warm-up.
+  void _onServiceStatusChanged(bool enabled) {
+    _logger.i('BG reports location services enabled=$enabled');
+    _bgReportsLocationOff = !enabled;
+
+    if (enabled) {
+      // 1) Clear any stale warning text.
+      final w = List<String>.from(_state.warnings)
+        ..removeWhere((s) =>
+            s.contains('Location services') ||
+            s.contains('Location permission') ||
+            s.startsWith('GPS stalled') ||
+            s.startsWith('GPS could not') ||
+            s.startsWith('Distance not'));
+      // Watchdog stamps so it doesn't immediately falsely fire.
+      _lastLocationUpdateAt = DateTime.now();
+      _lastDistanceIncreasedAt = DateTime.now();
+      _lastWatchdogAlertAt = DateTime.now();
+      _watchdogGraceUntil =
+          DateTime.now().add(const Duration(seconds: 90));
+      // Also re-flag the env state so the env watchdog doesn't re-fire.
+      _lastEnvLocationServicesEnabled = true;
+      _updateState(_state.copyWith(warnings: w));
+
+      // Best-effort: dismiss the OS-level "Location is OFF" notification
+      // and the critical 3x-vibration alert that may still be on screen.
+      try {
+        _notificationService?.cancelAllStaleAlerts();
+      } catch (_) {}
+    } else {
+      // 2) Surface the OFF state immediately in the UI too.
+      final w = List<String>.from(_state.warnings)
+        ..removeWhere((s) => s.contains('Location services'))
+        ..add('Location services are turned off');
+      _updateState(_state.copyWith(warnings: w));
+      _lastEnvLocationServicesEnabled = false;
     }
   }
 
@@ -1102,6 +1774,20 @@ class SessionManager {
       final uploadedCount = await _locationRepository.uploadPendingLocations();
       _logger.i('Location sync completed. Uploaded $uploadedCount points.');
 
+      // Sync queued timeline events (break_start/end, session start/end,
+      // stops). Without this, sessions tracked while offline have a
+      // perfectly populated route on the admin map but a blank
+      // Timeline Log alongside it.
+      try {
+        final teSent =
+            await _locationRepository.uploadPendingTimelineEvents();
+        if (teSent > 0) {
+          _logger.i('Timeline events sync completed. Sent $teSent events.');
+        }
+      } catch (e) {
+        _logger.w('Timeline events sync failed: $e');
+      }
+
       // Sync pending expenses
       if (_expenseRepository != null) {
         try {
@@ -1113,6 +1799,31 @@ class SessionManager {
           }
         } catch (e) {
           _logger.e('Error syncing expenses: $e');
+        }
+
+        // Sync queued offline session-fuel expenses. These are the ones
+        // submitted from the post-session dialog while offline; on sync
+        // we recompute the distance via Google Maps and notify the user
+        // so they can review the final amount.
+        try {
+          final results =
+              await _expenseRepository.syncPendingSessionFuels();
+          for (final r in results) {
+            try {
+              final src = r.usedGoogleMaps ? 'Google Maps' : 'GPS estimate';
+              await _notificationService?.showLocalNotification(
+                title: 'Session expense synced',
+                body:
+                    'Reconciled ${r.distanceKm.toStringAsFixed(1)} km using $src '
+                    '(₹${r.amount.toStringAsFixed(0)}). Please review and submit if any discrepancies.',
+                payload: null,
+              );
+            } catch (e) {
+              _logger.w('Failed to notify session-fuel sync: $e');
+            }
+          }
+        } catch (e) {
+          _logger.e('Error syncing offline session fuels: $e');
         }
       }
 
@@ -1127,6 +1838,43 @@ class SessionManager {
         // Run one more pass to catch any points queued during the previous sync
         unawaited(_syncPendingLocations());
       }
+    }
+  }
+
+  /// Force-end a server-side session that local state believes is over.
+  ///
+  /// Used when a previous Stop happened offline and we can't drain the
+  /// pending stop (e.g. corruption, missing pending_session_end). Without
+  /// this, the server keeps the session pinned as `active` forever and
+  /// every Present tap fails the server-check.
+  Future<void> _forceEndGhostServerSession(SessionModel ghost) async {
+    try {
+      _logger.w('Force-ending ghost server session: ${ghost.id}');
+      final pending = _preferences.getPendingSessionEnd();
+      final double km = (pending != null &&
+              (pending['sessionId'] == ghost.id))
+          ? ((pending['totalKm'] as num?)?.toDouble() ?? ghost.totalKm)
+          : ghost.totalKm;
+      final DateTime end = (pending != null &&
+              pending['endTime'] is String &&
+              pending['sessionId'] == ghost.id)
+          ? DateTime.parse(pending['endTime'] as String)
+          : DateTime.now();
+      await _sessionRepository.stopSession(
+        ghost.id,
+        (pending?['latitude'] as num?)?.toDouble() ?? ghost.endLatitude,
+        (pending?['longitude'] as num?)?.toDouble() ?? ghost.endLongitude,
+        km,
+        address: pending?['address'] as String? ?? ghost.endAddress,
+        endTime: end,
+        totalPausedSeconds:
+            (pending?['totalPausedSeconds'] as num?)?.toInt() ??
+                ghost.totalPausedSeconds,
+      );
+      await _preferences.clearPendingSessionEnd();
+      _logger.i('Ghost session force-ended');
+    } catch (e) {
+      _logger.e('Failed to force-end ghost session: $e');
     }
   }
 
@@ -1151,6 +1899,20 @@ class SessionManager {
       if (success) {
         await _preferences.clearPendingSessionStart();
         _logger.i('Pending session start synced successfully: ' + session.id);
+        // CLEAR the "You are offline. Session is being tracked locally..."
+        // warning the moment the server has successfully accepted the
+        // session row. Without this, the banner sticks for the entire
+        // remainder of the trip even though we're already syncing
+        // everything live.
+        try {
+          final cleaned = List<String>.from(_state.warnings)
+            ..removeWhere((s) =>
+                s.startsWith('You are offline') ||
+                s.contains('being tracked locally'));
+          if (cleaned.length != _state.warnings.length) {
+            _updateState(_state.copyWith(warnings: cleaned));
+          }
+        } catch (_) {}
       }
     } catch (e) {
       _logger.e('Failed to sync pending session start: $e');
@@ -1168,7 +1930,7 @@ class SessionManager {
     try {
       _logger.i('Syncing pending session stop for ${pending['sessionId']}');
 
-      await _sessionRepository.stopSession(
+      final result = await _sessionRepository.stopSession(
         pending['sessionId'],
         pending['latitude'],
         pending['longitude'],
@@ -1176,10 +1938,20 @@ class SessionManager {
         address: pending['address'],
         endTime: DateTime.parse(pending['endTime']),
         totalPausedSeconds: (pending['totalPausedSeconds'] as num?)?.toInt(),
+        confidence: pending['confidence'] as String?,
+        reasonCodes: (pending['reasonCodes'] as List?)?.cast<String>(),
       );
 
-      await _preferences.clearPendingSessionEnd();
-      _logger.i('Pending session stop synced successfully');
+      // CRITICAL: stopSession returns null on any internal failure (it catches
+      // exceptions silently). Only clear the pending data when we have a
+      // confirmed non-null result — otherwise we lose the pending stop forever
+      // and total_km stays 0 in the DB.
+      if (result != null) {
+        await _preferences.clearPendingSessionEnd();
+        _logger.i('Pending session stop synced successfully');
+      } else {
+        _logger.w('stopSession returned null — keeping pending stop for retry');
+      }
     } catch (e) {
       _logger.e('Failed to sync pending session stop: $e');
     }
@@ -1197,10 +1969,29 @@ class SessionManager {
   void _startDurationTimer(DateTime startTime) {
     _durationTimer?.cancel();
     _durationTimerTick = 0;
+    // Monotonic anchor: combine wall-clock startTime with a Stopwatch so
+    // that NTP / timezone / manual clock changes during the session
+    // can't make the displayed duration jump backwards or balloon.
+    final stopwatch = Stopwatch()..start();
+    final wallStartAtSwitchOn = DateTime.now();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_state.status == ManagerSessionStatus.active) {
         final now = DateTime.now();
-        final rawDuration = now.difference(startTime);
+        // Two candidates for "elapsed since startTime":
+        //   wallElapsed     : DateTime.now() - startTime  (may jump if NTP changes)
+        //   monotonicEquiv  : (wallStartAtSwitchOn - startTime) + stopwatch.elapsed
+        // We pick whichever is *smaller and non-negative*, which is the
+        // honest, time-jump-resistant elapsed value.
+        final wallElapsed = now.difference(startTime);
+        final monoElapsed =
+            wallStartAtSwitchOn.difference(startTime) + stopwatch.elapsed;
+        Duration rawDuration;
+        if (wallElapsed.isNegative || monoElapsed.isNegative) {
+          rawDuration = monoElapsed.isNegative ? Duration.zero : monoElapsed;
+        } else {
+          rawDuration =
+              wallElapsed < monoElapsed ? wallElapsed : monoElapsed;
+        }
 
         // Base paused seconds from completed pauses
         int totalPausedSec = _state.session?.totalPausedSeconds ?? 0;
@@ -1274,8 +2065,10 @@ class SessionManager {
     _syncTimer?.cancel();
     _syncTimer = Timer.periodic(_syncInterval, (_) async {
       await _syncPendingSessionStart(); // Sync pending Start commands FIRST
-      await _syncPendingSessionStop(); // Sync pending Stop commands
-      await _syncPendingLocations(); // Sync location points
+      await _syncPendingLocations(); // GPS points BEFORE stop — trigger fires on insert,
+      // then endSession overwrites total_km with verified value. Reversed order causes
+      // double-counting: stop sets total_km, then every GPS insert trigger adds on top.
+      await _syncPendingSessionStop(); // Sync pending Stop commands LAST
 
       // Self-cancellation: If no active session AND no pending data, stop the timer
       if (_state.status != ManagerSessionStatus.active) {
@@ -1314,15 +2107,256 @@ class SessionManager {
     _lastDistanceIncreasedAt = DateTime.now();
     _lastWatchdogDistanceM = 0;
     _lastWatchdogAlertAt = null;
+    _hasReceivedFirstFix = false;
+    _lastForgottenSessionNudgeAt = null;
     _watchdogTimer = Timer.periodic(_watchdogInterval, (_) => _watchdogTick());
-    _logger.i('Tracking watchdog started');
+
+    // Post-start no-fix watchdog: 60 seconds after the session starts,
+    // if zero GPS fixes have made it to the main isolate we treat that
+    // as a tracking failure, try to repair, and notify the user + the
+    // backend so the super admin can see something is wrong.
+    _postStartNoFixTimer?.cancel();
+    _postStartNoFixTimer =
+        Timer(const Duration(seconds: 60), _onPostStartNoFix);
+
+    // Environment watchdog: every 30s, check that location services are
+    // still on and that the permission is still granted. Either flipping
+    // off mid-session is the kind of "tracking silently stopped" bug
+    // that ends up in user complaints.
+    _envCheckTimer?.cancel();
+    _envCheckTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) => _environmentTick());
+
+    _logger.i('Tracking watchdog started (incl. post-start + env checks)');
   }
 
   void _stopWatchdog() {
     _watchdogTimer?.cancel();
     _watchdogTimer = null;
+    _postStartNoFixTimer?.cancel();
+    _postStartNoFixTimer = null;
+    _envCheckTimer?.cancel();
+    _envCheckTimer = null;
     _lastLocationUpdateAt = null;
     _lastWatchdogAlertAt = null;
+    _hasReceivedFirstFix = false;
+  }
+
+  /// Called 60 seconds after a session starts. If we still have zero
+  /// GPS fixes, something is broken. Try to recover and surface it.
+  Future<void> _onPostStartNoFix() async {
+    if (_state.status != ManagerSessionStatus.active) return;
+    if (_hasReceivedFirstFix) return; // All good
+
+    _logger.w('POST-START WATCHDOG: 60s with no GPS fix — repairing');
+
+    // 1. Re-check environment so we can tell the user exactly why.
+    final servicesOn = await _safeIsLocationServiceEnabled();
+    final permission = await _safeCheckPermission();
+    final permissionGood = permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+
+    String why = 'GPS could not get a fix within 60 seconds';
+    String alertCode = 'no_gps_fix_60s';
+    if (!servicesOn) {
+      why = 'Location services are turned off';
+      alertCode = 'location_services_disabled';
+    } else if (!permissionGood) {
+      why = 'Location permission is not granted';
+      alertCode = 'location_permission_denied';
+    }
+
+    final w = List<String>.from(_state.warnings)
+      ..removeWhere((s) =>
+          s.startsWith('GPS could not') ||
+          s.startsWith('Location services') ||
+          s.startsWith('Location permission'))
+      ..add(why);
+    _updateState(_state.copyWith(warnings: w));
+
+    try {
+      await _notificationService?.showCriticalTrackingAlert(
+        title: 'Tracking is not recording yet',
+        body: '$why. Tap the app to fix, otherwise the trip may not be counted.',
+      );
+    } catch (e) {
+      _logger.w('Post-start alert notification failed: $e');
+    }
+
+    // 2. Try to restart the background tracker — covers the case where
+    // the position stream is dead but the OS would happily give us
+    // a fix on a fresh subscription.
+    if (servicesOn && permissionGood && _state.session != null) {
+      try {
+        await TrackingService.startTracking(_state.session!.id,
+            isResume: true);
+        _logger.i('POST-START WATCHDOG: attempted tracking restart');
+      } catch (e) {
+        _logger.e('POST-START WATCHDOG restart failed: $e');
+      }
+    }
+
+    // 3. Phone-home so the super admin sees the failure.
+    final userId = await _sessionRepository.resolveCurrentUserId();
+    if (userId != null && _state.session != null) {
+      unawaited(TrackingAlertService.report(
+        employeeId: userId,
+        sessionId: _state.session!.id,
+        code: alertCode,
+        message: why,
+        latitude: _state.lastLocation?.latitude,
+        longitude: _state.lastLocation?.longitude,
+      ));
+    }
+  }
+
+  /// Periodic environment check — fires when location services or the
+  /// permission flips state mid-session.
+  Future<void> _environmentTick() async {
+    if (_state.status != ManagerSessionStatus.active) return;
+    if (_state.isPaused) return;
+
+    // Forgot-to-end-session nudge. If the session has been running for
+    // more than 90 minutes AND distance hasn't moved in the last
+    // 60 minutes AND we haven't already nudged in the last hour, fire
+    // a tap-able reminder so the user can decide: end the session or
+    // keep going. We never auto-end (product decision) but we also
+    // never let a session sit for a full day by accident.
+    _maybeNudgeForgottenSession();
+
+    final servicesOn = await _safeIsLocationServiceEnabled();
+    final permission = await _safeCheckPermission();
+    final permissionGood = permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+
+    // Detect transitions only — we don't want to spam the user every
+    // 30 seconds while they remain in a bad state.
+    if (servicesOn != _lastEnvLocationServicesEnabled) {
+      _lastEnvLocationServicesEnabled = servicesOn;
+      if (!servicesOn) {
+        await _onEnvBroken('location_services_disabled',
+            'Location services were turned off');
+      } else {
+        _logger.i('ENV WATCHDOG: location services restored');
+        // Force a re-subscription via TrackingService — this covers the
+        // case where the bg-isolate service-status listener missed the
+        // event (rare, but cheap to defend against).
+        if (_state.session != null) {
+          try {
+            await TrackingService.startTracking(_state.session!.id,
+                isResume: true);
+          } catch (_) {}
+        }
+        // Grant the freshly-restarted stream 90 seconds before the
+        // watchdog complains again. Mirrors the bg-isolate behavior.
+        _watchdogGraceUntil =
+            DateTime.now().add(const Duration(seconds: 90));
+        _lastLocationUpdateAt = DateTime.now();
+        _lastDistanceIncreasedAt = DateTime.now();
+        // Also bypass the post-start watchdog so we don't get a
+        // duplicate "Tracking is not recording yet" alert on top of
+        // the env-watchdog one.
+        _hasReceivedFirstFix = true;
+        // Clear any stale warnings text.
+        final w = List<String>.from(_state.warnings)
+          ..removeWhere((s) =>
+              s.contains('Location services') ||
+              s.startsWith('GPS stalled') ||
+              s.startsWith('GPS could not'));
+        _updateState(_state.copyWith(warnings: w));
+      }
+    }
+
+    if (permissionGood != _lastEnvPermissionGranted) {
+      _lastEnvPermissionGranted = permissionGood;
+      if (!permissionGood) {
+        await _onEnvBroken('location_permission_denied',
+            'Location permission was revoked');
+      } else {
+        _logger.i('ENV WATCHDOG: permission restored');
+      }
+    }
+  }
+
+  Future<void> _onEnvBroken(String code, String message) async {
+    _logger.w('ENV WATCHDOG: $code — $message');
+    final w = List<String>.from(_state.warnings)
+      ..removeWhere((s) => s.startsWith(message))
+      ..add(message);
+    _updateState(_state.copyWith(warnings: w));
+
+    try {
+      await _notificationService?.showCriticalTrackingAlert(
+        title: 'Tracking interrupted',
+        body: '$message. Trip distance may stop counting until this is fixed.',
+      );
+    } catch (_) {}
+
+    final userId = await _sessionRepository.resolveCurrentUserId();
+    if (userId != null && _state.session != null) {
+      unawaited(TrackingAlertService.report(
+        employeeId: userId,
+        sessionId: _state.session!.id,
+        code: code,
+        message: message,
+        latitude: _state.lastLocation?.latitude,
+        longitude: _state.lastLocation?.longitude,
+      ));
+    }
+  }
+
+  void _maybeNudgeForgottenSession() {
+    if (_state.session == null) return;
+    final session = _state.session!;
+    final now = DateTime.now();
+
+    // 90 minutes minimum session age before we'd consider nudging.
+    if (now.difference(session.startTime).inMinutes < 90) return;
+
+    // Has distance increased in the last 60 minutes? `_lastDistanceIncreasedAt`
+    // is maintained by `_onLocationUpdate`. If it's still moving, leave them
+    // alone — they're actively driving.
+    final lastInc = _lastDistanceIncreasedAt;
+    if (lastInc != null && now.difference(lastInc).inMinutes < 60) return;
+
+    // Throttle the nudge so we don't spam every 30 seconds.
+    if (_lastForgottenSessionNudgeAt != null &&
+        now.difference(_lastForgottenSessionNudgeAt!).inMinutes < 60) {
+      return;
+    }
+    _lastForgottenSessionNudgeAt = now;
+
+    final stationaryMinutes = lastInc != null
+        ? now.difference(lastInc).inMinutes
+        : now.difference(session.startTime).inMinutes;
+
+    _logger.i(
+        'FORGOTTEN-SESSION nudge: ${stationaryMinutes}min stationary, prompting user');
+
+    try {
+      _notificationService?.showCriticalTrackingAlert(
+        title: 'Still working?',
+        body:
+            'Your session has been running for ${(now.difference(session.startTime).inMinutes / 60).toStringAsFixed(1)} hours with no movement for $stationaryMinutes minutes. '
+            'Open the app and tap Work Done if you are finished.',
+      );
+    } catch (_) {}
+  }
+
+  Future<bool> _safeIsLocationServiceEnabled() async {
+    try {
+      return await Geolocator.isLocationServiceEnabled();
+    } catch (_) {
+      return true; // Don't false-alarm on a plugin error
+    }
+  }
+
+  Future<LocationPermission> _safeCheckPermission() async {
+    try {
+      return await Geolocator.checkPermission();
+    } catch (_) {
+      return LocationPermission.whileInUse;
+    }
   }
 
   Future<void> _watchdogTick() async {
@@ -1333,6 +2367,19 @@ class SessionManager {
       if (_lastLocationUpdateAt == null) return;
 
       final now = DateTime.now();
+
+      // Suppression #1: if the BG isolate just told us location services
+      // are OFF, the OFF alert is already showing. Firing a redundant
+      // "GPS stalled" alert on top of it just confuses the user.
+      if (_bgReportsLocationOff) return;
+
+      // Suppression #2: grace window after a location-services restore
+      // or a fresh session start. The new position stream typically
+      // delivers its first fix within 30s but can take up to 60-90s
+      // outdoors with a cold GPS chip.
+      if (_watchdogGraceUntil != null && now.isBefore(_watchdogGraceUntil!)) {
+        return;
+      }
 
       // Cooldown: don't spam the user every 30s.
       if (_lastWatchdogAlertAt != null &&
@@ -1416,8 +2463,11 @@ class SessionManager {
     _durationTimer?.cancel();
     _syncTimer?.cancel();
     _watchdogTimer?.cancel();
+    _connectivitySubscription?.cancel();
     _timelineRecorder.dispose();
     _stateController.close();
     _stationarySpotController.close();
+    _stationaryAlarmController.close();
+    _movementAutoResumedController.close();
   }
 }

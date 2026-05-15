@@ -31,6 +31,16 @@ interface MapComponentProps {
     points: LocationPoint[];
     timelineEvents: TimelineEvent[];
     formatTime: (isoString: string) => string;
+    /** Road-snapped route from Google Maps Directions API. When provided,
+     *  it is drawn in green on top of the raw GPS track. */
+    roadRoute?: [number, number][];
+    /** Actual road distance in km returned from Google Maps (shown in popup). */
+    roadDistanceKm?: number;
+    /** Encoded Roads-API-snapped polyline. NOT rendered here per Google ToS
+     *  (snapped geometry must not be displayed on a non-Google map). Prop is
+     *  accepted only so the same call-site works for both providers; this
+     *  component silently ignores it. See docs/MAP_PROVIDER_MIGRATION.md. */
+    snappedPolyline?: string | null;
 }
 
 const MapComponent: React.FC<MapComponentProps> = ({
@@ -40,15 +50,14 @@ const MapComponent: React.FC<MapComponentProps> = ({
     points,
     timelineEvents,
     formatTime,
+    roadRoute,
+    roadDistanceKm,
 }) => {
     useEffect(() => {
-        // This is a workaround for an issue with leaflet's default icon paths in Webpack
-        // It ensures that the default marker icons are correctly displayed.
         (async function () {
             const L = await import('leaflet');
             // @ts-ignore
             delete L.Icon.Default.prototype._getIconUrl;
-
             L.Icon.Default.mergeOptions({
                 iconRetinaUrl: 'leaflet/images/marker-icon-2x.png',
                 iconUrl: 'leaflet/images/marker-icon.png',
@@ -70,14 +79,40 @@ const MapComponent: React.FC<MapComponentProps> = ({
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
 
-                {/* Route polyline */}
+                {/* Raw GPS track — blue, shown as base layer */}
+                {routePositions.length > 1 && (
+                    <Polyline
+                        positions={routePositions}
+                        color="#1e40af"
+                        weight={7}
+                        opacity={0.25}
+                    />
+                )}
                 {routePositions.length > 1 && (
                     <Polyline
                         positions={routePositions}
                         color="#3b82f6"
-                        weight={4}
-                        opacity={0.8}
+                        weight={3}
+                        opacity={roadRoute && roadRoute.length > 1 ? 0.5 : 1}
                     />
+                )}
+
+                {/* Road-snapped route from Google Maps — green, drawn on top */}
+                {roadRoute && roadRoute.length > 1 && (
+                    <>
+                        <Polyline
+                            positions={roadRoute}
+                            color="#15803d"
+                            weight={7}
+                            opacity={0.3}
+                        />
+                        <Polyline
+                            positions={roadRoute}
+                            color="#22c55e"
+                            weight={4}
+                            opacity={1}
+                        />
+                    </>
                 )}
 
                 {/* Start marker */}
@@ -94,6 +129,14 @@ const MapComponent: React.FC<MapComponentProps> = ({
                             <strong>Start</strong>
                             <br />
                             {formatTime(points[0].recorded_at)}
+                            {roadDistanceKm != null && (
+                                <>
+                                    <br />
+                                    <span className="text-green-700 font-semibold">
+                                        Road dist: {roadDistanceKm.toFixed(2)} km
+                                    </span>
+                                </>
+                            )}
                         </Popup>
                     </CircleMarker>
                 )}
@@ -142,8 +185,8 @@ const MapComponent: React.FC<MapComponentProps> = ({
                         </CircleMarker>
                     ))}
 
-                {/* Individual location points (small dots) */}
-                {points.map((p) => (
+                {/* Individual location points — only show when sparse to avoid clutter */}
+                {points.length <= 150 && points.map((p) => (
                     <CircleMarker
                         key={p.id}
                         center={[p.latitude, p.longitude]}

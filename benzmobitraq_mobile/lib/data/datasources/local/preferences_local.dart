@@ -309,7 +309,11 @@ class PreferencesLocal {
     }
   }
 
-  /// Save pending session end data
+  /// Save pending session end data.
+  ///
+  /// confidence + reasonCodes are computed on the device at session stop
+  /// (from GPS quality, gaps, mock detection, etc.) and persisted so the
+  /// offline sync writes the same audit fields the online path does.
   Future<bool> setPendingSessionEnd({
     required String sessionId,
     required DateTime endTime,
@@ -318,6 +322,8 @@ class PreferencesLocal {
     required String? address,
     required double totalKm,
     int? totalPausedSeconds,
+    String? confidence,
+    List<String>? reasonCodes,
   }) {
     final data = {
       'sessionId': sessionId,
@@ -327,6 +333,8 @@ class PreferencesLocal {
       'address': address,
       'totalKm': totalKm,
       'totalPausedSeconds': totalPausedSeconds,
+      'confidence': confidence,
+      'reasonCodes': reasonCodes,
     };
     return prefs.setString('pending_session_end', jsonEncode(data));
   }
@@ -334,6 +342,40 @@ class PreferencesLocal {
   /// Clear pending session end data
   Future<bool> clearPendingSessionEnd() {
     return prefs.remove('pending_session_end');
+  }
+
+  // ============================================================
+  // SKIPPED POST-SESSION EXPENSE PROMPTS
+  // ============================================================
+  //
+  // When the user taps "Skip for now" on the fuel-expense dialog we
+  // remember the session id so we can re-prompt them later (next app
+  // open or via a daily reminder notification). Without this, a single
+  // accidental tap loses the entire prompt for a real trip.
+
+  static const _skippedKey = 'skipped_post_session_expenses';
+
+  /// Returns the list of session ids the user previously skipped.
+  List<String> getSkippedPostSessionIds() {
+    return prefs.getStringList(_skippedKey) ?? const <String>[];
+  }
+
+  Future<void> addSkippedPostSessionId(String sessionId) async {
+    final list = List<String>.from(getSkippedPostSessionIds());
+    if (!list.contains(sessionId)) {
+      list.add(sessionId);
+      // Cap so we don't grow unboundedly for a user who skips everything.
+      while (list.length > 50) {
+        list.removeAt(0);
+      }
+      await prefs.setStringList(_skippedKey, list);
+    }
+  }
+
+  Future<void> removeSkippedPostSessionId(String sessionId) async {
+    final list = List<String>.from(getSkippedPostSessionIds());
+    list.remove(sessionId);
+    await prefs.setStringList(_skippedKey, list);
   }
 
   // ============================================================
