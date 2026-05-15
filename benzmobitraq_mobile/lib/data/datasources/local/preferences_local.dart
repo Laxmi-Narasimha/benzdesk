@@ -226,6 +226,71 @@ class PreferencesLocal {
   }
 
   // ============================================================
+  // ACTIVE DESTINATION (live map screen + arrival detection)
+  // ============================================================
+  //
+  // When the user picks a Place via the start-session sheet, we cache
+  // its lat/lng + name here for the lifetime of the session. The
+  // live-map screen reads these to render the destination pin, and
+  // the arrival watcher uses lat/lng for the 100m geofence.
+  //
+  // Cleared on session stop. We deliberately don't put this in the
+  // SessionModel — destinations are ephemeral UI state, not part of
+  // the audit record (the audit record gets `start_place_id` /
+  // `primary_customer_id` written by Supabase via Places Autocomplete).
+
+  Future<bool> setActiveDestination({
+    required double latitude,
+    required double longitude,
+    required String name,
+    String? address,
+    String? placeId,
+  }) {
+    return prefs.setString('active_destination', jsonEncode({
+      'lat': latitude,
+      'lng': longitude,
+      'name': name,
+      'address': address,
+      'placeId': placeId,
+    }));
+  }
+
+  Map<String, dynamic>? getActiveDestination() {
+    final raw = prefs.getString('active_destination');
+    if (raw == null) return null;
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> clearActiveDestination() {
+    return prefs.remove('active_destination');
+  }
+
+  /// Saved corner placement of the draggable session pill. Values:
+  /// 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'.
+  /// Defaults to 'bottom-right'.
+  String getSessionPillCorner() {
+    return prefs.getString('session_pill_corner') ?? 'bottom-right';
+  }
+
+  Future<bool> setSessionPillCorner(String corner) {
+    return prefs.setString('session_pill_corner', corner);
+  }
+
+  /// Whether the pill is collapsed (mini distance-only) or expanded
+  /// (full stats + action buttons). Defaults to false (expanded).
+  bool getSessionPillCollapsed() {
+    return prefs.getBool('session_pill_collapsed') ?? false;
+  }
+
+  Future<bool> setSessionPillCollapsed(bool collapsed) {
+    return prefs.setBool('session_pill_collapsed', collapsed);
+  }
+
+  // ============================================================
   // SYNC STATUS
   // ============================================================
 

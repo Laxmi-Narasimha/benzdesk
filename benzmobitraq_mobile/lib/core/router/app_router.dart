@@ -1,20 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../presentation/screens/splash_screen.dart';
-import '../../presentation/screens/login_screen.dart';
-import '../../presentation/screens/home_screen.dart';
-import '../../presentation/screens/session_history_screen.dart';
-import '../../presentation/screens/expenses_screen.dart';
-import '../../presentation/screens/add_expense_screen.dart';
-import '../../presentation/screens/expense_detail_screen.dart';
-import '../../presentation/screens/profile_screen.dart';
-import '../../presentation/screens/notifications_screen.dart';
-import '../../presentation/screens/my_timeline_screen.dart';
-import '../../presentation/screens/my_trips_screen.dart';
-import '../../presentation/screens/create_trip_screen.dart';
-import '../../presentation/screens/create_trip_expense_screen.dart';
-import '../../presentation/screens/faq_screen.dart';
-import '../../data/models/trip_model.dart';
+import 'package:benzmobitraq_mobile/core/di/injection.dart';
+import 'package:benzmobitraq_mobile/presentation/blocs/chat/chat_bloc.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/splash_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/login_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/home_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/session_history_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/expenses_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/add_expense_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/expense_detail_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/profile_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/notifications_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/my_timeline_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/my_trips_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/create_trip_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/create_trip_expense_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/faq_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/debug_distance_test_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/trip_map_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/live_session_map_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/product_guide_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/chat_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/weekly_wrapped_screen.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/achievements_screen.dart';
+import 'package:benzmobitraq_mobile/data/models/trip_model.dart';
 
 /// Application router for named route navigation
 class AppRouter {
@@ -39,6 +49,13 @@ class AppRouter {
   static const String createTrip = '/trips/create';
   static const String createTripExpense = '/trips/expense/create';
   static const String faq = '/faq';
+  static const String debugDistanceTest = '/debug/distance';
+  static const String tripMap = '/trip/map';
+  static const String liveSessionMap = '/session/map';
+  static const String productGuide = '/products/guide';
+  static const String chat = '/chat';
+  static const String weeklyWrapped = '/weekly-wrapped';
+  static const String achievements = '/achievements';
 
   // ============================================================
   // ROUTE GENERATOR
@@ -143,6 +160,64 @@ class AppRouter {
           const FaqScreen(),
         );
 
+      case debugDistanceTest:
+        return _buildRoute(
+          settings,
+          const DebugDistanceTestScreen(),
+        );
+
+      case tripMap:
+        final args = settings.arguments as TripMapArguments?;
+        return _buildRoute(
+          settings,
+          TripMapScreen(
+            latitude: args?.latitude ?? 0,
+            longitude: args?.longitude ?? 0,
+            showNearby: args?.showNearby ?? true,
+          ),
+        );
+
+      case liveSessionMap:
+        return _buildRoute(
+          settings,
+          const LiveSessionMapScreen(),
+        );
+
+      case productGuide:
+        final args = settings.arguments as ProductGuideArguments?;
+        return _buildRoute(
+          settings,
+          ProductGuideScreen(
+            initialIndustry: args?.industry,
+          ),
+        );
+
+      case chat:
+        final args = settings.arguments as ChatArguments?;
+        return _buildRoute(
+          settings,
+          BlocProvider<ChatBloc>(
+            create: (_) => getIt<ChatBloc>(),
+            child: ChatScreen(
+              claimId: args?.claimId ?? '',
+              title: args?.title ?? 'Chat',
+              subtitle: args?.subtitle,
+            ),
+          ),
+        );
+
+      case weeklyWrapped:
+        return _buildRoute(
+          settings,
+          const WeeklyWrappedScreen(),
+        );
+
+      case achievements:
+        return _buildRoute(
+          settings,
+          const AchievementsScreen(),
+        );
+
       default:
         return _buildRoute(
           settings,
@@ -218,6 +293,39 @@ class ExpenseDetailArguments {
   });
 }
 
+/// Arguments for TripMapScreen
+class TripMapArguments {
+  final double latitude;
+  final double longitude;
+  final bool showNearby;
+
+  const TripMapArguments({
+    required this.latitude,
+    required this.longitude,
+    this.showNearby = true,
+  });
+}
+
+/// Arguments for ProductGuideScreen
+class ProductGuideArguments {
+  final String? industry;
+
+  const ProductGuideArguments({this.industry});
+}
+
+/// Arguments for ChatScreen
+class ChatArguments {
+  final String claimId;
+  final String title;
+  final String? subtitle;
+
+  const ChatArguments({
+    required this.claimId,
+    required this.title,
+    this.subtitle,
+  });
+}
+
 // ============================================================
 // PLACEHOLDER SCREEN (for screens not yet implemented)
 // ============================================================
@@ -240,7 +348,7 @@ class _PlaceholderScreen extends StatelessWidget {
             Icon(
               Icons.construction,
               size: 64,
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 16),
             Text(
@@ -251,7 +359,7 @@ class _PlaceholderScreen extends StatelessWidget {
             Text(
               'This screen is coming soon!',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
               ),
             ),
           ],

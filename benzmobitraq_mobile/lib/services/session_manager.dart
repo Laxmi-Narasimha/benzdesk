@@ -723,6 +723,21 @@ class SessionManager {
       _stopDetector = StopDetector();
       _lastQueuedPoint = null;
 
+      // Cache destination (if the rep picked a place at start) for
+      // the live-map screen + arrival geofence. Cleared in stopSession.
+      if (startPlaceLatitude != null &&
+          startPlaceLongitude != null &&
+          startPlaceName != null) {
+        await _preferences.setActiveDestination(
+          latitude: startPlaceLatitude,
+          longitude: startPlaceLongitude,
+          name: startPlaceName,
+          placeId: startPlaceId,
+        );
+      } else {
+        await _preferences.clearActiveDestination();
+      }
+
       // Update state
       _updateState(ManagerSessionState(
         status: ManagerSessionStatus.active,
@@ -1069,6 +1084,7 @@ class SessionManager {
       // Step 6: Clear local session
       await _preferences.clearActiveSession();
       await _preferences.clearCachedSession(); // Clear offline cache
+      await _preferences.clearActiveDestination(); // Clear live-map destination
       _backendSessionReady = false;
 
       // Step 7: Background notification summary is handled by background service or skipped

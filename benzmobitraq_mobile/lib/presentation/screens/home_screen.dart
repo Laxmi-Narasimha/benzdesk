@@ -527,6 +527,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Future.delayed(_transitionCooldown, () {
       if (mounted) _transitionInProgress = false;
     });
+
+    // Auto-open the live map IF the rep picked a destination. Wait
+    // for the session to actually become 'active' (post-permission,
+    // post-server-create) before pushing — so a failed start doesn't
+    // dump the user into a map for a session that doesn't exist.
+    if (result.placeLatitude != null && result.placeLongitude != null) {
+      unawaited(_openLiveMapWhenActive());
+    }
+  }
+
+  /// Polls the SessionManager state stream for up to 10 seconds for
+  /// the session to flip to `active`, then pushes the live-map route.
+  /// Cancelled if the widget is disposed.
+  Future<void> _openLiveMapWhenActive() async {
+    final sm = getIt<SessionManager>();
+    if (sm.currentState.status == ManagerSessionStatus.active) {
+      _pushLiveMap();
+      return;
+    }
+    StreamSubscription<ManagerSessionState>? sub;
+    final completer = Completer<void>();
+    Timer? timeout;
+    sub = sm.stateStream.listen((s) {
+      if (s.status == ManagerSessionStatus.active && !completer.isCompleted) {
+        completer.complete();
+      }
+    });
+    timeout = Timer(const Duration(seconds: 10), () {
+      if (!completer.isCompleted) completer.complete();
+    });
+    await completer.future;
+    timeout.cancel();
+    await sub.cancel();
+    if (!mounted) return;
+    if (sm.currentState.status == ManagerSessionStatus.active) {
+      _pushLiveMap();
+    }
+  }
+
+  void _pushLiveMap() {
+    if (!mounted) return;
+    Navigator.of(context).pushNamed(AppRouter.liveSessionMap);
   }
 
   Future<void> _onPauseTapped() async {
@@ -1561,8 +1603,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Show live location dialog with current coordinates and address
+  /// Show live location dialog with current coordinates and address.
+  ///
+  /// Short-circuit: if there's an active (or paused) session, take the
+  /// rep to the new in-app live map screen instead of a coords-only
+  /// dialog. The map screen shows the breadcrumbs trail, the
+  /// destination pin, and a draggable session pill — much more useful
+  /// while tracking is on.
   void _showLiveLocation() async {
+    final isInFlight =
+        getIt<SessionManager>().currentState.status ==
+                ManagerSessionStatus.active ||
+            (getIt<SessionManager>().currentState.session != null &&
+                getIt<SessionManager>().currentState.isPaused);
+    if (isInFlight) {
+      Navigator.of(context).pushNamed(AppRouter.liveSessionMap);
+      return;
+    }
+
     // Show loading dialog
     showDialog(
       context: context,
