@@ -66,6 +66,15 @@ interface Session {
     end_time: string | null;
     status: string;
     purpose?: string | null;
+    final_km?: number | null;
+    total_km?: number | null;
+    confidence?: string | null;
+    distance_source?: string | null;
+    reason_codes?: string[] | null;
+    primary_customer_id?: string | null;
+    visited_customer_ids?: string[] | null;
+    start_address?: string | null;
+    end_address?: string | null;
 }
 
 interface SessionRollup {
@@ -151,6 +160,13 @@ export default function TimelinePage() {
     // Data states
     const [points, setPoints] = useState<LocationPoint[]>([]);
     const [sessions, setSessions] = useState<Session[]>([]);
+    /** Customer id → name lookup, populated lazily from the customers
+     *  referenced by the day's sessions + session_stops. Used to render
+     *  "Visited: Maxim SMT, ABC Industries" chips. */
+    const [customerNames, setCustomerNames] = useState<Record<string, string>>({});
+    /** Per-session id → 'idle' | 'enqueued' | 'busy' | 'error' for the
+     *  "Verify distance" button feedback. */
+    const [verifyState, setVerifyState] = useState<Record<string, 'idle' | 'enqueued' | 'busy' | 'error'>>({});
     const [rollups, setRollups] = useState<SessionRollup[]>([]);
     const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
     const [dailyRollup, setDailyRollup] = useState<DailyRollup | null>(null);
@@ -315,7 +331,7 @@ export default function TimelinePage() {
             const [sessionsRes, allPoints, eventsRes, alertsRes, stopsRes] = await Promise.all([
                 supabase
                     .from('shift_sessions')
-                    .select('id, session_name, start_time, end_time, status, purpose')
+                    .select('id, session_name, start_time, end_time, status, purpose, final_km, total_km, confidence, distance_source, reason_codes, primary_customer_id, visited_customer_ids, start_address, end_address')
                     .eq('employee_id', selectedEmployee)
                     .gte('start_time', startOfDay)
                     .lte('start_time', endOfDay)
@@ -361,6 +377,37 @@ export default function TimelinePage() {
 
             setSessions(sessionsRes.data || []);
             setPoints(allPoints);
+
+            // Resolve customer names for every customer referenced by
+            // today's sessions (primary_customer_id + visited_customer_ids
+            // arrays). Single round-trip keeps it cheap. Stops also
+            // reference customer_id but they'll join against the same
+            // map.
+            try {
+                const sessRows = (sessionsRes.data as Session[] | null) || [];
+                const wanted = new Set<string>();
+                for (const s of sessRows) {
+                    if (s.primary_customer_id) wanted.add(s.primary_customer_id);
+                    if (Array.isArray(s.visited_customer_ids)) {
+                        for (const id of s.visited_customer_ids) wanted.add(id);
+                    }
+                }
+                if (wanted.size > 0) {
+                    const { data: custRows } = await supabase
+                        .from('customers')
+                        .select('id, name')
+                        .in('id', Array.from(wanted));
+                    const map: Record<string, string> = {};
+                    for (const c of custRows ?? []) {
+                        map[(c as any).id] = (c as any).name;
+                    }
+                    setCustomerNames(map);
+                } else {
+                    setCustomerNames({});
+                }
+            } catch (e) {
+                console.warn('[timeline] customer-name resolve failed:', e);
+            }
 
             // Fold session_stops rows into the timeline event stream so the
             // existing render path picks them up. We synthesise a
@@ -767,6 +814,14 @@ export default function TimelinePage() {
                                                 <div className="font-semibold text-slate-900">
                                                     {rollup?.distance_km?.toFixed(1) || '0.0'} <span className="text-xs font-normal text-slate-500">km</span>
                                                 </div>
+                                                {session.confidence && (
+                                                    <div className="mt-0.5">
+                                                        <ConfidenceBadge
+                                                            confidence={session.confidence}
+                                                            source={session.distance_source}
+                                                        />
+                                                    </div>
+                                                )}
                                             </div>
                                             <div>
                                                 <div className="text-xs text-slate-500 font-bold">Duration</div>
@@ -775,6 +830,86 @@ export default function TimelinePage() {
                                                 </div>
                                             </div>
                                         </div>
+
+                                        {/* Visited customers chips */}
+                                        {(() => {
+                                            const ids = (session.visited_customer_ids || [])
+                                                .concat(
+                                                    session.primary_customer_id
+                                                        ? [session.primary_customer_id]
+                                                        : [],
+                                                );
+                                            const uniq = Array.from(new Set(ids))
+                                                .map((id) => ({ id, name: customerNames[id] }))
+                                                .filter((c) => c.name);
+                                            if (uniq.length === 0) return null;
+                                            return (
+                                                <div className="mt-3 pt-3 border-t border-gray-100 dark:border-dark-700/50">
+                                                    <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1.5">
+                                                        Visited
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {uniq.map((c) => (
+                                                            <span
+                                                                key={c.id}
+                                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-medium"
+                                                            >
+                                                                <MapPin className="w-2.5 h-2.5" />
+                                                                {c.name}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* Verify-distance action (visible only when focused so we
+                                            don't clutter the collapsed list). */}
+                                        {isFocused && session.end_time && (
+                                            <div className="mt-3 pt-3 border-t border-gray-100 dark:border-dark-700/50 flex items-center justify-between gap-2">
+                                                <span className="text-[11px] text-slate-500">
+                                                    {session.distance_source === 'roads_api_verified'
+                                                        ? 'Road-matched via Google Roads'
+                                                        : 'Device estimate'}
+                                                </span>
+                                                <button
+                                                    onClick={async (e) => {
+                                                        e.stopPropagation();
+                                                        const cur = verifyState[session.id];
+                                                        if (cur === 'busy' || cur === 'enqueued') return;
+                                                        setVerifyState((s) => ({ ...s, [session.id]: 'busy' }));
+                                                        try {
+                                                            const sb = getSupabaseClient();
+                                                            const { error } = await sb.rpc(
+                                                                'admin_request_distance_verification',
+                                                                { p_session_id: session.id },
+                                                            );
+                                                            if (error) throw error;
+                                                            setVerifyState((s) => ({
+                                                                ...s,
+                                                                [session.id]: 'enqueued',
+                                                            }));
+                                                        } catch (err) {
+                                                            console.error('verify error:', err);
+                                                            setVerifyState((s) => ({
+                                                                ...s,
+                                                                [session.id]: 'error',
+                                                            }));
+                                                        }
+                                                    }}
+                                                    disabled={verifyState[session.id] === 'busy'}
+                                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium text-primary-700 bg-primary-50 rounded-md hover:bg-primary-100 disabled:opacity-50"
+                                                >
+                                                    {verifyState[session.id] === 'busy'
+                                                        ? 'Queuing…'
+                                                        : verifyState[session.id] === 'enqueued'
+                                                            ? 'Verification queued ✓'
+                                                            : verifyState[session.id] === 'error'
+                                                                ? 'Failed — retry'
+                                                                : 'Verify distance'}
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })
@@ -995,5 +1130,47 @@ export default function TimelinePage() {
                 </div>
             </div>
         </div>
+    );
+}
+
+// =============================================================================
+// Small badge components — kept inline so they share the parent file's
+// Tailwind classes and the TimelineEvent / Session types without an
+// extra import surface.
+// =============================================================================
+
+function ConfidenceBadge({
+    confidence,
+    source,
+}: {
+    confidence: string;
+    source?: string | null;
+}) {
+    const palette: Record<string, string> = {
+        high: 'bg-emerald-50 text-emerald-700',
+        medium: 'bg-amber-50 text-amber-700',
+        low: 'bg-red-50 text-red-700',
+        unverified_no_gps: 'bg-gray-100 text-gray-600',
+    };
+    const cls = palette[confidence] ?? 'bg-gray-100 text-gray-600';
+    const label =
+        confidence === 'unverified_no_gps'
+            ? 'No GPS'
+            : confidence.charAt(0).toUpperCase() + confidence.slice(1);
+    const verified = source === 'roads_api_verified';
+    return (
+        <span
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${cls}`}
+            title={
+                verified
+                    ? 'Road-matched via Google Roads API'
+                    : source === 'admin_corrected'
+                        ? 'Admin-corrected distance'
+                        : 'Device-filtered GPS distance'
+            }
+        >
+            {verified ? '✓ ' : ''}
+            {label}
+        </span>
     );
 }

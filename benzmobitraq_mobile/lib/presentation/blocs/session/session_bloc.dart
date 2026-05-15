@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 
-import '../../../data/models/session_model.dart';
-import '../../../data/repositories/session_repository.dart';
-import '../../../services/session_manager.dart';
-import '../../../services/permission_service.dart';
+import 'package:benzmobitraq_mobile/data/models/session_model.dart';
+import 'package:benzmobitraq_mobile/data/repositories/session_repository.dart';
+import 'package:benzmobitraq_mobile/services/session_manager.dart';
+import 'package:benzmobitraq_mobile/services/permission_service.dart';
 
 part 'session_event.dart';
 part 'session_state.dart';
@@ -22,6 +22,11 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
   final SessionRepository _sessionRepository;
   
   StreamSubscription<ManagerSessionState>? _managerSubscription;
+  StreamSubscription<Map<String, dynamic>>? _stationarySpotSubscription;
+
+  // Guard: prevent duplicate initialization when SessionInitialize is
+  // dispatched multiple times (e.g. on app resume).
+  bool _isInitialized = false;
 
   SessionBloc({
     required SessionManager sessionManager,
@@ -33,9 +38,14 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
     on<SessionInitialize>(_onInitialize);
     on<SessionStartRequested>(_onStartRequested);
     on<SessionStopRequested>(_onStopRequested);
+    on<SessionPauseRequested>(_onPauseRequested);
+    on<SessionResumeRequested>(_onResumeRequested);
     on<SessionLoadHistory>(_onLoadHistory);
     on<SessionLoadStats>(_onLoadStats);
     on<_SessionManagerUpdate>(_onManagerUpdate);
+    on<SessionStationarySpotDetected>(_onStationarySpotDetected);
+    on<SessionStationarySpotDismissed>(_onStationarySpotDismissed);
+    on<SessionRefreshState>(_onRefreshState);
   }
 
   /// Initialize and listen to session manager updates
@@ -43,29 +53,77 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
     SessionInitialize event,
     Emitter<SessionState> emit,
   ) async {
+    // CRITICAL FIX: If already initialized, just refresh state instead of
+    // re-running the full initialization pipeline. The home screen's
+    // didChangeAppLifecycleState(resumed) dispatches SessionInitialize
+    // which was creating duplicate stream subscriptions every time the
+    // app was brought to foreground, causing memory leaks and duplicate
+    // state emissions.
+    if (_isInitialized) {
+      // App was already running and is being resumed. Force the
+      // SessionManager to re-read SharedPreferences from disk so we
+      // pick up any distance the background isolate accumulated
+      // while the main isolate was throttled. Without this, the home
+      // screen shows stale km even though the bg service kept counting.
+      await _sessionManager.rehydrateFromDisk();
+      final managerState = _sessionManager.currentState;
+      emit(_mapManagerStateToBloc(managerState));
+      return;
+    }
+
     emit(state.copyWith(status: SessionBlocStatus.loading));
 
     try {
       // Initialize session manager
       await _sessionManager.initialize();
 
+      // CRITICAL FIX: Cancel any existing subscriptions before attaching new ones.
+      // This prevents duplicate listeners if _onInitialize is called multiple times.
+      await _managerSubscription?.cancel();
+      await _stationarySpotSubscription?.cancel();
+
       // Listen to session manager state changes
       _managerSubscription = _sessionManager.stateStream.listen((managerState) {
         add(_SessionManagerUpdate(managerState));
+      });
+
+      // Listen for stationary spot detection (nearby companies)
+      _stationarySpotSubscription = _sessionManager.stationarySpotStream.listen((data) {
+        add(SessionStationarySpotDetected(data));
       });
 
       // Get current state
       final managerState = _sessionManager.currentState;
       emit(_mapManagerStateToBloc(managerState));
       
-      // Load stats
+      // Load history and stats for achievements
+      add(const SessionLoadHistory());
       add(const SessionLoadStats());
+
+      _isInitialized = true;
     } catch (e) {
       emit(state.copyWith(
         status: SessionBlocStatus.error,
         errorMessage: 'Failed to initialize: $e',
       ));
     }
+  }
+
+  /// Lightweight state refresh — re-reads current SessionManager state
+  /// without re-initializing subscriptions or running server checks.
+  /// Called by the UI refresh timer every 3 seconds.
+  Future<void> _onRefreshState(
+    SessionRefreshState event,
+    Emitter<SessionState> emit,
+  ) async {
+    if (!_isInitialized) return; // Not ready yet
+    // Cheap rehydrate every refresh so the home screen catches up to
+    // background-isolate distance writes even while the user is
+    // staring at the screen (in case the OS throttles event delivery
+    // but still lets prefs.reload() through).
+    await _sessionManager.rehydrateFromDisk();
+    final managerState = _sessionManager.currentState;
+    emit(_mapManagerStateToBloc(managerState));
   }
 
   /// Handle start session request
@@ -89,7 +147,13 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
       }
 
       // Start the session
-      final success = await _sessionManager.startSession();
+      final success = await _sessionManager.startSession(
+        purpose: event.purpose,
+        startPlaceId: event.startPlaceId,
+        startPlaceName: event.startPlaceName,
+        startPlaceLatitude: event.startPlaceLatitude,
+        startPlaceLongitude: event.startPlaceLongitude,
+      );
 
       if (!success) {
         emit(state.copyWith(
@@ -102,6 +166,52 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
       emit(state.copyWith(
         status: SessionBlocStatus.error,
         errorMessage: 'Error starting session: $e',
+      ));
+    }
+  }
+
+  /// Handle pause session request
+  Future<void> _onPauseRequested(
+    SessionPauseRequested event,
+    Emitter<SessionState> emit,
+  ) async {
+    try {
+      final success = await _sessionManager.pauseSession(
+        expectedPauseMinutes: event.expectedPauseMinutes,
+      );
+      if (!success) {
+        emit(state.copyWith(
+          status: SessionBlocStatus.error,
+          errorMessage: 'Failed to pause session',
+        ));
+      }
+      // State will be updated via _SessionManagerUpdate
+    } catch (e) {
+      emit(state.copyWith(
+        status: SessionBlocStatus.error,
+        errorMessage: 'Error pausing session: $e',
+      ));
+    }
+  }
+
+  /// Handle resume session request
+  Future<void> _onResumeRequested(
+    SessionResumeRequested event,
+    Emitter<SessionState> emit,
+  ) async {
+    try {
+      final success = await _sessionManager.resumeSession();
+      if (!success) {
+        emit(state.copyWith(
+          status: SessionBlocStatus.error,
+          errorMessage: 'Failed to resume session',
+        ));
+      }
+      // State will be updated via _SessionManagerUpdate
+    } catch (e) {
+      emit(state.copyWith(
+        status: SessionBlocStatus.error,
+        errorMessage: 'Error resuming session: $e',
       ));
     }
   }
@@ -215,14 +325,38 @@ class SessionBloc extends Bloc<SessionEvent, SessionState> {
       duration: managerState.duration,
       lastLatitude: managerState.lastLocation?.latitude,
       lastLongitude: managerState.lastLocation?.longitude,
+      gpsAccuracyMeters: managerState.lastLocation?.accuracy,
       warnings: managerState.warnings,
       errorMessage: managerState.errorMessage,
+      isPaused: managerState.isPaused,
+      pauseExpectedResumeAt: managerState.pauseExpectedResumeAt,
+      clearPauseExpectedResumeAt: managerState.pauseExpectedResumeAt == null,
+      currentSpeedKmh: managerState.lastLocation?.speed == null
+          ? null
+          : (managerState.lastLocation!.speed * 3.6),
     );
+  }
+
+  /// Stationary spot detected — update state with spot data for UI snackbar
+  void _onStationarySpotDetected(
+    SessionStationarySpotDetected event,
+    Emitter<SessionState> emit,
+  ) {
+    emit(state.copyWith(stationarySpotData: event.data));
+  }
+
+  /// Clear stationary spot data after UI has handled it
+  void _onStationarySpotDismissed(
+    SessionStationarySpotDismissed event,
+    Emitter<SessionState> emit,
+  ) {
+    emit(state.copyWith(clearStationarySpotData: true));
   }
 
   @override
   Future<void> close() {
     _managerSubscription?.cancel();
+    _stationarySpotSubscription?.cancel();
     return super.close();
   }
 }

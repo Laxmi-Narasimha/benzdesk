@@ -498,18 +498,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    // Show the start-session sheet with the swipe-to-confirm gesture
-    // and the purpose textbox. Returns the entered purpose string, or
-    // null if the user dismissed the sheet without confirming.
-    final purpose = await StartSessionSheet.show(context);
+    // Show the start-session sheet with Places Autocomplete + the
+    // swipe-to-confirm gesture. Returns a StartSessionResult on
+    // confirm, or null if the user dismissed without confirming.
+    // Bias autocomplete suggestions to the user's last known fix so
+    // Manesar businesses show before Mumbai ones.
+    final lastLoc =
+        getIt<SessionManager>().currentState.lastLocation;
+    final result = await StartSessionSheet.show(
+      context,
+      biasLatitude: lastLoc?.latitude,
+      biasLongitude: lastLoc?.longitude,
+    );
     if (!mounted) return;
-    if (purpose == null) return; // user dismissed without confirming
+    if (result == null) return;
 
     _transitionInProgress = true;
     _lastTransitionAt = DateTime.now();
     context.read<SessionBloc>().add(
           SessionStartRequested(
-            purpose: purpose.isEmpty ? null : purpose,
+            purpose: result.purpose.isEmpty ? null : result.purpose,
+            startPlaceId: result.placeId,
+            startPlaceName: result.placeName,
+            startPlaceLatitude: result.placeLatitude,
+            startPlaceLongitude: result.placeLongitude,
           ),
         );
     Future.delayed(_transitionCooldown, () {

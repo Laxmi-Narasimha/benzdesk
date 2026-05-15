@@ -159,7 +159,7 @@ const mobitraqNav: NavItem[] = [
         roles: ['accounts_admin', 'director'],
     },
     {
-        href: '/director/mobitraq/expenses',
+        href: '/director/mobitraq/field-expenses',
         label: 'Field Expenses',
         icon: <Receipt className="w-5 h-5" />,
         roles: ['accounts_admin', 'director'],
@@ -168,6 +168,12 @@ const mobitraqNav: NavItem[] = [
         href: '/director/mobitraq/employees',
         label: 'Employees',
         icon: <Users className="w-5 h-5" />,
+        roles: ['accounts_admin', 'director'],
+    },
+    {
+        href: '/director/mobitraq/customers',
+        label: 'Customers',
+        icon: <MapPin className="w-5 h-5" />,
         roles: ['accounts_admin', 'director'],
     },
 ];

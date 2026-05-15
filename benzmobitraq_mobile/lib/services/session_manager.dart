@@ -473,7 +473,13 @@ class SessionManager {
   /// 3. Create session in backend
   /// 4. Start background tracking
   /// 5. Begin sync timer
-  Future<bool> startSession({String? purpose}) async {
+  Future<bool> startSession({
+    String? purpose,
+    String? startPlaceId,
+    String? startPlaceName,
+    double? startPlaceLatitude,
+    double? startPlaceLongitude,
+  }) async {
     if (_state.status == ManagerSessionStatus.active) {
       _logger.w('Session already active');
       return false;
@@ -658,6 +664,8 @@ class SessionManager {
           session,
           position.latitude,
           position.longitude,
+          startPlaceId: startPlaceId,
+          startPlaceName: startPlaceName,
         );
       } catch (e) {
         _logger.w('Session server creation failed (offline?): $e');
@@ -670,6 +678,8 @@ class SessionManager {
           jsonEncode(session.toJson()),
           position.latitude,
           position.longitude,
+          startPlaceId: startPlaceId,
+          startPlaceName: startPlaceName,
         );
         warnings.add('You are offline. Session is being tracked locally and will sync automatically when internet returns.');
       } else {
@@ -1994,6 +2004,8 @@ class SessionManager {
         session,
         (pending['latitude'] as num).toDouble(),
         (pending['longitude'] as num).toDouble(),
+        startPlaceId: pending['startPlaceId'] as String?,
+        startPlaceName: pending['startPlaceName'] as String?,
       );
 
       if (success) {

@@ -160,6 +160,31 @@ class SupabaseDataSource {
     }).eq('id', sessionId);
   }
 
+  /// Bind the Google Place picked by the user at session start.
+  ///
+  /// Best-effort: server-side enrich-trip will still match the trip to
+  /// a customer by GPS proximity if this write fails (e.g. offline at
+  /// start, the place columns were added after the session was created).
+  Future<void> updateSessionStartPlace({
+    required String sessionId,
+    required String placeId,
+    String? placeName,
+  }) async {
+    try {
+      await _client.from('shift_sessions').update({
+        'start_place_id': placeId,
+        // Persist the human-readable place name into the legacy
+        // `purpose` field too. Admin views already render that, so
+        // existing sessions on existing screens get the benefit without
+        // any UI work.
+        if (placeName != null && placeName.isNotEmpty) 'purpose': placeName,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', sessionId);
+    } catch (e) {
+      // Swallow: the enrich-trip job will fix it after sync.
+    }
+  }
+
   /// Update session status (pause/resume)
   ///
   /// Until the DB migration adds paused_at / resumed_at /

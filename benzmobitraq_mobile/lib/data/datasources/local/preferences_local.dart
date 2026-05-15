@@ -188,12 +188,23 @@ class PreferencesLocal {
   // ============================================================
 
   /// Store a session that needs to be created on the server when internet
-  /// returns. The JSON is {sessionJson, latitude, longitude}.
-  Future<bool> setPendingSessionStart(String sessionJson, double lat, double lng) {
+  /// returns. Includes an optional Google Place ID + name picked by the
+  /// rep at session start (Places Autocomplete on the start sheet) so
+  /// the eventual server INSERT can carry the same metadata an online
+  /// start would.
+  Future<bool> setPendingSessionStart(
+    String sessionJson,
+    double lat,
+    double lng, {
+    String? startPlaceId,
+    String? startPlaceName,
+  }) {
     return prefs.setString('pending_session_start', jsonEncode({
       'sessionJson': sessionJson,
       'latitude': lat,
       'longitude': lng,
+      'startPlaceId': startPlaceId,
+      'startPlaceName': startPlaceName,
       'queuedAt': DateTime.now().toIso8601String(),
     }));
   }

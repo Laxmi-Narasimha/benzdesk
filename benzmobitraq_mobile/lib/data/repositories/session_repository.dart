@@ -47,8 +47,10 @@ class SessionRepository {
   Future<bool> startSession(
     SessionModel session,
     double latitude,
-    double longitude,
-  ) async {
+    double longitude, {
+    String? startPlaceId,
+    String? startPlaceName,
+  }) async {
     try {
       final userId = await resolveCurrentUserId();
       if (userId == null) {
@@ -72,6 +74,17 @@ class SessionRepository {
         address: session.startAddress,
         todayKm: 0,
       );
+
+      // If the rep picked a Place via Autocomplete on the start sheet,
+      // bind it now. Best-effort — the enrich-trip Edge Function will
+      // also try to match by proximity if this is missing.
+      if (startPlaceId != null && startPlaceId.isNotEmpty) {
+        await _dataSource.updateSessionStartPlace(
+          sessionId: session.id,
+          placeId: startPlaceId,
+          placeName: startPlaceName,
+        );
+      }
 
       _logger.i('Session started successfully: ${session.id}');
       return true;

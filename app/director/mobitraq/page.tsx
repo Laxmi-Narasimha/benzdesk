@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import {
-    MapPin, Users, Clock, Gauge, Activity, Calendar, Map, AlertCircle, RefreshCw
+    MapPin, Users, Clock, Gauge, Activity, Calendar, Map, AlertCircle, RefreshCw, Navigation
 } from 'lucide-react';
+import ProximityPanel from './ProximityPanel';
 
 interface Session {
     id: string;
@@ -288,6 +289,11 @@ export default function MobitraqDashboard() {
                     value={`₹${todayStats.totalExpenses.toLocaleString()}`} color="green"
                     subtitle={`${todayStats.expenseCount} claims`} />
             </div>
+
+            {/* Live proximity (Route Matrix) — only meaningful for today's
+                view AND when there are active employees right now. */}
+            {selectedDate === getIstDateString() &&
+                todayStats.activeSessions >= 2 && <ProximityPanel />}
 
             {/* Sessions count indicator */}
             <div className="text-sm text-gray-500 font-medium">
