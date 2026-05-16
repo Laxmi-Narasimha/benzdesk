@@ -78,6 +78,13 @@ class LocationUpdate {
       };
 }
 
+/// Tiny holder for the cluster-stationary detector's ring buffer.
+class _FixCoord {
+  final double lat;
+  final double lng;
+  const _FixCoord(this.lat, this.lng);
+}
+
 /// Robust background location tracking service
 ///
 /// This service handles:
@@ -612,6 +619,30 @@ void _onServiceStart(ServiceInstance service) async {
   const double autoResumeSpeedKmh = 6.0;
   const double autoResumeDistanceM = 100.0;
 
+  // ============================================================
+  // CLUSTER-BASED STATIONARY DETECTOR
+  // ============================================================
+  //
+  // The single most reliable stationary-detection signal: track the
+  // last N GPS fixes' coordinates. Compute their centroid. If the
+  // MAX distance from any fix to the centroid is < clusterRadiusM,
+  // the rep hasn't actually moved — every coordinate is just GPS
+  // jitter oscillating around one true position.
+  //
+  // Works regardless of what the GPS chip reports for speed (which
+  // is unreliable when stationary — Android can hallucinate 1-5 km/h
+  // from coordinate jitter). Works regardless of EMA-smoothed speed
+  // (which is sticky after a real drive ends). Pure geometry.
+  //
+  // Tuned for: phone on desk with mediocre indoor GPS lock should
+  // produce 5-15m amplitude jitter, well below the 35m clusterRadius.
+  // A user walking 5 km/h covers 7m/sec → 7 fixes at 5s interval =
+  // 245m displacement, easily breaks the cluster.
+  final List<_FixCoord> _recentFixes = [];
+  const int clusterWindowSize = 12;
+  const double clusterRadiusM = 35.0;
+  const int clusterMinFixesToDecide = 6;
+
   // Stationary spot detection (for nearby companies feature)
   double stationarySpotSeconds = 0;
   double? stationarySpotAnchorLat;
@@ -679,6 +710,7 @@ void _onServiceStart(ServiceInstance service) async {
     autoPauseAnchorLat = null;
     autoPauseAnchorLng = null;
     autoPauseNotified = false;
+    _recentFixes.clear();
     resetMovementCandidate();
     await prefs.setBool(TrackingService._keyIsPaused, false);
     await prefs.remove(TrackingService._keyAutoPauseAt);
@@ -1146,30 +1178,81 @@ void _onServiceStart(ServiceInstance service) async {
       }
 
       // ============================================================
-      // HARD STATIONARY GATE — kills phone-on-desk drift dead.
+      // CLUSTER STATIONARY GATE — ZERO false positives on phone-on-desk.
       // ============================================================
-      // Previous filter (jitterBaseM=8m, accuracy*1.0) accepted every
-      // 8-15m GPS noise spike when the phone had a good lock. Over a
-      // 20-min stationary period that adds up to ~1.5 km of phantom
-      // distance — verified by the user putting his phone on a table
-      // and watching the trip rack up kilometers.
+      // Maintain a ring buffer of the last N coordinates. If ALL of
+      // them fall within `clusterRadiusM` of their centroid, the rep
+      // hasn't actually moved — every fix is just GPS jitter
+      // oscillating around one real position.
       //
-      // The rule: when the position's OWN GPS chip reports speed
-      // effectively zero, do not count the delta as movement.
-      // Combined with sustained-low-speed detection, this catches
-      // both real stillness and slow drift.
+      // This runs FIRST because it's the most reliable signal we have.
+      // It ignores the GPS chip's `speed` field (unreliable when
+      // stationary), it ignores our EMA-smoothed `calculatedSpeedKmh`
+      // (sticky after a real drive ends), and it ignores accuracy.
+      // Pure geometry: did the coordinates move, or are they drifting
+      // around one point?
       //
-      // We allow ONE exception: if the rep has been confirmed moving
-      // for the last few fixes (calculatedSpeedKmh >= 5), a single
-      // zero-speed fix is treated as a transient GPS chip glitch —
-      // it doesn't reset the trip, but its distance delta is still
-      // dropped on the floor (kept the previous segment's accepted
-      // delta, didn't add this one).
+      // Also resets the EMA-smoothed speed to 0 the moment we detect
+      // a cluster — kills the sticky-speed problem.
+      _recentFixes.add(_FixCoord(position.latitude, position.longitude));
+      while (_recentFixes.length > clusterWindowSize) {
+        _recentFixes.removeAt(0);
+      }
+      bool clusterSaysStill = false;
+      double clusterMaxDistFromCentroid = 0;
+      if (_recentFixes.length >= clusterMinFixesToDecide) {
+        final n = _recentFixes.length;
+        double sumLat = 0, sumLng = 0;
+        for (final f in _recentFixes) {
+          sumLat += f.lat;
+          sumLng += f.lng;
+        }
+        final centroidLat = sumLat / n;
+        final centroidLng = sumLng / n;
+        for (final f in _recentFixes) {
+          final d = Geolocator.distanceBetween(
+              centroidLat, centroidLng, f.lat, f.lng);
+          if (d > clusterMaxDistFromCentroid) {
+            clusterMaxDistFromCentroid = d;
+          }
+        }
+        clusterSaysStill = clusterMaxDistFromCentroid < clusterRadiusM;
+      }
+      if (clusterSaysStill && !forceRecord) {
+        logger.i(
+            'CLUSTER-GATE: rejecting fix, ${_recentFixes.length} recent positions '
+            'within ${clusterMaxDistFromCentroid.toStringAsFixed(1)}m of centroid '
+            '(threshold ${clusterRadiusM.toStringAsFixed(0)}m) — user is stationary');
+        // Kill the EMA stickiness so subsequent legitimate movement
+        // doesn't have to fight a leftover speed memory.
+        calculatedSpeedKmh = 0;
+        stationaryCount++;
+        firstStationaryAt ??= now;
+        resetMovementCandidate();
+        if (stationaryCount >= 3) {
+          isMoving = false;
+        }
+        // Save the point so the polyline still has it (gives the
+        // admin map something to render), but it contributes 0m to
+        // distance.
+        lastPosition = position;
+        lastPositionTime = now;
+        return;
+      }
+
+      // ============================================================
+      // SPEED STATIONARY GATE — covers the warmup window where the
+      // cluster buffer isn't full yet.
+      // ============================================================
       final reportedSpeedKmh = position.speed.isFinite && position.speed > 0
           ? position.speed * 3.6
           : 0.0;
       final smoothSpeedKmh = calculatedSpeedKmh;
-      final speedSaysStill = reportedSpeedKmh < 1.5 && smoothSpeedKmh < 2.0;
+      // Loosened from 1.5 → 3 km/h: Android FusedLocation can
+      // hallucinate up to ~2-3 km/h "speed" from coordinate jitter
+      // even when fully stationary. 3 km/h is still well below any
+      // real driving / bike / brisk-walk pace.
+      final speedSaysStill = reportedSpeedKmh < 3.0 && smoothSpeedKmh < 3.0;
 
       // ============================================================
       // ACCURACY-WEIGHTED JITTER FILTER
@@ -2248,6 +2331,7 @@ void _onServiceStart(ServiceInstance service) async {
     stationaryAlarmFired = false;
     pausedAlarmFired = false;
     autoResumeFastFixHits = 0;
+    _recentFixes.clear();
     try {
       await flutterLocalNotificationsPlugin.cancel(90201);
     } catch (_) {}
