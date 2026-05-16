@@ -57,13 +57,21 @@ class AppConstants {
   // ============================================================
 
   /// Maximum acceptable accuracy (in meters)
-  /// Per spec: "Reject points where accuracy_m > 50"
-  /// LOOSENED: Accept up to 50m for typical urban GPS
-  static const double maxAccuracyThreshold = 50.0;
+  /// Hard ceiling for GPS accuracy we'll accept on the device.
+  /// Raised 2026-05-15 from 50 → 100m after under-counting bug:
+  /// in narrow streets, parking garages, and urban canyons, GPS
+  /// accuracy degrades to 50-100m and back. The old 50m cap dropped
+  /// those fixes entirely, leaving gaps in the recorded path. The
+  /// downstream rendering filter (in SessionManager._queueLocation)
+  /// still drops accuracy > 80m for the polyline jitter cleanup —
+  /// so really bad fixes still get filtered. This higher ceiling
+  /// just keeps them available to the running-total distance.
+  static const double maxAccuracyThreshold = 100.0;
 
-  /// Minimum distance delta for moving mode (in meters)
-  /// Used as base for jitter filtering
-  static const double minDistanceDelta = 15.0;
+  /// Minimum distance delta for moving mode (in meters).
+  /// Tuned 2026-05-15 from 15 → 8m. A pedestrian's 10m step would
+  /// have been rejected as jitter under the old value.
+  static const double minDistanceDelta = 8.0;
 
   /// Minimum speed to consider as movement (in m/s)
   /// DISABLED: Many devices report speed=0 even when moving

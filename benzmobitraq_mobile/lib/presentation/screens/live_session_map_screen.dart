@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:benzmobitraq_mobile/core/di/injection.dart';
 import 'package:benzmobitraq_mobile/data/datasources/local/preferences_local.dart';
@@ -13,6 +14,7 @@ import 'package:benzmobitraq_mobile/data/repositories/location_repository.dart';
 import 'package:benzmobitraq_mobile/presentation/blocs/session/session_bloc.dart';
 import 'package:benzmobitraq_mobile/presentation/widgets/draggable_session_pill.dart';
 import 'package:benzmobitraq_mobile/presentation/widgets/post_session_expense_dialog.dart';
+import 'package:benzmobitraq_mobile/services/google_maps_directions_service.dart';
 import 'package:benzmobitraq_mobile/services/session_manager.dart';
 
 /// Live, in-app map view shown while a session is active.
@@ -72,6 +74,16 @@ class _LiveSessionMapScreenState extends State<LiveSessionMapScreen> {
   final List<LatLng> _breadcrumbs = [];
   bool _historyLoaded = false;
 
+  /// Decoded polyline of the optimal driving route from start → destination,
+  /// fetched once via Google Directions API at session start. Drawn as a
+  /// muted gray line under the live blue breadcrumb trail so the rep can
+  /// see at-a-glance how their actual path compares to the planned one.
+  /// Null when there's no destination or when the API call failed.
+  final List<LatLng> _plannedRoute = [];
+  bool _plannedRouteLoading = false;
+  double? _plannedRouteKm;
+  int? _plannedRouteEtaSec;
+
   // Initial camera position — populated lazily from the first fix.
   CameraPosition? _initialCamera;
 
@@ -101,6 +113,101 @@ class _LiveSessionMapScreenState extends State<LiveSessionMapScreen> {
     _stateSub = _sessionManager.stateStream.listen(_onStateChanged);
 
     _loadHistoryPoints();
+    // Fire-and-forget — the planned-route polyline is a nice-to-have
+    // overlay; the map still works without it. Fetched once at open.
+    unawaited(_fetchPlannedRoute());
+  }
+
+  Future<void> _fetchPlannedRoute() async {
+    final session = _state?.session;
+    if (session == null || _destinationLatLng == null) return;
+    final startLat = session.startLatitude;
+    final startLng = session.startLongitude;
+    if (startLat == null || startLng == null) return;
+    if (_plannedRouteLoading || _plannedRoute.isNotEmpty) return;
+    setState(() => _plannedRouteLoading = true);
+    try {
+      final r = await GoogleMapsDirectionsService.getDrivingDistance(
+        startLat: startLat,
+        startLng: startLng,
+        endLat: _destinationLatLng!.latitude,
+        endLng: _destinationLatLng!.longitude,
+      );
+      if (!mounted) return;
+      if (r != null && r.polyline != null && r.polyline!.isNotEmpty) {
+        final decoded = _decodePolyline(r.polyline!);
+        setState(() {
+          _plannedRoute
+            ..clear()
+            ..addAll(decoded);
+          _plannedRouteKm = r.distanceKm;
+          _plannedRouteEtaSec = r.durationSeconds;
+        });
+      }
+    } catch (_) {
+      // Silent: planned route is non-essential
+    } finally {
+      if (mounted) setState(() => _plannedRouteLoading = false);
+    }
+  }
+
+  /// Decodes a Google-encoded polyline (precision 5) into LatLng points.
+  /// Same algorithm as encodePolyline in the Edge Function's geo.ts,
+  /// just in reverse. Inlined here so we don't take a dependency on
+  /// the (heavier) flutter_polyline_points package.
+  List<LatLng> _decodePolyline(String encoded) {
+    final list = <LatLng>[];
+    int index = 0, lat = 0, lng = 0;
+    while (index < encoded.length) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      final dlat = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      lat += dlat;
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      final dlng = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      lng += dlng;
+      list.add(LatLng(lat / 1e5, lng / 1e5));
+    }
+    return list;
+  }
+
+  Future<void> _openInGoogleMaps() async {
+    if (_destinationLatLng == null) return;
+    final lat = _destinationLatLng!.latitude;
+    final lng = _destinationLatLng!.longitude;
+    // The `google.navigation:` URI starts Google Maps DIRECTLY in
+    // navigation mode (skips the directions screen, jumps to voice
+    // turn-by-turn from current location). Falls back to a generic
+    // geo: URI on devices without Google Maps installed.
+    final navUri = Uri.parse('google.navigation:q=$lat,$lng&mode=d');
+    final geoUri = Uri.parse(
+      'geo:$lat,$lng?q=$lat,$lng(${Uri.encodeComponent(_destinationName ?? "Destination")})',
+    );
+    try {
+      if (await canLaunchUrl(navUri)) {
+        await launchUrl(navUri, mode: LaunchMode.externalApplication);
+        return;
+      }
+      await launchUrl(geoUri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // Last-ditch — open in browser
+      final webUri = Uri.parse(
+        'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving',
+      );
+      try {
+        await launchUrl(webUri, mode: LaunchMode.externalApplication);
+      } catch (_) {}
+    }
   }
 
   @override
@@ -353,16 +460,35 @@ class _LiveSessionMapScreenState extends State<LiveSessionMapScreen> {
     }
 
     final polylines = <Polyline>{};
+    // Planned route — rendered UNDER the live trail. Muted gray so the
+    // rep's actual blue path stands out on top. If the rep deviates,
+    // they can see at a glance.
+    if (_plannedRoute.length >= 2) {
+      polylines.add(Polyline(
+        polylineId: const PolylineId('planned'),
+        points: _plannedRoute,
+        color: Colors.grey.shade500,
+        width: 6,
+        geodesic: false,
+        patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+        startCap: Cap.roundCap,
+        endCap: Cap.roundCap,
+        jointType: JointType.round,
+        zIndex: 0,
+      ));
+    }
+    // Live breadcrumb trail — bright blue, drawn ON TOP of planned route.
     if (_breadcrumbs.length >= 2) {
       polylines.add(Polyline(
         polylineId: const PolylineId('trail'),
         points: _breadcrumbs,
         color: Theme.of(context).colorScheme.primary,
-        width: 5,
+        width: 6,
         geodesic: true,
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
         jointType: JointType.round,
+        zIndex: 1,
       ));
     }
 
@@ -448,10 +574,63 @@ class _LiveSessionMapScreenState extends State<LiveSessionMapScreen> {
                       ),
                     ),
                   ),
-                const Spacer(),
+                // Open in Google Maps — auto-starts turn-by-turn nav.
+                // Only shows when there's an actual destination to drive
+                // to. The rep can use this for navigation while our
+                // tracking continues in the BG.
+                if (_destinationLatLng != null) ...[
+                  const SizedBox(width: 8),
+                  _RoundIcon(
+                    icon: Icons.navigation,
+                    onTap: _openInGoogleMaps,
+                    tooltip: 'Navigate in Google Maps',
+                    color: const Color(0xFF1A73E8),
+                  ),
+                ],
               ],
             ),
           ),
+
+          // ─────────── PLANNED-ROUTE INFO PILL ──────────────────────────────
+          // When we know the optimal route distance + ETA, show it as a
+          // small chip below the top bar. Free real-estate; orients the
+          // rep on what they're about to drive.
+          if (_plannedRouteKm != null && _plannedRouteEtaSec != null)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 64,
+              left: 14,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.96),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.route, size: 14, color: Colors.grey.shade700),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Route ${_plannedRouteKm!.toStringAsFixed(1)} km · '
+                      '${(_plannedRouteEtaSec! / 60).round()} min',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
           // ─────────── RECENTER FAB ───────────────────────────────────────
           if (loc != null)

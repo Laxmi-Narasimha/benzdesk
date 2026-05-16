@@ -29,8 +29,23 @@ class DistanceEngine {
   // ============================================================
   // JITTER & NOISE FILTERS
   // ============================================================
-  static const double jitterBaseM = 20.0;
-  static const double jitterAccuracyMultiplier = 2.5;
+  //
+  // **Tuned 2026-05-15 after a 12 km real-world drive (Google-Maps-
+  // verified) under-counted to 9.7 km — a 20% loss.**
+  //
+  // Old values were too aggressive for Indian city driving:
+  //   jitterBaseM = 20m, multiplier = 2.5  →  threshold ~50m
+  //   Car at 30 km/h over 5s = 41m delta  →  rejected as "jitter"
+  // We threw away ALL slow city traffic and kept only highway-speed
+  // segments. That's the under-count.
+  //
+  // New values let real city movement through while still cleaning
+  // up parked-car drift (which is sub-5m deltas):
+  //   jitterBaseM = 8m, multiplier = 1.0  →  threshold ~max(8, accuracy)
+  //   Car at 15 km/h over 5s = 21m delta  →  accepted ✓
+  //   Phone in pocket, no movement = 3m drift → rejected ✓
+  static const double jitterBaseM = 8.0;
+  static const double jitterAccuracyMultiplier = 1.0;
   static const int minTimeGapSeconds = 3;
   static const int maxContinuousGapHours = 12;
 

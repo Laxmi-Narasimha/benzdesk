@@ -360,7 +360,7 @@ export default function TimelinePage() {
                 // so the existing render path picks them up.
                 supabase
                     .from('session_stops')
-                    .select('id, session_id, kind, started_at, ended_at, duration_sec, center_lat, center_lng, address, point_count')
+                    .select('id, session_id, kind, started_at, ended_at, duration_sec, center_lat, center_lng, address, place_id, place_name, customer_id, point_count')
                     .eq('employee_id', selectedEmployee)
                     .gte('started_at', startOfDay)
                     .lte('started_at', endOfDay)
@@ -424,8 +424,16 @@ export default function TimelinePage() {
                 center_lat: number;
                 center_lng: number;
                 address: string | null;
+                place_id: string | null;
+                place_name: string | null;
+                customer_id: string | null;
                 point_count: number;
             }>;
+            // We DON'T resolve the customer-name label here — customerNames
+            // is set via setState below and won't be populated this tick.
+            // Instead we stash the raw fields in metadata; the TimelineItem
+            // renderer below picks the best label at draw time using the
+            // up-to-date customerNames map.
             const stopEvents: TimelineEvent[] = stopRows.map((s) => ({
                 id: `stop-${s.id}`,
                 event_type: s.kind,
@@ -436,7 +444,14 @@ export default function TimelinePage() {
                 center_lat: s.center_lat,
                 center_lng: s.center_lng,
                 address: s.address,
-                metadata: { source: 'stop_detector', point_count: s.point_count },
+                metadata: {
+                    source: 'stop_detector',
+                    point_count: s.point_count,
+                    customer_id: s.customer_id,
+                    place_id: s.place_id,
+                    place_name: s.place_name,
+                    raw_address: s.address,
+                },
                 fromStopDetector: true,
             }));
 
@@ -1103,6 +1118,26 @@ export default function TimelinePage() {
                                         const visualType: 'start' | 'end' | 'stop' | 'move' | 'break_start' | 'break_end' =
                                             event.event_type === 'indoor_walking' ? 'stop' : event.event_type;
                                         const isStopLike = event.event_type === 'stop' || event.event_type === 'indoor_walking';
+
+                                        // Resolve the best label for stops at render time so
+                                        // customerNames (loaded async after the data fetch) is up to date.
+                                        // Priority: customer name → place_name → reverse-geocoded address → coords.
+                                        let bestAddress: string | null | undefined = event.address;
+                                        if (isStopLike) {
+                                            const md = event.metadata || {};
+                                            const customerName = md.customer_id
+                                                ? customerNames[md.customer_id]
+                                                : undefined;
+                                            bestAddress =
+                                                customerName ??
+                                                md.place_name ??
+                                                md.raw_address ??
+                                                event.address ??
+                                                (event.center_lat && event.center_lng
+                                                    ? `${event.center_lat.toFixed(4)}, ${event.center_lng.toFixed(4)}`
+                                                    : undefined);
+                                        }
+
                                         return (
                                             <TimelineItem
                                                 key={event.id}
@@ -1118,7 +1153,7 @@ export default function TimelinePage() {
                                                                 : undefined
                                                 }
                                                 time={formatTime(event.start_time)}
-                                                address={event.address}
+                                                address={bestAddress}
                                                 isLast={i === filteredEvents.length - 1}
                                             />
                                         );

@@ -1153,28 +1153,31 @@ void _onServiceStart(ServiceInstance service) async {
           lastPosition!.accuracy >= 0 ? lastPosition!.accuracy : 50.0;
       final maxAccuracy =
           position.accuracy > lastAccuracy ? position.accuracy : lastAccuracy;
-      final jitterThreshold = (maxAccuracy * 2.5).clamp(20.0, 100.0);
+      // Jitter threshold = max of (raw accuracy, 8m floor), clamped to 50m
+      // hard cap. Was previously max(accuracy×2.5, 20m) clamped to 100m —
+      // which threw away all sub-50m deltas. A car at 15-30 km/h with
+      // GPS fixing every 5 seconds produces 20-40m deltas; under the old
+      // threshold those were rejected as jitter. Now they pass.
+      final jitterThreshold = maxAccuracy.clamp(8.0, 50.0);
 
-      // Adaptive threshold based on inferred mode - BALANCED for production
+      // Adaptive threshold based on inferred mode. Tightened from the
+      // pre-2026-05-15 values that rejected slow-city driving.
       final modeThreshold = calculatedSpeedKmh > 100
-          ? 80.0 // Highway: allow up to 80m
+          ? 50.0 // Highway: tolerate up to 50m hops between fixes
           : calculatedSpeedKmh > 40
-              ? 40.0 // Car: allow up to 40m
-              : 25.0; // Walking/bike: 25m (reduced from 50m for better accuracy)
+              ? 20.0 // Car in city: 20m hops are normal
+              : 10.0; // Slow / bike / walking: 10m suffices
 
       final distanceThreshold =
           jitterThreshold > modeThreshold ? jitterThreshold : modeThreshold;
 
       // ============================================================
-      // ANTI-DRIFT: When already stationary, require moderate movement
-      // to break out. Prevents GPS jitter (5-15m jumps) while allowing
-      // real movement to be detected quickly.
+      // ANTI-DRIFT: When already stationary, raise the bar slightly so
+      // GPS drift can't fake departure from a stop.
       // ============================================================
       final bool alreadyStationary = stationaryCount >= 3;
       final effectiveThreshold = alreadyStationary
-          ? (distanceThreshold > 30.0
-              ? distanceThreshold
-              : 30.0) // Reduced from 150m to 30m for production
+          ? (distanceThreshold > 15.0 ? distanceThreshold : 15.0)
           : distanceThreshold;
       final wasStationary =
           alreadyStationary || firstStationaryAt != null || !isMoving;
