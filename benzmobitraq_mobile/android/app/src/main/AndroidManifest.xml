@@ -49,6 +49,14 @@
     <!-- SENSORS for motion detection -->
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
 
+    <!-- ACTIVITY RECOGNITION — required for ActivityRecognition API
+         (driving vs walking detection). Without this declared, the
+         OS rejects permission requests silently — Grant button does
+         nothing. Added 2026-05-17 after user reported buttons not
+         opening anything. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
+
     <application
         android:label="Benz Packaging: Employee"
         android:name="${applicationName}"
@@ -140,12 +148,48 @@
 
     </application>
     
-    <!-- QUERIES for opening settings -->
+    <!-- QUERIES — Android 11+ requires apps to declare which intents
+         they query, otherwise resolveActivity() returns null and our
+         "open settings" deep links silently fail (which is the bug
+         the user hit on 2026-05-17: tapping Battery / Activity
+         Recognition / Notifications Grant buttons did nothing). -->
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <!-- Google Maps & Maps Go (for "Open in Google Maps" deep link) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="google.navigation" />
+        </intent>
+        <!-- Every Android Settings deep link we use -->
+        <intent>
+            <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.LOCATION_SOURCE_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.APP_NOTIFICATION_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
-    
+
 </manifest>

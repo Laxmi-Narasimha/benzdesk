@@ -109,6 +109,7 @@ class TrackingService {
   static Function(Map<String, dynamic>)? onAutoPaused;
   static Function(Map<String, dynamic>)? onAutoResumed;
   static Function(Map<String, dynamic>)? onStationarySpotDetected;
+
   /// Fires whenever the BG isolate observes a change in location-services
   /// state. The payload is `{enabled: bool}`. The main isolate uses this
   /// to immediately clear the "Location is OFF" banner (and the GPS-stalled
@@ -128,6 +129,7 @@ class TrackingService {
   /// Continue Tracking buttons — the resume has already happened, so
   /// the dialog is informational, not gating.
   static Function(Map<String, dynamic>)? onMovementAutoResumed;
+
   /// Fired by BG isolate after a resume; main isolate should silence
   /// the watchdog for the supplied number of seconds so a freshly
   /// re-subscribed position stream isn't penalised as a stall.
@@ -875,7 +877,15 @@ void _onServiceStart(ServiceInstance service) async {
       }
     }
 
-    await stopLocationUpdates(notifyState: false);
+    // IMPORTANT: do NOT call stopLocationUpdates() here.
+    // We need the position stream to keep flowing while paused so the
+    // in-handler auto-resume path (onPositionReceived → distanceFromPauseAnchor
+    // check) can fire the moment the rep starts moving. Distance
+    // accumulation is already guarded by `if (!isPaused)` further down,
+    // so leaving the stream alive does NOT inflate the session km.
+    // The 30-second `startPausedResumeMonitor` polling is kept as a
+    // belt-and-suspenders backup for the rare case where the stream
+    // is throttled by the OS while the screen is off.
     startPausedResumeMonitor();
   }
 
@@ -997,12 +1007,15 @@ void _onServiceStart(ServiceInstance service) async {
   // This works even when the main isolate is dead (app killed).
   DateTime? lastSuccessfulGpsTime;
   Timer? backgroundHealthTimer;
+  bool hasEmittedLocationUpdate = false;
 
-  backgroundHealthTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
+  backgroundHealthTimer =
+      Timer.periodic(const Duration(seconds: 60), (_) async {
     if (currentSessionId == null || isPaused) return;
     if (lastSuccessfulGpsTime == null) return;
 
-    final sinceLastGps = DateTime.now().difference(lastSuccessfulGpsTime!).inSeconds;
+    final sinceLastGps =
+        DateTime.now().difference(lastSuccessfulGpsTime!).inSeconds;
     if (sinceLastGps >= 120) {
       logger.w('BG HEALTH: GPS stuck for ${sinceLastGps}s — alerting user');
       try {
@@ -1015,12 +1028,14 @@ void _onServiceStart(ServiceInstance service) async {
             android: AndroidNotificationDetails(
               'benzmobitraq_tracking_alerts',
               'Tracking Alerts',
-              channelDescription: 'Critical alerts when GPS or tracking is not working correctly',
+              channelDescription:
+                  'Critical alerts when GPS or tracking is not working correctly',
               importance: Importance.max,
               priority: Priority.max,
               icon: '@mipmap/ic_launcher',
               enableVibration: true,
-              vibrationPattern: Int64List.fromList([0, 200, 150, 200, 150, 200]),
+              vibrationPattern:
+                  Int64List.fromList([0, 200, 150, 200, 150, 200]),
             ),
           ),
         );
@@ -1044,7 +1059,8 @@ void _onServiceStart(ServiceInstance service) async {
   // lifetime — reset on session start.
   final kalman = KalmanPositionFilter();
 
-  void onPositionReceived(Position rawPosition, {bool forceRecord = false}) async {
+  void onPositionReceived(Position rawPosition,
+      {bool forceRecord = false}) async {
     final now = DateTime.now();
 
     // Run the raw fix through the Kalman position filter before any
@@ -1199,6 +1215,7 @@ void _onServiceStart(ServiceInstance service) async {
         _recentFixes.removeAt(0);
       }
       bool clusterSaysStill = false;
+      bool hardStationaryFix = false;
       double clusterMaxDistFromCentroid = 0;
       if (_recentFixes.length >= clusterMinFixesToDecide) {
         final n = _recentFixes.length;
@@ -1218,7 +1235,7 @@ void _onServiceStart(ServiceInstance service) async {
         }
         clusterSaysStill = clusterMaxDistFromCentroid < clusterRadiusM;
       }
-      if (clusterSaysStill && !forceRecord) {
+      if (clusterSaysStill) {
         logger.i(
             'CLUSTER-GATE: rejecting fix, ${_recentFixes.length} recent positions '
             'within ${clusterMaxDistFromCentroid.toStringAsFixed(1)}m of centroid '
@@ -1232,12 +1249,10 @@ void _onServiceStart(ServiceInstance service) async {
         if (stationaryCount >= 3) {
           isMoving = false;
         }
-        // Save the point so the polyline still has it (gives the
-        // admin map something to render), but it contributes 0m to
-        // distance.
+        hardStationaryFix = true;
+        shouldRecord = forceRecord || !hasEmittedLocationUpdate;
         lastPosition = position;
         lastPositionTime = now;
-        return;
       }
 
       // ============================================================
@@ -1253,6 +1268,8 @@ void _onServiceStart(ServiceInstance service) async {
       // even when fully stationary. 3 km/h is still well below any
       // real driving / bike / brisk-walk pace.
       final speedSaysStill = reportedSpeedKmh < 3.0 && smoothSpeedKmh < 3.0;
+      final allowForcedAnchorRecord =
+          forceRecord && timeDeltaSec <= 2 && distanceDelta < 1.0;
 
       // ============================================================
       // ACCURACY-WEIGHTED JITTER FILTER
@@ -1298,7 +1315,7 @@ void _onServiceStart(ServiceInstance service) async {
       // The hard stationary gate runs BEFORE the distance threshold
       // check so a 15m noise spike with reported speed = 0 is rejected
       // even though it would clear the threshold numerically.
-      if (speedSaysStill && !forceRecord) {
+      if (!hardStationaryFix && speedSaysStill && !allowForcedAnchorRecord) {
         logger.d(
             'STATIONARY-GATE: rejecting delta=${distanceDelta.toStringAsFixed(1)}m, '
             'reportedKmh=${reportedSpeedKmh.toStringAsFixed(1)}, '
@@ -1309,14 +1326,13 @@ void _onServiceStart(ServiceInstance service) async {
         if (stationaryCount >= 3) {
           isMoving = false;
         }
-        // Still save the point for the polyline (filtered upstream),
-        // but mark it as NOT counting for distance.
+        hardStationaryFix = true;
+        shouldRecord = forceRecord || !hasEmittedLocationUpdate;
         lastPosition = position;
         lastPositionTime = now;
-        return;
       }
 
-      if (distanceDelta < effectiveThreshold) {
+      if (hardStationaryFix || distanceDelta < effectiveThreshold) {
         stationaryCount++;
         resetMovementCandidate();
         // Mark when this stationary streak started for accurate time-based auto-pause
@@ -1327,7 +1343,7 @@ void _onServiceStart(ServiceInstance service) async {
           isMoving = false;
 
           // Still send occasional update for "still here" confirmation
-          if (stationaryCount % 10 != 0) {
+          if (!hardStationaryFix && stationaryCount % 10 != 0) {
             shouldRecord = false;
           }
         }
@@ -1430,7 +1446,8 @@ void _onServiceStart(ServiceInstance service) async {
         // ====================================================================
         final isLongGapRecovery = forceRecord &&
             timeDeltaSec >= 30 &&
-            distanceDelta >= 20.0 &&
+            distanceDelta >= 120.0 &&
+            segmentSpeedKmh >= 5.0 &&
             position.accuracy <= AppConstants.maxAccuracyThreshold;
 
         // When the gap is BIG (≥ 60s straight-line and ≥ 200m), we
@@ -1449,6 +1466,7 @@ void _onServiceStart(ServiceInstance service) async {
         if (forceRecord &&
             timeDeltaSec >= 25 &&
             distanceDelta >= 80.0 &&
+            segmentSpeedKmh >= 5.0 &&
             lastPosition != null) {
           try {
             service.invoke('mapsGapRecovery', {
@@ -1463,8 +1481,7 @@ void _onServiceStart(ServiceInstance service) async {
         }
 
         final requiresConfirmation =
-            !isLongGapRecovery &&
-            (wasStationary || movementCandidateCount > 0);
+            !isLongGapRecovery && (wasStationary || movementCandidateCount > 0);
         bool didCommit = false;
 
         if (isLongGapRecovery) {
@@ -1475,7 +1492,7 @@ void _onServiceStart(ServiceInstance service) async {
           resetMovementCandidate();
           stationaryCount = 0;
           firstStationaryAt = null;
-    stationaryAlarmFired = false;
+          stationaryAlarmFired = false;
         }
 
         if (requiresConfirmation) {
@@ -1491,19 +1508,21 @@ void _onServiceStart(ServiceInstance service) async {
           final candidateSpeedMps = candidateElapsedSec > 0
               ? distanceDelta / candidateElapsedSec
               : 0.0;
+          final candidateSpeedKmh = candidateSpeedMps * 3.6;
           final highQualityFix = position.accuracy <= 35.0;
-          final confirmedMovement = distanceDelta >= 120.0 ||
-              (highQualityFix &&
-                  candidateElapsedSec >= 8 &&
-                  distanceDelta >= 70.0 &&
-                  movementCandidateCount >= 2 &&
-                  movementCandidateProgressCount >= 1) ||
-              (highQualityFix &&
-                  candidateElapsedSec >= 12 &&
-                  distanceDelta >= 50.0 &&
-                  candidateSpeedMps >= 0.8 &&
+          final hasDepartureSpeed =
+              candidateSpeedKmh >= 4.0 || reportedSpeedKmh >= 4.0;
+          final confirmedMovement = (distanceDelta >= 350.0 &&
+                  hasDepartureSpeed &&
                   movementCandidateCount >= 3 &&
-                  movementCandidateProgressCount >= 2);
+                  movementCandidateProgressCount >= 2) ||
+              (highQualityFix &&
+                  candidateElapsedSec >= 20 &&
+                  candidateElapsedSec <= 120 &&
+                  distanceDelta >= 220.0 &&
+                  hasDepartureSpeed &&
+                  movementCandidateCount >= 4 &&
+                  movementCandidateProgressCount >= 3);
 
           if (!confirmedMovement) {
             shouldRecord = false;
@@ -1514,6 +1533,7 @@ void _onServiceStart(ServiceInstance service) async {
               'count=$movementCandidateCount, '
               'progress=$movementCandidateProgressCount, '
               'elapsed=${candidateElapsedSec}s, '
+              'candidateKmh=${candidateSpeedKmh.toStringAsFixed(1)}, '
               'accuracy=${position.accuracy.toStringAsFixed(1)}m',
             );
           } else {
@@ -1551,10 +1571,8 @@ void _onServiceStart(ServiceInstance service) async {
             autoResumeFastFixHits = 0;
           }
 
-          final distanceOk =
-              distanceFromPauseAnchor >= autoResumeDistanceM;
-          final speedOk =
-              autoResumeFastFixHits >= autoResumeFastFixThreshold;
+          final distanceOk = distanceFromPauseAnchor >= autoResumeDistanceM;
+          final speedOk = autoResumeFastFixHits >= autoResumeFastFixThreshold;
 
           if (distanceOk && speedOk) {
             logger.i(
@@ -1664,7 +1682,7 @@ void _onServiceStart(ServiceInstance service) async {
           lastPositionTime = now;
           // Real movement confirmed - reset stationary timer
           firstStationaryAt = null;
-    stationaryAlarmFired = false;
+          stationaryAlarmFired = false;
         }
       }
 
@@ -1754,9 +1772,7 @@ void _onServiceStart(ServiceInstance service) async {
       final stationaryDurationMin = firstStationaryAt != null
           ? now.difference(firstStationaryAt!).inMinutes
           : 0;
-      if (stationaryDurationMin >= 30 &&
-          !isPaused &&
-          !stationaryAlarmFired) {
+      if (stationaryDurationMin >= 30 && !isPaused && !stationaryAlarmFired) {
         stationaryAlarmFired = true;
         logger.i(
             'STATIONARY-ALARM: fired after ${stationaryDurationMin}min stationary');
@@ -1782,7 +1798,8 @@ void _onServiceStart(ServiceInstance service) async {
                 fullScreenIntent: true,
                 icon: '@mipmap/ic_launcher',
                 enableVibration: true,
-                vibrationPattern: Int64List.fromList([0, 900, 250, 900, 250, 900]),
+                vibrationPattern:
+                    Int64List.fromList([0, 900, 250, 900, 250, 900]),
                 playSound: true,
                 ongoing: true,
                 autoCancel: false,
@@ -1827,8 +1844,16 @@ void _onServiceStart(ServiceInstance service) async {
         if (timeSinceLastSec > 0) {
           final recoverySpeedKmh = (recoveryDistance / timeSinceLastSec) * 3.6;
 
-          // Time-bounded interpolation: accept up to 12h gap
-          if (timeSinceLastSec <= 43200 && recoverySpeedKmh <= 200.0) {
+          final hasRealRecoveryMovement =
+              (recoveryDistance >= 120.0 && recoverySpeedKmh >= 5.0) ||
+                  (recoveryDistance >= 300.0 && recoverySpeedKmh >= 2.0);
+
+          // Time-bounded recovery: only credit a restart gap when the
+          // displacement and implied speed look like real travel. A phone
+          // sitting on a desk can drift tens of meters after GPS warm-up.
+          if (timeSinceLastSec <= 43200 &&
+              recoverySpeedKmh <= 200.0 &&
+              hasRealRecoveryMovement) {
             if (!isPaused) {
               totalDistance += recoveryDistance;
               acceptedDistanceDeltaM = recoveryDistance;
@@ -1836,6 +1861,9 @@ void _onServiceStart(ServiceInstance service) async {
             }
             logger.i(
                 'RECOVERY: Gap ${timeSinceLastSec}s, +${recoveryDistance.toStringAsFixed(1)}m @ ${recoverySpeedKmh.toStringAsFixed(1)} km/h');
+          } else if (timeSinceLastSec <= 43200 && !hasRealRecoveryMovement) {
+            logger.i(
+                'RECOVERY: rejected stationary restart drift ${recoveryDistance.toStringAsFixed(1)}m @ ${recoverySpeedKmh.toStringAsFixed(1)} km/h');
           } else if (recoverySpeedKmh > 200.0) {
             // Interpolate at walking speed instead
             final gapHours = timeSinceLastSec / 3600.0;
@@ -1909,6 +1937,7 @@ void _onServiceStart(ServiceInstance service) async {
 
     try {
       service.invoke('locationUpdate', update.toMap());
+      hasEmittedLocationUpdate = true;
     } catch (e) {
       logger.e('FAILED TO INVOKE locationUpdate: $e');
     }
@@ -1955,7 +1984,8 @@ void _onServiceStart(ServiceInstance service) async {
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy
             .bestForNavigation, // Highest accuracy for navigation/tracking
-        distanceFilter: 5, // Lowered from 10: captures early-session movement sooner
+        distanceFilter:
+            5, // Lowered from 10: captures early-session movement sooner
       ),
     ).listen(
       (p) => onPositionReceived(p, forceRecord: false),
@@ -2133,8 +2163,9 @@ void _onServiceStart(ServiceInstance service) async {
       lastPositionTime = null;
       stationaryCount = 0;
       firstStationaryAt = null;
-    stationaryAlarmFired = false;   // ← was leaking across sessions
-      isMoving = true;            // ← was leaking false across sessions
+      stationaryAlarmFired = false; // ← was leaking across sessions
+      isMoving = true; // ← was leaking false across sessions
+      hasEmittedLocationUpdate = false;
       isPaused = false;
       calculatedSpeedKmh = 0;
       autoPauseAnchorLat = null;
@@ -2184,10 +2215,14 @@ void _onServiceStart(ServiceInstance service) async {
     if (isPaused) {
       autoPauseAnchorLat ??= prefs.getDouble(TrackingService._keyLastLat);
       autoPauseAnchorLng ??= prefs.getDouble(TrackingService._keyLastLon);
-      await stopLocationUpdates(notifyState: false);
+      // Keep the position stream running even while paused so the
+      // in-handler auto-resume check (distance-from-pause-anchor) can
+      // fire on the first real movement. Distance accumulation stays
+      // gated by `if (!isPaused)`, so this does NOT inflate km.
+      await startLocationUpdates();
       startPausedResumeMonitor();
       logger.i(
-          'Session restored in paused mode; continuous tracking remains stopped');
+          'Session restored in paused mode; stream live for auto-resume detection');
     } else {
       await startLocationUpdates();
 
@@ -2366,12 +2401,17 @@ void _onServiceStart(ServiceInstance service) async {
   // from persisted prefs), now that startLocationUpdates is defined we
   // can kick off GPS tracking.
   if (currentSessionId != null && wasTracking) {
-    logger.i('SELF-RECOVERY: Kicking off GPS tracking for recovered session $currentSessionId');
+    logger.i(
+        'SELF-RECOVERY: Kicking off GPS tracking for recovered session $currentSessionId');
     if (isPaused) {
       autoPauseAnchorLat ??= prefs.getDouble(TrackingService._keyLastLat);
       autoPauseAnchorLng ??= prefs.getDouble(TrackingService._keyLastLon);
+      // Even when paused, keep the position stream alive so movement-based
+      // auto-resume can fire after an OS-kill recovery.
+      await startLocationUpdates();
       startPausedResumeMonitor();
-      logger.i('SELF-RECOVERY: Session is paused, started resume monitor');
+      logger.i(
+          'SELF-RECOVERY: Session is paused; stream live for auto-resume detection');
     } else {
       await startLocationUpdates();
       logger.i('SELF-RECOVERY: GPS tracking restarted successfully');
@@ -2520,8 +2560,8 @@ void _onServiceStart(ServiceInstance service) async {
               }
             }());
           } catch (e) {
-            logger.e(
-                'Failed to restart position stream after GPS came back: $e');
+            logger
+                .e('Failed to restart position stream after GPS came back: $e');
           }
         }
       }

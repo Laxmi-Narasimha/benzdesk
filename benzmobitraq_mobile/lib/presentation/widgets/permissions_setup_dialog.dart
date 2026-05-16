@@ -127,6 +127,53 @@ class _PermissionsSetupDialogState extends State<PermissionsSetupDialog>
     }
   }
 
+  /// Helper: try the primary action; if it throws OR returns false,
+  /// fall back to App Settings; if THAT throws too, show a SnackBar
+  /// so the user knows the button at least registered the tap.
+  ///
+  /// Why this matters: until 2026-05-17 we silently swallowed
+  /// every exception from settings deep-links. User tapped Grant,
+  /// nothing visible happened, and they had no way to know whether
+  /// the tap registered. This helper guarantees SOME visible
+  /// reaction every time.
+  Future<void> _grantWithFallbacks(
+    String label,
+    Future<bool> Function() primary,
+  ) async {
+    try {
+      final ok = await primary();
+      if (ok) return;
+    } catch (e) {
+      _logger.w('$label primary intent failed: $e');
+    }
+    try {
+      final opened = await openAppSettings();
+      if (opened) {
+        _showSnack('Opened app settings — find $label and enable it.');
+        return;
+      }
+    } catch (e) {
+      _logger.w('$label openAppSettings failed: $e');
+    }
+    // Last resort — explicit user feedback. At least they know the
+    // tap was registered.
+    _showSnack(
+      'Could not open settings automatically. '
+      'Go to Settings → Apps → BenzMobiTraq → Permissions.',
+    );
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   List<_PermItem> _buildItems() {
     return [
       _PermItem(
@@ -134,9 +181,10 @@ class _PermissionsSetupDialogState extends State<PermissionsSetupDialog>
         title: 'Location services on',
         why: 'GPS itself must be turned on system-wide.',
         onGrant: () async {
-          try {
+          await _grantWithFallbacks('Location services', () async {
             await Geolocator.openLocationSettings();
-          } catch (_) {}
+            return true;
+          });
         },
       ),
       _PermItem(
@@ -145,12 +193,21 @@ class _PermissionsSetupDialogState extends State<PermissionsSetupDialog>
         why:
             'Required for tracking to continue when your phone screen is off or the app is in the background.',
         onGrant: () async {
-          // First try the "always" upgrade. If still denied permanently,
-          // pop the app-info screen so user can manually flip.
-          var status = await Permission.locationAlways.request();
-          if (status.isPermanentlyDenied) {
-            await openAppSettings();
-          }
+          await _grantWithFallbacks('Location permission', () async {
+            // Always-permission can only be requested AFTER while-in-use
+            // has been granted (Android contract). Request while-in-use
+            // first if needed, then upgrade.
+            final whileInUse = await Permission.locationWhenInUse.status;
+            if (!whileInUse.isGranted) {
+              final r = await Permission.locationWhenInUse.request();
+              if (!r.isGranted) {
+                // User denied — bounce to app settings.
+                return false;
+              }
+            }
+            final status = await Permission.locationAlways.request();
+            return status.isGranted;
+          });
         },
       ),
       _PermItem(
@@ -159,10 +216,10 @@ class _PermissionsSetupDialogState extends State<PermissionsSetupDialog>
         why:
             'So you get the ongoing tracking notification, alerts, and arrival pings.',
         onGrant: () async {
-          var status = await Permission.notification.request();
-          if (status.isPermanentlyDenied) {
-            await openAppSettings();
-          }
+          await _grantWithFallbacks('Notifications', () async {
+            final status = await Permission.notification.request();
+            return status.isGranted;
+          });
         },
       ),
       _PermItem(
@@ -171,8 +228,10 @@ class _PermissionsSetupDialogState extends State<PermissionsSetupDialog>
         why:
             'Detects when you\'re driving vs walking — improves distance accuracy and stop detection.',
         onGrant: () async {
-          var status = await Permission.activityRecognition.request();
-          if (status.isPermanentlyDenied) await openAppSettings();
+          await _grantWithFallbacks('Physical activity', () async {
+            final status = await Permission.activityRecognition.request();
+            return status.isGranted;
+          });
         },
       ),
       _PermItem(
@@ -181,8 +240,9 @@ class _PermissionsSetupDialogState extends State<PermissionsSetupDialog>
         why:
             'Stops Android from killing the tracking service after a few minutes in the background.',
         onGrant: () async {
-          final ok = await OemAutostartService.openBatterySaver();
-          if (!ok) await openAppSettings();
+          await _grantWithFallbacks('Battery optimisation', () async {
+            return await OemAutostartService.openBatterySaver();
+          });
         },
       ),
       _PermItem(
@@ -191,8 +251,9 @@ class _PermissionsSetupDialogState extends State<PermissionsSetupDialog>
         why:
             'On Xiaomi / Vivo / Oppo / Realme / Samsung, this lets the app re-launch tracking when the OS kills it.',
         onGrant: () async {
-          final ok = await OemAutostartService.openAutoStart();
-          if (!ok) await OemAutostartService.openAppInfo();
+          await _grantWithFallbacks('Auto-start', () async {
+            return await OemAutostartService.openAutoStart();
+          });
         },
       ),
     ];
