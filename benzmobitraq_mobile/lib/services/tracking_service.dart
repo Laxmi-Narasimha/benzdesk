@@ -1146,41 +1146,92 @@ void _onServiceStart(ServiceInstance service) async {
       }
 
       // ============================================================
-      // ACCURACY-WEIGHTED JITTER FILTER
-      // Uses max(worst_accuracy * 2.5, 20m) per DistanceEngine spec
+      // HARD STATIONARY GATE — kills phone-on-desk drift dead.
       // ============================================================
+      // Previous filter (jitterBaseM=8m, accuracy*1.0) accepted every
+      // 8-15m GPS noise spike when the phone had a good lock. Over a
+      // 20-min stationary period that adds up to ~1.5 km of phantom
+      // distance — verified by the user putting his phone on a table
+      // and watching the trip rack up kilometers.
+      //
+      // The rule: when the position's OWN GPS chip reports speed
+      // effectively zero, do not count the delta as movement.
+      // Combined with sustained-low-speed detection, this catches
+      // both real stillness and slow drift.
+      //
+      // We allow ONE exception: if the rep has been confirmed moving
+      // for the last few fixes (calculatedSpeedKmh >= 5), a single
+      // zero-speed fix is treated as a transient GPS chip glitch —
+      // it doesn't reset the trip, but its distance delta is still
+      // dropped on the floor (kept the previous segment's accepted
+      // delta, didn't add this one).
+      final reportedSpeedKmh = position.speed.isFinite && position.speed > 0
+          ? position.speed * 3.6
+          : 0.0;
+      final smoothSpeedKmh = calculatedSpeedKmh;
+      final speedSaysStill = reportedSpeedKmh < 1.5 && smoothSpeedKmh < 2.0;
+
+      // ============================================================
+      // ACCURACY-WEIGHTED JITTER FILTER
+      // ============================================================
+      //
+      // The "right" threshold has to clear the LARGEST realistic GPS
+      // jitter amplitude. Real-world measurement: a phone sitting on
+      // a desk with a clear sky view drifts up to 12m between fixes.
+      // Indoor / urban canyon drift can hit 20m. Bumping the floor
+      // back to 15m kills phone-on-desk drift while still passing
+      // slow-bike / pedestrian movement (which produces 15-25m
+      // deltas per 5s tick).
+      //
+      // Tradeoff: someone walking very slowly (~3 km/h) produces ~4m
+      // deltas per 5s tick — those get rejected. But walkers don't
+      // file fuel-expense bills, so the loss is acceptable. Drivers
+      // and bike riders, who DO bill, all clear the 15m floor easily.
       final lastAccuracy =
           lastPosition!.accuracy >= 0 ? lastPosition!.accuracy : 50.0;
       final maxAccuracy =
           position.accuracy > lastAccuracy ? position.accuracy : lastAccuracy;
-      // Jitter threshold = max of (raw accuracy, 8m floor), clamped to 50m
-      // hard cap. Was previously max(accuracy×2.5, 20m) clamped to 100m —
-      // which threw away all sub-50m deltas. A car at 15-30 km/h with
-      // GPS fixing every 5 seconds produces 20-40m deltas; under the old
-      // threshold those were rejected as jitter. Now they pass.
-      final jitterThreshold = maxAccuracy.clamp(8.0, 50.0);
+      final jitterThreshold = (maxAccuracy * 1.5).clamp(15.0, 60.0);
 
-      // Adaptive threshold based on inferred mode. Tightened from the
-      // pre-2026-05-15 values that rejected slow-city driving.
+      // Mode-adaptive on top of the jitter floor.
       final modeThreshold = calculatedSpeedKmh > 100
-          ? 50.0 // Highway: tolerate up to 50m hops between fixes
+          ? 60.0 // Highway
           : calculatedSpeedKmh > 40
-              ? 20.0 // Car in city: 20m hops are normal
-              : 10.0; // Slow / bike / walking: 10m suffices
+              ? 25.0 // Car in city
+              : 15.0; // Slow / bike / walking — matches the jitter floor
 
       final distanceThreshold =
           jitterThreshold > modeThreshold ? jitterThreshold : modeThreshold;
 
-      // ============================================================
-      // ANTI-DRIFT: When already stationary, raise the bar slightly so
-      // GPS drift can't fake departure from a stop.
-      // ============================================================
+      // When already stationary, raise the bar so GPS drift can't
+      // fake departure from a stop.
       final bool alreadyStationary = stationaryCount >= 3;
       final effectiveThreshold = alreadyStationary
-          ? (distanceThreshold > 15.0 ? distanceThreshold : 15.0)
+          ? (distanceThreshold > 25.0 ? distanceThreshold : 25.0)
           : distanceThreshold;
       final wasStationary =
           alreadyStationary || firstStationaryAt != null || !isMoving;
+
+      // The hard stationary gate runs BEFORE the distance threshold
+      // check so a 15m noise spike with reported speed = 0 is rejected
+      // even though it would clear the threshold numerically.
+      if (speedSaysStill && !forceRecord) {
+        logger.d(
+            'STATIONARY-GATE: rejecting delta=${distanceDelta.toStringAsFixed(1)}m, '
+            'reportedKmh=${reportedSpeedKmh.toStringAsFixed(1)}, '
+            'smoothKmh=${smoothSpeedKmh.toStringAsFixed(1)}');
+        stationaryCount++;
+        firstStationaryAt ??= now;
+        resetMovementCandidate();
+        if (stationaryCount >= 3) {
+          isMoving = false;
+        }
+        // Still save the point for the polyline (filtered upstream),
+        // but mark it as NOT counting for distance.
+        lastPosition = position;
+        lastPositionTime = now;
+        return;
+      }
 
       if (distanceDelta < effectiveThreshold) {
         stationaryCount++;

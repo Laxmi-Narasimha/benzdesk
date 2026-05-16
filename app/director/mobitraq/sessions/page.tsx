@@ -11,6 +11,8 @@ import {
     Search,
     Filter
 } from 'lucide-react';
+import { AdjustedDistance } from '@/components/mobitraq/AdjustedDistance';
+import { useDistanceAdjustments } from '@/components/mobitraq/useDistanceAdjustments';
 
 interface Session {
     id: string;
@@ -33,6 +35,9 @@ export default function SessionsPage() {
     const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('week');
     const [currentPage, setCurrentPage] = useState(1);
     const pageSize = 20;
+    const adjustmentsBySessionId = useDistanceAdjustments(
+        sessions.map((s) => s.id),
+    );
 
     const getIstDateString = (date: Date = new Date()) =>
         date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -234,7 +239,16 @@ export default function SessionsPage() {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 text-gray-900 font-medium">
-                                                {((session.final_km != null && session.final_km > 0 ? session.final_km : session.total_km) || 0).toFixed(2)} km
+                                                <AdjustedDistance
+                                                    sessionId={session.id}
+                                                    rawKm={
+                                                        (session.final_km != null && session.final_km > 0
+                                                            ? session.final_km
+                                                            : session.total_km) || 0
+                                                    }
+                                                    adjustment={adjustmentsBySessionId[session.id]}
+                                                    compact
+                                                />
                                             </td>
                                             <td className="px-6 py-4">
                                                 {session.status === 'active' ? (

@@ -160,7 +160,7 @@ const mobitraqNav: NavItem[] = [
     },
     {
         href: '/director/mobitraq/field-expenses',
-        label: 'Field Expenses',
+        label: 'Monthly Expenses',
         icon: <Receipt className="w-5 h-5" />,
         roles: ['accounts_admin', 'director'],
     },

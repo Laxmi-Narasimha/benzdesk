@@ -93,12 +93,32 @@ class StopDetector {
     );
 
     if (distanceM > _stopRadiusM) {
-      // Moved outside the radius → candidate ends. If it was long
-      // enough, confirm it; otherwise discard.
+      // Moved outside the radius → candidate ends. Three sub-cases:
+      //   (a) candidate already persisted earlier (confirmedEmitted) →
+      //       just UPDATE its ended_at, don't INSERT again.
+      //   (b) candidate never persisted but lasted >= minStopDuration →
+      //       INSERT now ("end-of-stop" promotion).
+      //   (c) candidate too short → discard.
       final duration = c.lastSeenAt.difference(c.startedAt);
       _candidate = null;
 
+      if (c.confirmedEmitted && c.persistedId != null) {
+        // (a) — extend the existing row's ended_at, no second INSERT.
+        try {
+          await Supabase.instance.client.from('session_stops').update({
+            'ended_at': c.lastSeenAt.toUtc().toIso8601String(),
+            'duration_sec':
+                c.lastSeenAt.difference(c.startedAt).inSeconds,
+            'point_count': c.pointCount,
+          }).eq('id', c.persistedId!);
+        } catch (e) {
+          _logger.w('STOP-UPDATE-ON-LEAVE failed: $e');
+        }
+        return 'stop_ended';
+      }
+
       if (duration >= _minStopDuration) {
+        // (b)
         final confirmed = await _persistStop(
           sessionId: sessionId,
           employeeId: employeeId,
@@ -107,7 +127,7 @@ class StopDetector {
         _lastConfirmed = confirmed;
         return 'stop_ended';
       }
-      // Start a fresh candidate at the new location.
+      // (c) — Start a fresh candidate at the new location.
       _candidate = _Candidate(
         anchorLat: point.latitude,
         anchorLng: point.longitude,
@@ -159,6 +179,25 @@ class StopDetector {
     if (c == null) return;
     final duration = c.lastSeenAt.difference(c.startedAt);
     _candidate = null;
+
+    // If we already persisted this stop on the confirmedEmitted path
+    // (5-min threshold), don't INSERT again — just close out the
+    // ended_at. This was the source of the duplicate stop rows the
+    // admin was seeing.
+    if (c.confirmedEmitted && c.persistedId != null) {
+      try {
+        await Supabase.instance.client.from('session_stops').update({
+          'ended_at': c.lastSeenAt.toUtc().toIso8601String(),
+          'duration_sec':
+              c.lastSeenAt.difference(c.startedAt).inSeconds,
+          'point_count': c.pointCount,
+        }).eq('id', c.persistedId!);
+      } catch (e) {
+        _logger.w('STOP-UPDATE-ON-FINALIZE failed: $e');
+      }
+      return;
+    }
+
     if (duration >= _minStopDuration) {
       await _persistStop(
         sessionId: sessionId,

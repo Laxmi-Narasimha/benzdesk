@@ -196,6 +196,49 @@ const MapComponentGoogle: React.FC<MapComponentProps> = ({
                     );
                 }
             }
+
+            // FIT BOUNDS to the full route so the map shows the WHOLE
+            // trip, not just the initial center+zoom (which can clip
+            // 90% of a long-distance trip — admin reported a 357 km
+            // session showing only its first ~30 km in view).
+            //
+            // Includes every coordinate we drew: raw GPS, snapped route,
+            // start, end, and every stop. If the route is a single
+            // point (or none), keep the default centered zoom.
+            try {
+                const bounds = new g.maps.LatLngBounds();
+                let extended = false;
+                for (const [lat, lng] of routePositions) {
+                    bounds.extend({ lat, lng });
+                    extended = true;
+                }
+                if (snappedPolyline) {
+                    const dec = g.maps.geometry?.encoding?.decodePath(snappedPolyline);
+                    if (dec) {
+                        for (const p of dec as any[]) {
+                            bounds.extend({ lat: p.lat(), lng: p.lng() });
+                            extended = true;
+                        }
+                    }
+                }
+                for (const p of points) {
+                    bounds.extend({ lat: p.latitude, lng: p.longitude });
+                    extended = true;
+                }
+                for (const s of timelineEvents) {
+                    if (s.center_lat && s.center_lng) {
+                        bounds.extend({ lat: s.center_lat, lng: s.center_lng });
+                        extended = true;
+                    }
+                }
+                if (extended && !bounds.isEmpty()) {
+                    // 60px padding on all sides so markers + start/end
+                    // pins don't crowd the viewport edges.
+                    map.fitBounds(bounds, 60);
+                }
+            } catch (e) {
+                console.warn('fitBounds failed (non-fatal):', e);
+            }
         }
 
         loadGoogle().catch((e) => setError((e as Error).message));

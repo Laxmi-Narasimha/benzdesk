@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { AdjustedDistance } from '@/components/mobitraq/AdjustedDistance';
+import { useDistanceAdjustments } from '@/components/mobitraq/useDistanceAdjustments';
 
 // Map provider switch.
 //
@@ -179,6 +181,23 @@ export default function TimelinePage() {
 
     const [mapReady, setMapReady] = useState(false);
     const [fetchError, setFetchError] = useState<string | null>(null);
+
+    // Admin-correction overlay: any session that an admin has manually
+    // adjusted on the Discrepancies page has a row in
+    // mobitraq_distance_adjustments. We batch-fetch the latest
+    // adjustment for every session shown on this page so each
+    // session card / map header can render "old + delta = corrected"
+    // with the edit reason in a tooltip.
+    const _sessionIdsForAdjustments = useMemo(
+        () => [
+            ...sessions.map((s) => s.id),
+            ...recentSessions.map((s) => s.id),
+        ],
+        [sessions, recentSessions],
+    );
+    const adjustmentsBySessionId = useDistanceAdjustments(
+        _sessionIdsForAdjustments,
+    );
 
     // Focused Session logic
     const [focusedSession, setFocusedSession] = useState<string | null>(null);
@@ -827,7 +846,12 @@ export default function TimelinePage() {
                                             <div>
                                                 <div className="text-xs text-slate-500 font-bold">Distance</div>
                                                 <div className="font-semibold text-slate-900">
-                                                    {rollup?.distance_km?.toFixed(1) || '0.0'} <span className="text-xs font-normal text-slate-500">km</span>
+                                                    <AdjustedDistance
+                                                        sessionId={session.id}
+                                                        rawKm={rollup?.distance_km ?? 0}
+                                                        adjustment={adjustmentsBySessionId[session.id]}
+                                                        compact
+                                                    />
                                                 </div>
                                                 {session.confidence && (
                                                     <div className="mt-0.5">
@@ -961,7 +985,18 @@ export default function TimelinePage() {
                                     <div className="flex gap-4">
                                         <div>
                                             <div className="text-lg font-bold text-slate-900">
-                                                {(focusedSessionData?.distanceKm ?? stats.totalKm).toFixed(1)} <span className="text-xs font-normal">km</span>
+                                                {focusedSession && adjustmentsBySessionId[focusedSession] ? (
+                                                    <AdjustedDistance
+                                                        sessionId={focusedSession}
+                                                        rawKm={focusedSessionData?.distanceKm ?? 0}
+                                                        adjustment={adjustmentsBySessionId[focusedSession]}
+                                                        compact
+                                                    />
+                                                ) : (
+                                                    <>
+                                                        {(focusedSessionData?.distanceKm ?? stats.totalKm).toFixed(1)} <span className="text-xs font-normal">km</span>
+                                                    </>
+                                                )}
                                             </div>
                                             <div className="text-[10px] text-slate-600 font-bold">Distance</div>
                                         </div>

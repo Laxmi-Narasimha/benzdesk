@@ -926,33 +926,35 @@ class SessionManager {
         }
       }
 
-      // RECONCILE — never under-count what the rep saw on screen.
+      // RECONCILE — never under-count what the rep actually drove.
       //
-      // The authoritative recalc above (DistanceEngine.calculate
-      // AuthoritativeDistance) applies a second pass of Kalman +
-      // teleport + jitter filtering. On a noisy trip this catches
-      // bad GPS spikes. On a real-world long curvy drive — verified
-      // by the rep against Google Maps — it can OVER-filter and
-      // under-count real distance by 15-20%.
+      // Real-world failure that drove this rewrite: a 357 km trip
+      // verified by the rep ended up stored as 260.9 km, an 88-km
+      // under-count. The reason: the per-fix `counts_for_distance`
+      // filter was so aggressive that 88% of the GPS points were
+      // rejected at fix time. By the time we got to session end,
+      // the running total, the authoritative recalc, AND the
+      // sum-of-accepted-deltas were all wrong — they were ALL
+      // downstream of the same broken filter.
       //
-      // Concrete example reported by the user: a 12 km drive (Google
-      // Maps confirmed) returned from this pass as 9.70 km. The BG
-      // isolate's running tally was 11.X km. The rollup raw haversine
-      // was 12.07 km. Locking final_km to 9.70 cost the rep ~₹18 on
-      // a single trip — and broke trust.
+      // The only signal that survives a broken filter is the **raw
+      // haversine across every recorded GPS point**. It can over-
+      // count when the rep is genuinely stationary (jitter inflates
+      // it), but it CANNOT under-count real movement. For a 357 km
+      // trip with 387 points, raw haversine = 357.4 km. Truth.
       //
-      // Fix: verifiedDistanceKm = MAX of three signals:
-      //   (a) the authoritative recalc — our best filtered guess
-      //   (b) the BG isolate's running totalDistance — what the rep
-      //       actually saw on screen, sum of per-fix accepted deltas
-      //   (c) sum of distance_delta_m where counts_for_distance — the
-      //       raw per-point accepted deltas chain
+      // New reconciliation:
+      //   verifiedDistanceKm = MAX of:
+      //     (a) authoritative recalc       — our best filtered guess
+      //     (b) BG running totalDistance   — what rep saw on screen
+      //     (c) sum of accepted deltas     — per-fix filter accepted
+      //     (d) raw haversine * 0.95       — truthful upper bound;
+      //                                      5% discount accounts for
+      //                                      stationary-jitter inflation
       //
-      // We deliberately do NOT include raw haversine over ALL points
-      // here — that DOES over-count when the rep is stationary. The
-      // three signals above are all "filtered" in some way and the
-      // worst case is over-counting by a few percent, never the 20%
-      // under-count we just shipped.
+      // The 5% discount on raw haversine is the SAME formula migration
+      // 078 uses for the historic backfill — keeps device + server in
+      // sync.
       try {
         final runningKm = _state.currentDistanceMeters / 1000.0;
         if (runningKm > verifiedDistanceKm) {
@@ -962,18 +964,73 @@ class SessionManager {
           verifiedDistanceKm = runningKm;
         }
         final sessionId = _state.session!.id;
-        final summedDeltaM = await _locationRepository
-            .getLocalSessionPoints(sessionId)
-            .then((pts) => pts
-                .where((p) =>
-                    p.countsForDistance && (p.distanceDeltaM ?? 0) > 0)
-                .fold<double>(0, (a, p) => a + (p.distanceDeltaM ?? 0)));
+        final allPts = await _locationRepository.getLocalSessionPoints(sessionId);
+        final summedDeltaM = allPts
+            .where((p) => p.countsForDistance && (p.distanceDeltaM ?? 0) > 0)
+            .fold<double>(0, (a, p) => a + (p.distanceDeltaM ?? 0));
         final summedKm = summedDeltaM / 1000.0;
         if (summedKm > verifiedDistanceKm) {
           _logger.i(
               'RECONCILE: bumping verifiedDistanceKm to summed-deltas '
               '${summedKm.toStringAsFixed(2)} km');
           verifiedDistanceKm = summedKm;
+        }
+        // (d) — raw haversine across every recorded point, GATED by
+        // a real-movement signal. Previously we used this as a
+        // straight MAX, which fixed the 357-km under-count case but
+        // ALSO meant a stationary 20-min session accumulated 1.5 km
+        // of phone-on-desk jitter. Now we only consider rollup if
+        // there's actual evidence the rep moved: median speed >= 5
+        // km/h across the recorded points OR the running tally
+        // (which uses the hard stationary gate) already shows
+        // meaningful movement.
+        if (allPts.length >= 2) {
+          final sorted = [...allPts]
+            ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+          // Movement signal #1 — was the user moving at all?
+          final speedSamples = sorted
+              .map((p) => p.speed ?? 0)
+              .where((s) => s > 0)
+              .toList()
+            ..sort();
+          final medianSpeedMps = speedSamples.isEmpty
+              ? 0.0
+              : speedSamples[speedSamples.length ~/ 2];
+          // Movement signal #2 — did the running tally already see
+          // 1+ km of confirmed movement? (Running tally now uses
+          // the hard stationary gate, so this number is trustworthy.)
+          final runningKmConfirmed =
+              (_state.currentDistanceMeters / 1000.0) > 1.0;
+          final hasMovementSignal =
+              medianSpeedMps * 3.6 >= 5.0 || runningKmConfirmed;
+
+          if (hasMovementSignal) {
+            double rawM = 0;
+            for (var i = 1; i < sorted.length; i++) {
+              rawM += Geolocator.distanceBetween(
+                sorted[i - 1].latitude,
+                sorted[i - 1].longitude,
+                sorted[i].latitude,
+                sorted[i].longitude,
+              );
+            }
+            final rawHaversineKm = (rawM / 1000.0) * 0.95;
+            if (rawHaversineKm > verifiedDistanceKm) {
+              _logger.i(
+                  'RECONCILE: bumping verifiedDistanceKm to raw-haversine*0.95 '
+                  '${rawHaversineKm.toStringAsFixed(2)} km '
+                  '(was ${verifiedDistanceKm.toStringAsFixed(2)}). '
+                  'Movement signal confirmed (medianSpeedKmh=${(medianSpeedMps * 3.6).toStringAsFixed(1)}, '
+                  'runningKmConfirmed=$runningKmConfirmed).');
+              verifiedDistanceKm = rawHaversineKm;
+            }
+          } else {
+            _logger.i(
+                'RECONCILE: skipping raw-haversine fallback — no movement signal '
+                '(medianSpeedKmh=${(medianSpeedMps * 3.6).toStringAsFixed(1)}, '
+                'runningKm=${(_state.currentDistanceMeters / 1000.0).toStringAsFixed(2)}). '
+                'Trusting authoritative recalc.');
+          }
         }
       } catch (e) {
         _logger.w('Reconcile pass failed (non-fatal): $e');

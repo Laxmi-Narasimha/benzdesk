@@ -9,8 +9,8 @@ import 'package:benzmobitraq_mobile/core/di/injection.dart';
 import 'package:benzmobitraq_mobile/data/datasources/local/preferences_local.dart';
 import 'package:benzmobitraq_mobile/data/repositories/session_repository.dart';
 import 'package:benzmobitraq_mobile/services/geocoding_service.dart';
-import 'package:benzmobitraq_mobile/services/oem_autostart_service.dart';
 import 'package:benzmobitraq_mobile/services/permission_service.dart';
+import 'package:benzmobitraq_mobile/presentation/widgets/permissions_setup_dialog.dart';
 
 import 'package:benzmobitraq_mobile/presentation/blocs/auth/auth_bloc.dart';
 import 'package:benzmobitraq_mobile/presentation/blocs/session/session_bloc.dart';
@@ -62,8 +62,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _requestEssentialPermissions();
     // Check battery optimization on first load
     _checkBatteryOptimization();
-    // One-time OEM autostart guide for hostile vendors (Xiaomi, Vivo, etc.)
-    _maybeShowOemAutostartGuide();
+    // Unified permissions setup checklist — replaces the older
+    // 2-button OEM-autostart guide with a single dialog that shows
+    // every permission, with green checkmarks for ones already
+    // granted and "Grant" buttons that deep-link to the exact OS
+    // settings screen for each missing one. Live-refreshes when the
+    // user comes back from a settings screen.
+    _maybeShowPermissionsSetup();
     // Replay any post-session fuel-expense dialogs the user previously
     // skipped — a single accidental tap on "Skip for now" should not
     // make us lose a legitimate fuel expense.
@@ -308,110 +313,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _maybeShowOemAutostartGuide() async {
-    // Wait until the first frame so we don't fight the battery dialog.
+  Future<void> _maybeShowPermissionsSetup() async {
+    // Wait until the first frame so we don't fight the battery dialog
+    // or the post-login redirect.
     await Future.delayed(const Duration(seconds: 2));
     if (!mounted) return;
-    final should = await OemAutostartService.shouldShowSetup();
+    final should = await PermissionsSetupDialog.shouldAutoShow();
     if (!should || !mounted) return;
-
-    final brand = (await OemAutostartService.manufacturer())
-        .replaceAllMapped(RegExp(r'^.'), (m) => m.group(0)!.toUpperCase());
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        icon: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.deepOrange.withValues(alpha: 0.12),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.security, color: Colors.deepOrange, size: 32),
-        ),
-        title: Text('One-time $brand setup'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Your phone\'s battery saver will kill location tracking after a few minutes if we don\'t fix two settings.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, height: 1.35),
-            ),
-            SizedBox(height: 14),
-            Text(
-              '1) Allow Autostart for this app\n'
-              '2) Set Battery usage to "Unrestricted"',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87),
-            ),
-            SizedBox(height: 10),
-            Text(
-              'Tap each button below. Toggle this app ON in the screen that opens, then come back.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 12, color: Colors.black54, height: 1.3),
-            ),
-          ],
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actionsPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        actions: [
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final ok = await OemAutostartService.openAutoStart();
-                    if (!ok) {
-                      await OemAutostartService.openAppInfo();
-                    }
-                  },
-                  icon: const Icon(Icons.power_settings_new),
-                  label: const Text('1. Open Autostart settings'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.deepOrange,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => OemAutostartService.openBatterySaver(),
-                  icon: const Icon(Icons.battery_saver),
-                  label: const Text('2. Open Battery settings'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.deepOrange,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextButton(
-                onPressed: () async {
-                  await OemAutostartService.markSetupSeen();
-                  if (ctx.mounted) Navigator.of(ctx).pop();
-                },
-                child: const Text("I've done it — don't show again"),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+    await PermissionsSetupDialog.show(context);
   }
 
   Future<void> _checkBatteryOptimization() async {

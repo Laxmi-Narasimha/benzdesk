@@ -8,6 +8,8 @@ import {
     MapPin, Users, Clock, Gauge, Activity, Calendar, Map, AlertCircle, RefreshCw, Navigation
 } from 'lucide-react';
 import ProximityPanel from './ProximityPanel';
+import { AdjustedDistance } from '@/components/mobitraq/AdjustedDistance';
+import { useDistanceAdjustments } from '@/components/mobitraq/useDistanceAdjustments';
 
 interface Session {
     id: string;
@@ -58,6 +60,12 @@ export default function MobitraqDashboard() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedDate, setSelectedDate] = useState<string>('');
+
+    // Admin-correction overlay so every session-row distance shows
+    // "old + delta = corrected km · admin edit" when applicable.
+    const adjustmentsBySessionId = useDistanceAdjustments(
+        sessions.map((s) => s.id),
+    );
     const [todayStats, setTodayStats] = useState({
         activeSessions: 0,
         totalEmployees: 0,
@@ -407,7 +415,18 @@ export default function MobitraqDashboard() {
                                             {employeeStats.find(e => e.id === s.employee_id)?.name
                                                 || `ID: ${s.employee_id.slice(0, 8)}…`}
                                         </td>
-                                        <td className="px-4 py-2 text-gray-700">{((s.final_km != null && s.final_km > 0 ? s.final_km : s.total_km) || 0).toFixed(2)} km</td>
+                                        <td className="px-4 py-2 text-gray-700">
+                                            <AdjustedDistance
+                                                sessionId={s.id}
+                                                rawKm={
+                                                    (s.final_km != null && s.final_km > 0
+                                                        ? s.final_km
+                                                        : s.total_km) || 0
+                                                }
+                                                adjustment={adjustmentsBySessionId[s.id]}
+                                                compact
+                                            />
+                                        </td>
                                         <td className="px-4 py-2">
                                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                                 !s.end_time ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
