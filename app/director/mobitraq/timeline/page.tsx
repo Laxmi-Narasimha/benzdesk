@@ -168,7 +168,19 @@ export default function TimelinePage() {
     const [customerNames, setCustomerNames] = useState<Record<string, string>>({});
     /** Per-session id → 'idle' | 'enqueued' | 'busy' | 'error' for the
      *  "Verify distance" button feedback. */
-    const [verifyState, setVerifyState] = useState<Record<string, 'idle' | 'enqueued' | 'busy' | 'error'>>({});
+    // verifyState now also carries the outcome so the row can render
+    //   "Snapped: 11.92 km (was 12.34)" inline instead of the dead-end
+    //   "Queued ✓ forever" state the old button left users in.
+    const [verifyState, setVerifyState] = useState<
+        Record<
+            string,
+            | { phase: 'idle' }
+            | { phase: 'busy' }
+            | { phase: 'polling'; jobId: string; since: number }
+            | { phase: 'done'; finalKm: number; estimatedKm: number | null }
+            | { phase: 'error'; message: string }
+        >
+    >({});
     const [rollups, setRollups] = useState<SessionRollup[]>([]);
     const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
     const [dailyRollup, setDailyRollup] = useState<DailyRollup | null>(null);
@@ -911,42 +923,110 @@ export default function TimelinePage() {
                                                         ? 'Road-matched via Google Roads'
                                                         : 'Device estimate'}
                                                 </span>
-                                                <button
-                                                    onClick={async (e) => {
-                                                        e.stopPropagation();
-                                                        const cur = verifyState[session.id];
-                                                        if (cur === 'busy' || cur === 'enqueued') return;
-                                                        setVerifyState((s) => ({ ...s, [session.id]: 'busy' }));
-                                                        try {
-                                                            const sb = getSupabaseClient();
-                                                            const { error } = await sb.rpc(
-                                                                'admin_request_distance_verification',
-                                                                { p_session_id: session.id },
-                                                            );
-                                                            if (error) throw error;
-                                                            setVerifyState((s) => ({
-                                                                ...s,
-                                                                [session.id]: 'enqueued',
-                                                            }));
-                                                        } catch (err) {
-                                                            console.error('verify error:', err);
-                                                            setVerifyState((s) => ({
-                                                                ...s,
-                                                                [session.id]: 'error',
-                                                            }));
-                                                        }
-                                                    }}
-                                                    disabled={verifyState[session.id] === 'busy'}
-                                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium text-primary-700 bg-primary-50 rounded-md hover:bg-primary-100 disabled:opacity-50"
-                                                >
-                                                    {verifyState[session.id] === 'busy'
-                                                        ? 'Queuing…'
-                                                        : verifyState[session.id] === 'enqueued'
-                                                            ? 'Verification queued ✓'
-                                                            : verifyState[session.id] === 'error'
-                                                                ? 'Failed — retry'
-                                                                : 'Verify distance'}
-                                                </button>
+                                                {(() => {
+                                                    const st = verifyState[session.id] ?? { phase: 'idle' as const };
+                                                    const busy = st.phase === 'busy' || st.phase === 'polling';
+                                                    let label: string;
+                                                    if (st.phase === 'busy') label = 'Verifying…';
+                                                    else if (st.phase === 'polling') {
+                                                        const secs = Math.floor((Date.now() - st.since) / 1000);
+                                                        label = `Snapping to roads… ${secs}s`;
+                                                    } else if (st.phase === 'done') {
+                                                        const delta = st.estimatedKm != null
+                                                            ? ` (was ${st.estimatedKm.toFixed(2)})`
+                                                            : '';
+                                                        label = `Verified: ${st.finalKm.toFixed(2)} km${delta}`;
+                                                    } else if (st.phase === 'error') label = `Failed — retry (${st.message})`;
+                                                    else label = 'Verify distance';
+
+                                                    return (
+                                                        <button
+                                                            onClick={async (e) => {
+                                                                e.stopPropagation();
+                                                                if (busy) return;
+                                                                setVerifyState((s) => ({ ...s, [session.id]: { phase: 'busy' } }));
+                                                                try {
+                                                                    const sb = getSupabaseClient();
+                                                                    // Call the _now variant: enqueues + immediately
+                                                                    // pings finalize-trip so the user gets a result in
+                                                                    // ~5-10s instead of waiting for the next cron tick.
+                                                                    const { data: jobId, error } = await sb.rpc(
+                                                                        'admin_request_distance_verification_now',
+                                                                        { p_session_id: session.id },
+                                                                    );
+                                                                    if (error) throw error;
+
+                                                                    setVerifyState((s) => ({
+                                                                        ...s,
+                                                                        [session.id]: { phase: 'polling', jobId: String(jobId), since: Date.now() },
+                                                                    }));
+
+                                                                    // Poll trip_finalization_jobs every 2s for up to 90s.
+                                                                    const startedAt = Date.now();
+                                                                    const poll = async (): Promise<void> => {
+                                                                        if (Date.now() - startedAt > 90_000) {
+                                                                            setVerifyState((s) => ({
+                                                                                ...s,
+                                                                                [session.id]: { phase: 'error', message: 'timeout — cron will retry' },
+                                                                            }));
+                                                                            return;
+                                                                        }
+                                                                        const { data: row } = await sb
+                                                                            .from('trip_finalization_jobs')
+                                                                            .select('status, error')
+                                                                            .eq('id', jobId)
+                                                                            .single();
+                                                                        if (row?.status === 'done') {
+                                                                            const { data: sess } = await sb
+                                                                                .from('shift_sessions')
+                                                                                .select('final_km, estimated_km')
+                                                                                .eq('id', session.id)
+                                                                                .single();
+                                                                            setVerifyState((s) => ({
+                                                                                ...s,
+                                                                                [session.id]: {
+                                                                                    phase: 'done',
+                                                                                    finalKm: Number(sess?.final_km ?? 0),
+                                                                                    estimatedKm: sess?.estimated_km != null ? Number(sess.estimated_km) : null,
+                                                                                },
+                                                                            }));
+                                                                            return;
+                                                                        }
+                                                                        if (row?.status === 'failed') {
+                                                                            setVerifyState((s) => ({
+                                                                                ...s,
+                                                                                [session.id]: { phase: 'error', message: row.error ?? 'failed' },
+                                                                            }));
+                                                                            return;
+                                                                        }
+                                                                        // Force the polling tick label to update by bumping state.
+                                                                        setVerifyState((s) => {
+                                                                            const cur = s[session.id];
+                                                                            if (cur && cur.phase === 'polling') {
+                                                                                return { ...s, [session.id]: { ...cur } };
+                                                                            }
+                                                                            return s;
+                                                                        });
+                                                                        await new Promise((r) => setTimeout(r, 2000));
+                                                                        return poll();
+                                                                    };
+                                                                    void poll();
+                                                                } catch (err: unknown) {
+                                                                    console.error('verify error:', err);
+                                                                    const msg = err instanceof Error ? err.message : 'error';
+                                                                    setVerifyState((s) => ({
+                                                                        ...s,
+                                                                        [session.id]: { phase: 'error', message: msg },
+                                                                    }));
+                                                                }
+                                                            }}
+                                                            disabled={busy}
+                                                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium text-primary-700 bg-primary-50 rounded-md hover:bg-primary-100 disabled:opacity-50"
+                                                        >
+                                                            {label}
+                                                        </button>
+                                                    );
+                                                })()}
                                             </div>
                                         )}
                                     </div>
