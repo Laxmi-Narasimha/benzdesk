@@ -12,6 +12,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'package:benzmobitraq_mobile/core/constants/app_constants.dart';
 import 'package:benzmobitraq_mobile/core/kalman_position_filter.dart';
+import 'package:benzmobitraq_mobile/services/tracking_watchdog_service.dart';
 
 /// Location update from the background service
 class LocationUpdate {
@@ -332,6 +333,14 @@ class TrackingService {
       await prefs.setString(
           _keySessionDay, DateTime.now().toIso8601String().substring(0, 10));
 
+      // Arm the native watchdog (WorkManager 15-min + AlarmManager 5-min
+      // exact). When the OS eventually kills our process during a
+      // multi-hour session, these schedulers live in *system* state and
+      // will resurrect the BackgroundService for us. This is the
+      // primary defence against the "tracking dies after 2 hours
+      // unattended" symptom.
+      unawaited(TrackingWatchdogService.schedule());
+
       // Start the background service if not running.
       // CRITICAL: A previous Work Done → Present sequence may have
       // sent stopService just milliseconds ago. The bg-isolate's
@@ -434,6 +443,10 @@ class TrackingService {
       await prefs.remove(_keyPausedDistance);
       await prefs.remove(_keyAutoPauseAt);
       await prefs.remove(_keySessionDay);
+
+      // Disarm the native watchdog so it doesn't keep waking us up
+      // after the user has explicitly stopped tracking.
+      unawaited(TrackingWatchdogService.cancel());
 
       // Stop the session in the bg isolate first (clears its in-memory
       // state). Then stop the service itself if it's still running.

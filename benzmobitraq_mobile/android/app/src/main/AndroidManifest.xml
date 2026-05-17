@@ -115,6 +115,31 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Watchdog AlarmManager receiver — fires every 5 minutes via an
+             exact alarm. Checks the heartbeat the BG isolate writes to
+             SharedPreferences and, if it's stale (>3 min), restarts the
+             foreground service. This is the primary defence against OEM
+             aggressive-killing during multi-hour field sessions. -->
+        <receiver
+            android:name="com.benzpackaging.employee.TrackingAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- Re-arm both watchdogs after device boot. The OS clears
+             scheduled alarms and WorkManager queues across reboot, so
+             without this they'd never fire again on a phone that was
+             rebooted during a multi-day field assignment. -->
+        <receiver
+            android:name="com.benzpackaging.employee.TrackingBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
         
         <!-- Firebase Messaging Service -->
         <service

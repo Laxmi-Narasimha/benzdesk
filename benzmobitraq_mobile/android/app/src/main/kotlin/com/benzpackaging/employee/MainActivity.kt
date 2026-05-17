@@ -37,6 +37,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val oemChannel = "benzmobitraq/oem"
     private val alarmChannel = "benzmobitraq/alarm"
+    private val watchdogChannel = "benzmobitraq/watchdog"
 
     // Active ringtone instance — kept so we can stop() it later.
     private var activeRingtone: Ringtone? = null
@@ -92,6 +93,25 @@ class MainActivity : FlutterActivity() {
                 }
                 "stopAlarm" -> {
                     stopAlarm()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // Watchdog channel — Dart calls schedule() when a session starts
+        // and cancel() when it ends. Both methods are idempotent.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            watchdogChannel
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "schedule" -> {
+                    TrackingWatchdogScheduler.schedule(applicationContext)
+                    result.success(true)
+                }
+                "cancel" -> {
+                    TrackingWatchdogScheduler.cancel(applicationContext)
                     result.success(true)
                 }
                 else -> result.notImplemented()
