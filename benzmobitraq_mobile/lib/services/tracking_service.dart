@@ -1009,21 +1009,72 @@ void _onServiceStart(ServiceInstance service) async {
   Timer? backgroundHealthTimer;
   bool hasEmittedLocationUpdate = false;
 
-  backgroundHealthTimer =
-      Timer.periodic(const Duration(seconds: 60), (_) async {
-    if (currentSessionId == null || isPaused) return;
-    if (lastSuccessfulGpsTime == null) return;
+  // Tracks the last time we forced a stream rebuild so we don't tight-loop
+  // when satellites genuinely take a while to lock.
+  DateTime? lastStreamRebuildAt;
+  int consecutiveRebuilds = 0;
 
-    final sinceLastGps =
-        DateTime.now().difference(lastSuccessfulGpsTime!).inSeconds;
-    if (sinceLastGps >= 120) {
-      logger.w('BG HEALTH: GPS stuck for ${sinceLastGps}s — alerting user');
+  backgroundHealthTimer =
+      Timer.periodic(const Duration(seconds: 30), (_) async {
+    if (currentSessionId == null) return;
+    // Even while paused we keep the stream alive (auto-resume needs it);
+    // the watchdog must still verify the stream is delivering fixes.
+
+    final now = DateTime.now();
+    final sinceLastGps = lastSuccessfulGpsTime == null
+        ? 99999
+        : now.difference(lastSuccessfulGpsTime!).inSeconds;
+
+    // ---- Tier 1 (60s stale): silently rebuild the position stream. -----
+    // This is the common case after a recents-swipe / doze: the
+    // subscription is technically alive but the OS stopped pushing fixes
+    // to it. Cancelling and re-subscribing kicks it.
+    if (sinceLastGps >= 60) {
+      final canRebuild = lastStreamRebuildAt == null ||
+          now.difference(lastStreamRebuildAt!).inSeconds >= 30;
+      if (canRebuild) {
+        consecutiveRebuilds++;
+        lastStreamRebuildAt = now;
+        logger.w(
+            'BG HEALTH: no GPS for ${sinceLastGps}s — forcing stream rebuild '
+            '(consecutive=$consecutiveRebuilds)');
+        try {
+          await positionSubscription?.cancel();
+        } catch (_) {}
+        positionSubscription = null;
+        try {
+          await (startLocationUpdatesRef ?? () async {})();
+          // Also fire a one-shot getCurrentPosition so we don't wait for
+          // the stream's first tick after re-subscribe.
+          try {
+            final p = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.high,
+            ).timeout(const Duration(seconds: 10));
+            onPositionReceived(p, forceRecord: true);
+          } catch (e) {
+            logger.w('BG HEALTH: one-shot getCurrentPosition failed: $e');
+          }
+        } catch (e) {
+          logger.e('BG HEALTH: stream rebuild failed: $e');
+        }
+      }
+    } else {
+      // Healthy tick — reset the consecutive counter so the next stall
+      // gets its first rebuild fast.
+      consecutiveRebuilds = 0;
+    }
+
+    // ---- Tier 2 (120s stale AND 3+ failed rebuilds): notify user. -----
+    // At this point the chip is genuinely dead or location services are
+    // off — we've already tried to fix it three times in a row.
+    if (sinceLastGps >= 120 && consecutiveRebuilds >= 3 && !isPaused) {
       try {
         await flutterLocalNotificationsPlugin.show(
           90001,
-          '⚠️ GPS Issue Detected',
-          'No GPS signal for ${(sinceLastGps / 60).toStringAsFixed(0)} min. '
-              'Check location settings and move outdoors.',
+          '⚠️ GPS not responding',
+          'Tracking has been trying to restart for '
+              '${(sinceLastGps / 60).toStringAsFixed(0)} min. '
+              'Check that location is on and the app is set Unrestricted in battery settings.',
           NotificationDetails(
             android: AndroidNotificationDetails(
               'benzmobitraq_tracking_alerts',
@@ -1042,6 +1093,26 @@ void _onServiceStart(ServiceInstance service) async {
       } catch (e) {
         logger.w('BG HEALTH: Failed to show GPS alert: $e');
       }
+    }
+  });
+
+  // ---- Tier 3: preventive periodic rebuild every 10 minutes. ----------
+  // Even when fixes ARE coming in, Android's FusedLocationProvider
+  // sometimes silently degrades quality during long sessions (the user's
+  // "after 2 hours unattended tracking dies" symptom). A scheduled
+  // re-subscribe forces a fresh underlying request, which clears any
+  // accumulated throttling.
+  Timer.periodic(const Duration(minutes: 10), (_) async {
+    if (currentSessionId == null) return;
+    logger.i('BG HEALTH: scheduled 10-min preventive stream rebuild');
+    try {
+      await positionSubscription?.cancel();
+    } catch (_) {}
+    positionSubscription = null;
+    try {
+      await (startLocationUpdatesRef ?? () async {})();
+    } catch (e) {
+      logger.w('Preventive stream rebuild failed: $e');
     }
   });
 
@@ -1989,9 +2060,27 @@ void _onServiceStart(ServiceInstance service) async {
       ),
     ).listen(
       (p) => onPositionReceived(p, forceRecord: false),
-      onError: (error) {
-        logger.e('Location stream error: $error');
-        service.invoke('error', {'message': 'Location error: $error'});
+      onError: (error) async {
+        // The old handler just logged and left the subscription in a
+        // half-dead state — the user's "remove from recents → GPS never
+        // recovers" symptom. Now we tear down and rebuild the stream
+        // explicitly, with a short backoff so we don't tight-loop if
+        // permissions were just revoked.
+        logger.e('Location stream error — auto-restarting in 2s: $error');
+        service.invoke('error', {'message': 'GPS stream error, restarting…'});
+        try {
+          await positionSubscription?.cancel();
+        } catch (_) {}
+        positionSubscription = null;
+        await Future.delayed(const Duration(seconds: 2));
+        if (currentSessionId != null) {
+          try {
+            await (startLocationUpdatesRef ?? () async {})();
+            logger.i('Location stream restarted after error');
+          } catch (e) {
+            logger.e('Auto-restart of location stream failed: $e');
+          }
+        }
       },
       cancelOnError: false,
     );
