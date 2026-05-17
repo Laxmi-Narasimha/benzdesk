@@ -1044,16 +1044,9 @@ void _onServiceStart(ServiceInstance service) async {
         positionSubscription = null;
         try {
           await (startLocationUpdatesRef ?? () async {})();
-          // Also fire a one-shot getCurrentPosition so we don't wait for
-          // the stream's first tick after re-subscribe.
-          try {
-            final p = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.high,
-            ).timeout(const Duration(seconds: 10));
-            onPositionReceived(p, forceRecord: true);
-          } catch (e) {
-            logger.w('BG HEALTH: one-shot getCurrentPosition failed: $e');
-          }
+          // Mark a fresh "last seen" stamp so the watchdog gives the new
+          // subscription a grace window before considering another rebuild.
+          lastSuccessfulGpsTime = DateTime.now();
         } catch (e) {
           logger.e('BG HEALTH: stream rebuild failed: $e');
         }
