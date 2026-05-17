@@ -4,6 +4,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:logger/logger.dart';
 
+import 'package:benzmobitraq_mobile/services/oem_autostart_service.dart';
+
 /// Permission status result with detailed information
 class PermissionResult {
   final bool granted;
@@ -170,23 +172,35 @@ class PermissionService {
   }
 
   /// Request to disable battery optimization
-  /// 
-  /// Shows system dialog asking user to whitelist the app.
+  ///
+  /// Two-stage approach:
+  ///   1. Try `permission_handler`'s standard request — this fires
+  ///      the OS dialog with the "Allow" button. Works on stock
+  ///      Android.
+  ///   2. If after a short wait the permission still isn't granted
+  ///      (this is what happens on Xiaomi MIUI / ColorOS / FuntouchOS,
+  ///      which intercept ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+  ///      and pretend it succeeded), open the **battery settings
+  ///      screen directly** via the native MethodChannel so the user
+  ///      can manually mark this app as Unrestricted.
   Future<bool> requestBatteryOptimizationDisabled() async {
     if (!Platform.isAndroid) return true;
 
+    // The OS Yes/No dialog (Permission.ignoreBatteryOptimizations.request)
+    // is intercepted on most OEM skins (MIUI, ColorOS, FuntouchOS) — it
+    // returns "granted" while Smart Control silently keeps the app
+    // restricted. Open the per-app Battery settings screen directly so
+    // the user can mark Unrestricted themselves.
     try {
-      final status = await Permission.ignoreBatteryOptimizations.request();
-      
-      if (status.isGranted) {
-        _logger.i('Battery optimization disabled');
-        return true;
+      final opened = await OemAutostartService.openBatterySaver();
+      if (!opened) {
+        await OemAutostartService.openAppInfo();
       }
-
-      _logger.w('Battery optimization still enabled - tracking may be unreliable');
-      return false;
+      // Re-check status after returning; caller can re-poll.
+      final status = await Permission.ignoreBatteryOptimizations.status;
+      return status.isGranted;
     } catch (e) {
-      _logger.e('Error requesting battery optimization: $e');
+      _logger.e('Error opening battery settings: $e');
       return false;
     }
   }

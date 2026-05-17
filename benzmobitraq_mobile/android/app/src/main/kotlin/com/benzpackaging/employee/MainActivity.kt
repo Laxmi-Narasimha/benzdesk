@@ -266,21 +266,29 @@ class MainActivity : FlutterActivity() {
      * capability check. Better to optimistically startActivity and
      * catch the exception.
      *
-     * Intent priority:
-     *   1. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS with package URI —
-     *      goes directly to a "Allow / Deny" dialog for OUR app.
-     *      Best UX: one tap to allow.
-     *   2. IGNORE_BATTERY_OPTIMIZATION_SETTINGS — opens the full
-     *      list of apps; user has to find ours and toggle.
-     *   3. APP_NOTIFICATION_SETTINGS for our package — last resort,
-     *      goes to our app's notification settings (battery is
-     *      usually one level up in the same hierarchy on most OEMs).
+     * Intent priority (user wants the Unrestricted/Smart-control screen,
+     * NOT the bare "Allow background usage" Yes/No dialog):
+     *   1. APPLICATION_DETAILS_SETTINGS — opens our app's info page.
+     *      One tap from here is "Battery" → "Unrestricted / Optimized /
+     *      Restricted" radio buttons on Android 12+. On Samsung/Xiaomi
+     *      this is also where you remove the app from Smart Control /
+     *      auto-managed battery. This is the screen the user actually
+     *      needs to mark this app Unrestricted.
+     *   2. IGNORE_BATTERY_OPTIMIZATION_SETTINGS — full list fallback,
+     *      user finds our app and toggles it.
+     *   3. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS with package URI —
+     *      last-resort Allow/Deny dialog. Avoid as primary because
+     *      OEMs (Xiaomi/Vivo/Oppo) silently lie about its success
+     *      while keeping the app under Smart Control, AND it does
+     *      not surface the Unrestricted radio button at all.
      */
     private fun openBatterySaver(): Boolean {
-        // 1. Direct "allow this app" dialog (preferred).
+        // 1. App details — the Battery sub-screen has the Unrestricted radio.
         try {
-            val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = android.net.Uri.parse("package:$packageName")
+            val intent = Intent(
+                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:$packageName")
+            ).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             startActivity(intent)
@@ -288,7 +296,7 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             // fall through
         }
-        // 2. The full list.
+        // 2. The full battery-optimization list.
         try {
             val intent = Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -298,8 +306,17 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             // fall through
         }
-        // 3. Last resort: app details screen.
-        return openAppInfo()
+        // 3. Last-resort Allow/Deny dialog.
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = android.net.Uri.parse("package:$packageName")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+            return true
+        } catch (_: Exception) {
+            return false
+        }
     }
 
     private fun openAppInfo(): Boolean {

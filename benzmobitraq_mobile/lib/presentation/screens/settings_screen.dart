@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 
-import '../../data/datasources/local/preferences_local.dart';
-import '../../data/models/notification_settings.dart';
+import 'package:benzmobitraq_mobile/data/datasources/local/preferences_local.dart';
+import 'package:benzmobitraq_mobile/data/models/notification_settings.dart';
+import 'package:benzmobitraq_mobile/presentation/widgets/permissions_setup_dialog.dart';
+import 'package:benzmobitraq_mobile/presentation/screens/diagnostics_screen.dart';
 
 /// Elegant settings screen for notification frequency configuration
 class SettingsScreen extends StatefulWidget {
@@ -242,6 +244,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 16),
+
+                  // Permissions re-open card — for users who skipped or
+                  // partially completed the first-launch permissions popup.
+                  _buildActionCard(
+                    icon: Icons.shield_outlined,
+                    iconColor: const Color(0xFF1A1A2E),
+                    title: 'App Permissions',
+                    subtitle:
+                        'Review or re-grant location, battery, notifications etc.',
+                    onTap: () => PermissionsSetupDialog.show(context),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Diagnostics card — live GPS / speed / accuracy / errors
+                  // so the user (or support) can see what tracking is
+                  // actually doing in real time.
+                  _buildActionCard(
+                    icon: Icons.health_and_safety_outlined,
+                    iconColor: const Color(0xFFC9A227),
+                    title: 'Diagnostics',
+                    subtitle:
+                        'Live GPS, speed, accuracy and tracking state for support.',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const DiagnosticsScreen(),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 32),
 
                   // Info Section
@@ -293,11 +325,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: enabled ? iconColor.withOpacity(0.3) : const Color(0xFFE2E8F0),
+          color: enabled ? iconColor.withValues(alpha: 0.3) : const Color(0xFFE2E8F0),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -311,7 +343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.1),
+                  color: iconColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, color: iconColor, size: 22),
@@ -349,6 +381,74 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           if (enabled) child,
         ],
+      ),
+    );
+  }
+
+  Widget _buildActionCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF1A1A2E),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: const Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Color(0xFF94A3B8)),
+            ],
+          ),
+        ),
       ),
     );
   }

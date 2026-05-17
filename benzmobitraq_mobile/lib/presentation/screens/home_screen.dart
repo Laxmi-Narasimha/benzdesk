@@ -60,8 +60,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     context.read<SessionBloc>().add(const SessionLoadHistory());
     // Request permissions immediately on app entry (before user taps anything)
     _requestEssentialPermissions();
-    // Check battery optimization on first load
-    _checkBatteryOptimization();
+    // NOTE: a standalone battery-optimization popup used to fire here on
+    // first load. Removed — the unified PermissionsSetupDialog (shown
+    // below) already covers battery, so the standalone dialog was a
+    // duplicate the user kept hitting after dismissing the main one.
     // Unified permissions setup checklist — replaces the older
     // 2-button OEM-autostart guide with a single dialog that shows
     // every permission, with green checkmarks for ones already
@@ -801,11 +803,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // Show warnings - check if battery optimization warning and show dialog instead
           if (state.warnings.isNotEmpty && state.status == SessionBlocStatus.active) {
             for (final warning in state.warnings) {
-              if (warning.toLowerCase().contains('battery optimization') && !_batteryDialogShown) {
-                _batteryDialogShown = true;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _showBatteryOptimizationDialog();
-                });
+              if (warning.toLowerCase().contains('battery optimization')) {
+                // Suppress — handled by the unified permissions dialog.
               } else if (!warning.toLowerCase().contains('battery optimization')) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
